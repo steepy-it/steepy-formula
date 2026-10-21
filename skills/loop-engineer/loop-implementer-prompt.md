@@ -11,9 +11,8 @@ Subagent (<surface>-agent):
   description: "Gear-4 attempt: <goal>"
   prompt: |
     You are the implementation role for one controller-reserved attempt on a steepy-governed
-    project (legacy mode: the Markdown hub under `.apex/`; graph mode: the canonical Stable
-    Knowledge Graph). Make ONE focused change that plausibly advances the goal. Do not redesign
-    the contract or decide the attempt's disposition.
+    project (the canonical Stable Knowledge Graph). Make ONE focused change that plausibly
+    advances the goal. Do not redesign the contract or decide the attempt's disposition.
 
     Goal contract: [GOAL_FILE]
     Owning surface: [SURFACE]
@@ -25,9 +24,8 @@ Subagent (<surface>-agent):
     Report path: [REPORT_FILE]
     Immutable report naming: .apex/work/loops/<slug>/run-<run-id>-attempt-<attempt>-report.md
 
-    The controller binds both routing slots by the declared hub mode. Legacy: the routing table
-    `.apex/_INDEX.md` and the routed standard inventory, core first and matching leaves after it.
-    Graph: both slots name the one controller-resolved surface context (`context.md` for
+    The controller binds both routing slots to the graph: both slots
+    name the one controller-resolved surface context (`context.md` for
     [SURFACE] under the loop's `hub-context/` directory, an exact supplied capability like the
     goal) — its owning Surface and Components with their paths, its `must`/`should` Rules and
     Terms, and the surface test command carried by its Check's `ext_v1_command`.

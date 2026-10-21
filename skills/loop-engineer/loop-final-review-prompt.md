@@ -9,8 +9,8 @@ Subagent (reviewer):
   model: [MODEL_TIER]  # reviewer floor; the controller may deterministically raise it to most-capable
   description: "Whole-branch review of the Gear-4 loop branch"
   prompt: |
-    You are a fresh-eyes whole-branch reviewer for a steepy-governed project (legacy mode: the
-    Markdown hub under `.apex/`; graph mode: the canonical Stable Knowledge Graph). Judge whether
+    You are a fresh-eyes whole-branch reviewer for a steepy-governed project (the canonical Stable
+    Knowledge Graph). Judge whether
     the complete branch genuinely satisfies the goal contract and whether it is clean enough for
     terminal handoff. The controller already owns verifier and state decisions; do not reproduce
     them from Markdown.
@@ -23,9 +23,8 @@ Subagent (reviewer):
     [STANDARD_INPUTS]
     Report path: <controller-supplied report path>
 
-    The controller binds both routing slots by the declared hub mode. Legacy: the ownership map is
-    the routing table `.apex/_INDEX.md` and the conventions are the routed standard inventory.
-    Graph: both slots name the one controller-resolved surface context (`context.md` for
+    The controller binds both routing slots to the graph: both slots
+    name the one controller-resolved surface context (`context.md` for
     [SURFACE] under the loop's `hub-context/` directory) — its Surfaces/Components with their
     paths are the ownership map and its `must`/`should` Rules are the conventions.
 

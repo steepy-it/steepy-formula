@@ -1351,22 +1351,18 @@ test('loop-engineer: closes exact target routing, ordered standards, and concret
   const skill = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
   const step1 = sectionBetween(skill, '### Step 1', '### Step 2');
   const step2 = sectionBetween(skill, '### Step 2', '### Step 3');
-  assert.match(step1, /exact routing row/i);
-  assert.match(step1, /single-file[^]*exact registered standard/i);
-  assert.match(step1, /modular[^]*core[^]*matching leaves[^]*table order/i);
-  assert.match(step1, /zero matches[^]*core only/i);
-  assert.match(step1, /never (?:synthesize|manufacture)[^]*\.apex\/standards\/<surface>\.md/i);
-  assert.match(step2, /--routing-index '\.apex\/_INDEX\.md'/u);
-  assert.match(step2, /--standard '<exact-standard-path>'/u);
-  assert.match(step2, /repeat[^]*--standard[^]*order/i);
+  assert.match(step1, /`apex:<projectId>:surface:<surface>`/u);
+  assert.match(step2, /--graph-target 'apex:<projectId>:surface:<surface>'/u);
+  assert.doesNotMatch(`${step1}\n${step2}`, /--routing-index|--standard\b|exact routing row|mini-routing|\.apex\/standards\/<surface>\.md/iu,
+    'one graph argument set: no routing-index, standard flags, routing row, or standards path');
 
   for (const file of ['loop-implementer-prompt.md', 'loop-final-review-prompt.md']) {
     const prompt = readFileSync(join(skillsDir, 'loop-engineer', file), 'utf8');
     assert.match(prompt, /^\s*model: \[MODEL_TIER\](?:\s+#.*)?$/mu, `${file}: concrete tier placeholder`);
     assert.match(prompt, /\[ROUTING_INDEX\]/u, `${file}: routed index placeholder`);
     assert.match(prompt, /\[STANDARD_INPUTS\]/u, `${file}: ordered standard inventory placeholder`);
-    assert.doesNotMatch(prompt, /\.apex\/standards\/\[SURFACE\]\.md|\.apex\/standards\/<surface>\.md/u,
-      `${file}: no synthesized standard path`);
+    assert.doesNotMatch(prompt, /\.apex\/standards\/\[SURFACE\]\.md|\.apex\/standards\/<surface>\.md|_INDEX\.md|\blegacy\b/iu,
+      `${file}: no synthesized standard path, Markdown index, or legacy wording`);
   }
 });
 
@@ -1450,7 +1446,7 @@ test('loop-engineer: Step 1 declares the hub mode via steepy-formula hub-mode �
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   assert.match(step1, /Run `steepy-formula hub-mode` and carry its declared\s+mode/,
     'Step 1 must invoke steepy-formula hub-mode and carry the declared mode');
-  assert.match(step1, /`graph`, `legacy`, or `none`/,
+  assert.match(step1, /`graph`, `migrate`, or `none`/,
     'the declaration must name the three declared modes');
   const declaration = step1.split(/\n\n+/).find((p) => p.includes('Hub-mode declaration'));
   assert.ok(declaration, 'Step 1 must carry the hub-mode declaration paragraph');
@@ -1471,20 +1467,28 @@ test('loop-engineer: Step 1 graph branch resolves the hub context from the graph
   assert.match(graphBranch, /\.claude\/agents\/<name>-agent\.md/);
   assert.match(graphBranch, /`apex:<projectId>:surface:<surface>`/);
   assert.doesNotMatch(graphBranch, /_INDEX\.md|\.apex\/standards|testing-and-checklist\.md/);
-  const legacyBranch = sectionBetween(step1, '- **`legacy`**', '- **`graph`**');
-  assert.match(legacyBranch, /\.apex\/_INDEX\.md/);
-  assert.match(legacyBranch, /\.apex\/standards\/<surface>\.md/);
+  assert.doesNotMatch(step1, /_INDEX\.md|\.apex\/standards|\blegacy\b/i, 'Step 1 carries no Markdown hub or legacy branch');
 });
 
 test('loop-engineer: terminal review owns the declared mode gate; the controller report names it', () => {
   const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
   const boundary = sectionBetween(text, '### Controller responsibility boundary', '### Step 0');
   assert.match(boundary, /terminal review owns the declared hub mode's mandatory coherence gate/);
-  assert.ok(boundary.includes('`validate-hub.mjs .` in legacy mode, `steepy-formula graph validate` in graph mode'));
+  assert.ok(boundary.includes('`steepy-formula graph validate`'));
+  assert.doesNotMatch(boundary, /validate-hub|\blegacy\b/i);
   const step3 = sectionBetween(text, '### Step 3', '### Step 4');
   assert.match(step3, /report the hub mode declared at Step 1 and name the coherence gate/);
-  assert.match(step3, /`validate-hub\.mjs \.` in legacy mode,\s+`steepy-formula graph validate` in graph mode/);
+  assert.match(step3, /`steepy-formula graph validate`/);
+  assert.doesNotMatch(step3, /validate-hub|\blegacy\b/i);
   assert.match(step3, /never runs\s+or claims it/);
+});
+
+test('loop-engineer: Step 1 mode migrate stops and routes to the graph-migrate skill', () => {
+  const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
+  const step1 = sectionBetween(text, '### Step 1', '### Step 2');
+  const migrateBranch = sectionBetween(step1, '- **`migrate`**', '- **`none`**');
+  assert.ok(migrateBranch.includes('Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow.'));
+  assert.ok(text.includes('stop in `migrate` and `none`'), 'checklist names the migrate stop');
 });
 
 test('loop-engineer: Step 1 mode none routes to the init skill', () => {
@@ -1495,13 +1499,12 @@ test('loop-engineer: Step 1 mode none routes to the init skill', () => {
   assert.match(noneBranch, /run the `init` skill[\s\S]{0,80}first,?\s+and stop/i);
 });
 
-test('loop-engineer: both prompts bind the controller routing slots by declared mode; Step 2 carries both argument sets', () => {
+test('loop-engineer: both prompts bind the controller routing slots by declared mode; Step 2 carries the one graph argument set', () => {
   for (const file of ['loop-implementer-prompt.md', 'loop-final-review-prompt.md']) {
     const prompt = readFileSync(join(skillsDir, 'loop-engineer', file), 'utf8');
     assert.match(prompt, /\[ROUTING_INDEX\]/u);
     assert.match(prompt, /\[STANDARD_INPUTS\]/u);
-    assert.match(prompt, /The controller binds both routing slots by the declared hub mode\./u);
-    assert.match(prompt, /Graph: both slots name the one controller-resolved surface context \(`context\.md` for\s+\[SURFACE\] under the loop's `hub-context\/` directory/u);
+    assert.match(prompt, /The controller binds both routing slots to the graph:\s+both\s+slots\s+name\s+the\s+one\s+controller-resolved\s+surface\s+context \(`context\.md` for\s+\[SURFACE\] under the loop's `hub-context\/` directory/u);
     assert.doesNotMatch(prompt, /\[SURFACE_CONTEXT\]|\[OWNERSHIP_MAP\]/u);
   }
   const impl = readFileSync(join(skillsDir, 'loop-engineer', 'loop-implementer-prompt.md'), 'utf8');
@@ -1510,8 +1513,8 @@ test('loop-engineer: both prompts bind the controller routing slots by declared 
   const step2 = sectionBetween(skill, '### Step 2', '### Step 3');
   assert.ok(step2.includes("--commit-authorized --graph-target 'apex:<projectId>:surface:<surface>'\n"));
   assert.ok(step2.includes("--commit-authorized --graph-target 'apex:<projectId>:surface:<surface>' --resume --ledger '<loop-ledger-path>'"));
-  assert.match(step2, /never carries `--routing-index` or `--standard`[^]*never carries\s+`--graph-target`/);
-  assert.match(step2, /HUB_MODE_DRIFT/);
+  assert.doesNotMatch(step2, /--routing-index|--standard\b|mixed|\*\*Graph mode|\*\*Legacy mode|\blegacy\b/i);
+  assert.match(step2, /HUB_MODE_DRIFT[^]*recorded graph binding is missing or differs/);
 });
 
 const WHOLE_BRANCH_REVIEW_SENTENCE = 'The whole-branch review runs at the reviewer tier — `standard`, rising to `most-capable` when the branch is large or subtle — not at whatever model the harness happens to offer.';
@@ -2760,7 +2763,8 @@ test('terminal review, not the loop controller, owns the mandatory hub coherence
   const controllerBoundary = sectionBetween(loop, '### Controller responsibility boundary', '### Step 0');
   const reviewEvidence = sectionBetween(review, '### Step 2', '### Step 3');
   assert.doesNotMatch(controllerBoundary, /loop-engineer\.mjs[^]*validate-hub/u);
-  assert.match(controllerBoundary, /terminal review owns[^]*validate-hub\.mjs/u);
+  assert.match(controllerBoundary, /terminal review owns[^]*steepy-formula graph validate/u);
+  assert.doesNotMatch(controllerBoundary, /validate-hub/u);
   assert.match(reviewEvidence, /capture-review-evidence\.mjs[^]*steepy-formula graph validate/u);
   assert.doesNotMatch(reviewEvidence, /validate-hub/u);
   // Formula adaptation (apex v1.2.0 port): apex also locks the sole-owner rule in

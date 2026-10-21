@@ -144,18 +144,17 @@ Skills authorize and route; scripts own deterministic state. In particular, this
 The packaged engine owns all of those decisions, including the sanity verifier, immutable event
 stream, controller-owned commits, blast-radius enforcement, terminal branch review, and goal/ledger
 lifecycle. The later terminal review owns the declared hub mode's mandatory coherence gate —
-`validate-hub.mjs .` in legacy mode, `steepy-formula graph validate` in graph mode; the loop
+`steepy-formula graph validate`; the loop
 controller neither claims nor duplicates that review evidence.
 
 ## Checklist
 
 - [ ] Validate the exact fresh/resume handoff and complete ratified Gear-4 goal before autonomy (Step 0)
-- [ ] Declare the hub mode once per run — `steepy-formula hub-mode` — then read only the declared
-      mode's stable routed inputs (legacy: the exact routing row and standards; graph: the exact
-      surface target), select the active supported harness, and obtain the single human
-      authorization for controller-owned commits (Step 1)
-- [ ] Invoke `node <engine-root>/scripts/loop-engineer.mjs` with the declared mode's exact
-      fresh/resume CLI (Step 2)
+- [ ] Declare the hub mode once per run — `steepy-formula hub-mode` — stop in `migrate` and `none`,
+      then carry the exact surface target (graph), select the active supported harness, and obtain
+      the single human authorization for controller-owned commits (Step 1)
+- [ ] Invoke `node <engine-root>/scripts/loop-engineer.mjs` with the exact fresh/resume graph CLI
+      (Step 2)
 - [ ] Report the controller's closed output without reconstructing or overriding state (Step 3)
 - [ ] Preserve controller-owned lifecycle and terminal evidence (Step 4)
 - [ ] Emit the exact Gear-4 `review` handoff for a terminal result (Step 5)
@@ -223,19 +222,13 @@ here is already enforced by that mechanism, not by this prose.
 ### Step 1 — Load routed inputs and authorize the controller
 
 **Hub-mode declaration (once per run).** Run `steepy-formula hub-mode` and carry its declared
-mode — `graph`, `legacy`, or `none`, each printed with one `evidence:` line — through the rest
+mode — `graph`, `migrate`, or `none`, each printed with one `evidence:` line — through the rest
 of the run. The command always exits 0: it is a declaration, not a gate, and this prose never
 re-implements its detection — the command is the single authority. The declared mode selects the
 stable routed inputs below, the controller's exact argument set (Step 2), and the coherence gate
 the later terminal review runs:
 
-- **`legacy`** → read `.apex/_INDEX.md` and require exactly one exact routing row for the goal's
-  `surface`. For a single-file route, carry its exact registered standard. For a modular route,
-  carry the registered core followed by only the matching leaves, preserving their mini-routing
-  table order; zero matches means core only. Pass this ordered inventory through Step 2 exactly.
-  Never synthesize or manufacture `.apex/standards/<surface>.md`, preload unrelated standards, or
-  grant any child general `.apex/work/**` access.
-- **`graph`** → there is no markdown index, standards folder, or checklist file to read. The
+- **`graph`** → there is no standards folder or checklist file to read. The
   chain skills' graph orientation resolves `steepy-formula context resolve --path <surface-path>...`
   first. On exit 10 UNRESOLVED — normal in a freshly graph-first-initialized repo, where no
   topology bridge links the detected Packages to the curated Components yet — fall back to the
@@ -254,16 +247,17 @@ the later terminal review runs:
   statement prose names it), and Terms — and binds that `context.md` into both child prompts'
   routing slots; this skill reads none of it. The specialist-agent binding stays deterministic:
   surface `<name>` → `.claude/agents/<name>-agent.md`.
+- **`migrate`** → the repo still carries a pre-graph Markdown hub.
+  Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow.
 - **`none`** → no hub exists on either channel: a loop has no governed context to run under —
   tell the user to run the `init` skill (invoke it the way your harness invokes skills) first,
   and stop.
 
-If the declared mode's routed inputs cannot be loaded — legacy: no exact routing row, or a routed
-standard is absent or malformed; graph: the controller refuses the target before any verifier,
-runner, or machine state (`UNSUPPORTED_SURFACE` when `context resolve` reports it unresolved,
-`INVALID_ROUTING` otherwise) — that is a missing prerequisite, not something to iterate around:
-stop and route the user to the declared mode's repair path (legacy → the `init` / `discovery`
-skills; graph → `steepy-formula graph validate` to diagnose the graph), and never fabricate hub
+If the graph's routed inputs cannot be loaded — the controller refuses the target before any
+verifier, runner, or machine state (`UNSUPPORTED_SURFACE` when `context resolve` reports it
+unresolved, `INVALID_ROUTING` otherwise) — that is a missing prerequisite, not something to
+iterate around: stop and route the user to `steepy-formula graph validate` to diagnose the graph,
+and never fabricate hub
 context. If a mandatory field in the goal is missing, return to the **Step 0 refusal**; this
 skill never completes the authorization artifact.
 
@@ -280,25 +274,7 @@ run and is never delegated to a model child or re-asked per attempt.
 ### Step 2 — Invoke the packaged controller
 
 Resolve `<engine-root>` from this skill's base directory and preserve each accepted path byte for
-byte. Invoke the controller with exactly the argument set of the hub mode declared at Step 1; the
-two sets are mutually exclusive.
-
-**Legacy mode.** The fresh invocation is exactly:
-
-```bash
-node <engine-root>/scripts/loop-engineer.mjs --repo-root . --goal '<goal-path>' --harness '<active-harness>' --commit-authorized --routing-index '.apex/_INDEX.md' --standard '<exact-standard-path>'
-```
-
-Fresh mode omits `--resume` and `--ledger`. The resume invocation is exactly:
-
-```bash
-node <engine-root>/scripts/loop-engineer.mjs --repo-root . --goal '<goal-path>' --harness '<active-harness>' --commit-authorized --routing-index '.apex/_INDEX.md' --standard '<exact-standard-path>' --resume --ledger '<loop-ledger-path>'
-```
-
-Repeat `--standard '<exact-standard-path>'` once per selected standard in the exact Step 1 order:
-one flag for a single-file route, or core first and matching modular leaves after it.
-
-**Graph mode.** The fresh invocation is exactly:
+byte. Invoke the controller with exactly this argument set. The fresh invocation is exactly:
 
 ```bash
 node <engine-root>/scripts/loop-engineer.mjs --repo-root . --goal '<goal-path>' --harness '<active-harness>' --commit-authorized --graph-target 'apex:<projectId>:surface:<surface>'
@@ -310,12 +286,9 @@ Fresh mode omits `--resume` and `--ledger`. The resume invocation is exactly:
 node <engine-root>/scripts/loop-engineer.mjs --repo-root . --goal '<goal-path>' --harness '<active-harness>' --commit-authorized --graph-target 'apex:<projectId>:surface:<surface>' --resume --ledger '<loop-ledger-path>'
 ```
 
-The graph set never carries `--routing-index` or `--standard`, and the legacy set never carries
-`--graph-target`; the controller rejects a mixed or partial set as a usage error. The controller
-records a graph run's binding (`hubMode` and `contextTarget`) in its `RUN_STARTED` event; a
-legacy run records none. A resume whose declared mode or target differs from that record fails
-closed (`HUB_MODE_DRIFT`) before any lock or verifier effect — never switch modes mid-run to
-work around it.
+The controller records the run's binding (`hubMode` and `contextTarget`) in its `RUN_STARTED`
+event. `HUB_MODE_DRIFT` is a resume whose recorded graph binding is missing or differs from the
+requested target: it fails closed before any lock or verifier effect — never work around it.
 
 Resume uses only the accepted `onDemand.loop-ledger` path; never derive or select another ledger.
 Invoke the command once and let it run to its controller-owned terminal or halted result. The
@@ -337,8 +310,7 @@ goal path and new loop workspace, never a resume handoff. A nonzero
 controller exit is a failure, not permission to run an inline substitute.
 
 Alongside those fields, report the hub mode declared at Step 1 and name the coherence gate the
-terminal review will run for it — `validate-hub.mjs .` in legacy mode,
-`steepy-formula graph validate` in graph mode. The report names that gate; this skill never runs
+terminal review will run for it — `steepy-formula graph validate`. The report names that gate; this skill never runs
 or claims it.
 
 The terminal status domain is `GOAL_REACHED | BUDGET_EXHAUSTED | NO_IMPROVEMENT |

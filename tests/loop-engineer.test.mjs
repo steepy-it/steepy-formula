@@ -3672,7 +3672,7 @@ test('graph hub mode resolves the exact surface target into the loop work dir an
 });
 
 test('both child prompts render every slot in both hub modes, leaving no placeholder or merge marker', async () => {
-  for (const mode of ['legacy', 'graph']) {
+  for (const mode of ['graph']) {
     const repo = fixture();
     try {
       writeWorkPath(repo, GOAL_PATH, goalText({ budget: '1' }), { expect: 'goal', family: 'goal' });
@@ -3690,7 +3690,8 @@ test('both child prompts render every slot in both hub modes, leaving no placeho
         assert.ok(call, `${mode}: child prompt exists`);
         assert.doesNotMatch(call.prompt, /\[[A-Z][A-Z_]*\]/u, `${mode}: unfilled placeholder`);
         assert.doesNotMatch(call.prompt, /^(?:<{7}|={7}|>{7})/mu, `${mode}: merge marker`);
-        assert.match(call.prompt, /legacy mode: the\s+Markdown hub[^]*graph mode: the canonical Stable\s+Knowledge Graph/u);
+        assert.match(call.prompt, /the canonical\s+Stable\s+Knowledge\s+Graph/u);
+        assert.doesNotMatch(call.prompt, /\blegacy\b|_INDEX\.md/iu);
       }
     } finally {
       rmSync(repo, { recursive: true, force: true });
