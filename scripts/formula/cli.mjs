@@ -146,10 +146,11 @@
 //
 // `hub-mode` (promotion-in-chain spec D4, plan decision 5) — the declaration every skill prose
 // quotes instead of re-implementing detection (SC4, DP4): which documentation hub this repo uses
-// right now. `graph` — the engine is reachable and the project initialized, and `.apex/_INDEX.md`
-// is absent; `migrate` — `.apex/_INDEX.md` is present (it wins over graph), next: the
-// `graph-migrate` skill; `none` — neither, next: the `init` skill. Detection lives ONLY in
-// core/hub-mode.mjs (the Markdown-hub probe in core/markdown-hub.mjs) — this command parses,
+// right now. `graph` — the engine is reachable and the project initialized, and no Markdown hub is
+// present; `migrate` — the Markdown hub entry (MARKDOWN_HUB_ENTRY in core/markdown-hub.mjs) is
+// present (it wins over graph), next: the `graph-migrate` skill; `none` — neither, next: the
+// `init` skill. Detection lives ONLY in core/hub-mode.mjs (the Markdown-hub probe in
+// core/markdown-hub.mjs) — this command parses,
 // prints `hub-mode '<project>'` + a `mode:` line + exactly one `evidence:` line, then a `next:`
 // line naming the core's next step for migrate and none (graph prints none), and ALWAYS exits 0:
 // it is a declaration for a report, not a gate, and an unreachable engine is evidence, not a

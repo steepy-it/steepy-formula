@@ -36,7 +36,6 @@ Run from the repository root after the version bump:
 ```sh
 npm ci
 npm test
-node scripts/validate-hub.mjs .
 node scripts/bump-version.mjs --check
 npm pack --dry-run --json
 node scripts/validate-release-evidence.mjs --product-only
@@ -126,7 +125,6 @@ Expected evidence (graph-first — no markdown hub is ever written):
   topology→curated `IMPLEMENTS` bridge that path-based resolution rides.
 - `/steepy-formula:check` reports green — in graph mode it runs
   `steepy-formula graph validate`.
-- The Stop hook stays quiet on a coherent graph.
 
 ### GitHub marketplace smoke test
 
@@ -185,8 +183,8 @@ too await re-observation by the next canary run.
 | 2 | Fresh session starts clean | fresh `--print` session answers, no startup errors | fresh `exec` session header + answer, no errors | fresh `run` answers "12 skills" (11 + 1 built-in), 0 error log lines | fresh `--print` session answers, no errors |
 | 3 | All eleven skills discoverable | model lists all 11 as `steepy-formula:<skill>` | model lists all 11 as `steepy-formula:<skill>`, sourced from the plugin cache | `opencode debug skill` lists all 11 from `<checkout>/skills/`; `debug config` shows all 11 `steepy-formula-<skill>` commands | session lists all 11 skills + all 11 `/steepy-<skill>` wrappers (bootstrap injection block present) |
 | 4 | `init` → interview → scaffold | graph-first scaffold (work area + agents + bootstrap skill + `CLAUDE.md`, no markdown hub) + in-session `graph validate` and `context resolve` green | graph-first scaffold + in-session `graph validate`/`context resolve` green and `npm test` 1 pass | graph-first scaffold + in-session `graph validate`/`context resolve` green — needs `permission.external_directory` allow for the engine root in non-interactive `run` mode (auto-reject observed first, green after grant) | graph-first scaffold + in-session `graph validate`/`context resolve` green |
-| 5 | Coherence gate exits 0 in the fixture (graph fixture: `steepy-formula graph validate`; legacy hubs: `node <engine-root>/scripts/validate-hub.mjs .` — hub-less it prints "no .apex hub found", never OK) | `graph validate` clean, exit 0 (engine root = plugin cache) | `graph validate` clean, exit 0 (engine root = plugin cache) | `graph validate` clean, exit 0 (engine root = checkout) | `graph validate` clean, exit 0 (engine root = checkout) |
-| 6 | `check` runs successfully | mode declared `graph` + `steepy-formula graph validate` green, exit 0 (legacy hubs: `validate-hub: OK`) | mode declared `graph` + `graph validate` green, exit 0 | via `steepy-formula-check` command: mode declared `graph` + `graph validate` green, exit 0 | via `/skill:check`: mode declared `graph` + `graph validate` green (`/steepy-<skill>` wrappers are TUI-only ergonomics — no-op in `--print` mode) |
+| 5 | Coherence gate exits 0 in the fixture (`steepy-formula graph validate`) | `graph validate` clean, exit 0 (engine root = plugin cache) | `graph validate` clean, exit 0 (engine root = plugin cache) | `graph validate` clean, exit 0 (engine root = checkout) | `graph validate` clean, exit 0 (engine root = checkout) |
+| 6 | `check` runs successfully | mode declared `graph` + `steepy-formula graph validate` green, exit 0 | mode declared `graph` + `graph validate` green, exit 0 | via `steepy-formula-check` command: mode declared `graph` + `graph validate` green, exit 0 | via `/skill:check`: mode declared `graph` + `graph validate` green (`/steepy-<skill>` wrappers are TUI-only ergonomics — no-op in `--print` mode) |
 | 7 | One `brainstorm → plan → implement → review` chain on a toy change | PASS — spec/plan/ledger written, tests 2/2, review approved, local commit on a work branch | PASS — spec/plan/ledger written, tests 2/2, review PASS, gate OK | PASS — run as the four `steepy-formula-*` commands over one continued session (local 35B model): spec/plan/ledger written, tests 2/2, review PASS | PASS — full chain in one session: spec/plan/ledger written, tests 2/2, review APPROVED |
 | 8 | Orchestration native, or degradation declared in output (inline specialist, session model) | native: dispatched `src-agent` subagent on haiku (tier from the plan's Complexity) | degradation declared in output: generic subagent prompted with the agent contract, session model (no per-dispatch tier) | degradation declared in output: inline specialist, session model | degradation declared in output: inline specialist, session model |
 | 9 | Zero Claude dependency: no `CLAUDE_*` env needed, no reads from `~/.claude` | n/a | `env -i` (no `CLAUDE_*`, isolated HOME) check run green | `env -i` check run green | `env -i` `/skill:check` run green |
@@ -364,21 +362,17 @@ trio on the 5.3 ladder before any cell above is refreshed.
   `description`) and move Claude extras to packaging.
   **Resolved 2026-07-15:** tolerated — every SKILL.md file parsed and listed by
   `opencode debug skill` with zero warnings on stderr. Fallback not needed.
-- **D4 — end-of-turn gate approximation.** Native Stop hook on Claude Code
-  (`hooks/hooks.json`) and Codex (`hooks/hooks-codex.json` — also verify the
-  manifest-pointed file *replaces* the default `hooks/hooks.json` rather than
-  double-loading; contingency: rename the Claude file to `hooks/hooks-claude.json` and
-  point `.claude-plugin/plugin.json` at it). On OpenCode/Pi the gate is an adapter
-  approximation: if it proves unreliable, that harness's gate runs at `check`/`review`
-  time only and the capability matrix must say so explicitly.
-  **Resolved 2026-07-15:** on Claude Code the native Stop hook works end-to-end — on a
-  deliberately broken hub a trivial turn was blocked and the model fixed the dangling
-  link before being allowed to end; single fire, no double-load. On Codex the plugin
-  hooks feature has been **removed from the harness** (`codex features list` →
-  `plugin_hooks removed`): neither hooks file loads, so double-loading is moot and the
-  Codex gate runs at `check`/`review` time only — same declared fallback as
-  OpenCode/Pi, verified green on all three. `hooks/hooks-codex.json` stays in the
-  package (harmless, manifest-pointed) in case the feature returns.
+- **D4 — end-of-turn gate approximation.** No harness ships an end-of-turn hook: the
+  plugin ships no hooks, and on every harness the coherence gate
+  (`steepy-formula graph validate`) runs at `check`/`review` time. The OpenCode, Pi, and
+  DeepSeek Harness bootstrap blocks state the same, and matrix rows 5–6 verify the gate.
+  **Resolved 2026-07-15 (dated evidence, on the flow as it stood then):** on Claude Code
+  the then-shipped native Stop hook worked end-to-end — on a deliberately broken hub a
+  trivial turn was blocked and the model fixed the dangling link before being allowed to
+  end; single fire, no double-load. On Codex the plugin hooks feature had been **removed
+  from the harness** (`codex features list` → `plugin_hooks removed`), so the Codex gate
+  already ran at `check`/`review` time only — the same declared fallback as OpenCode/Pi,
+  verified green on all three. The hook wiring has since been removed from the package.
 
 **Harness quirks observed during the 2026-07-15 run** (headless automation, not
 package defects): `codex exec` blocks forever on an open stdin pipe (`< /dev/null`
@@ -444,10 +438,11 @@ downgraded PR versions. A PR with no user-facing change (docs-only, CI-only) can
 downgrade rejection still apply.
 
 **Tag at merge.** The `Release` workflow (`.github/workflows/release.yml`) runs on every
-push to main, but can publish only after tests, hub coherence, version and package
-validation succeed. If tag `vX.Y.Z` for the current version doesn't exist yet, it creates and pushes
-it. It then independently creates the GitHub Release, with the body pulled from the
-matching `CHANGELOG.md` section via `scripts/extract-changelog.mjs` (falls back to a stock
+push to main, but can publish only after tests, version and package validation succeed
+(the graph coherence gate needs a local engine, so it stays a release-time preflight).
+If tag `vX.Y.Z` for the current version doesn't exist yet, it creates and pushes it. It then
+independently creates the GitHub Release, with the body pulled from the matching
+`CHANGELOG.md` section via `scripts/extract-changelog.mjs` (falls back to a stock
 body if extraction fails). Last, it appends one Claude directory payload commit for a new
 version to the `claude-directory` branch (see
 [Claude directory submission](#claude-directory-submission)). All three publication steps are

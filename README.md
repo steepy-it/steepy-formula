@@ -16,7 +16,7 @@
 
 <p align="center"><sub>The Stable Knowledge Graph is the canonical authority; the graph format and skills evolve under semver, with schema changes migrated explicitly (<code>graph migrate-schema</code>).</sub></p>
 
-Land governed project knowledge in a canonical Stable Knowledge Graph (graph-first init) or a legacy `.apex/` Markdown hub, route work by surface, and keep it coherent with mode-aware validation.
+Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation.
 
 Requires **Node.js >= 24**, **Docker** for the local graph engine, and a supported coding agent: Claude Code, Codex, OpenCode, Pi, or DeepSeek Harness. Release notes are in the [changelog](CHANGELOG.md).
 
@@ -25,13 +25,13 @@ Requires **Node.js >= 24**, **Docker** for the local graph engine, and a support
 In motorsport, the **formula** is the rulebook: the technical regulations every car in a series is built to and raced under. Respect it and a lap time means something; break it and the result doesn't stand. **steepy-formula** writes that rulebook for your AI: it governs a repository's stable knowledge in a **Stable Knowledge Graph** — a typed, persistent, queryable graph database that is the canonical source of truth for the rules your coding agents race under. The graph is not a cache of Markdown: it is where stable knowledge is created, validated, versioned, audited, queried, and superseded.
 
 - **Start from an idea** — `/steepy-formula:inception` turns an idea, a design, or a prototype into a verified, runnable first version before any hub exists, then hands off to `init` and `discovery`.
-- **Canonical graph as authority** — the Stable Knowledge Graph replaces the Markdown hub; the `.apex/` Markdown hub participates only as **legacy migration semantics** for one-time migration, superseded at cutover.
+- **Canonical graph as authority** — the Stable Knowledge Graph is the single source of stable knowledge; a steepy-apex `.apex/` Markdown hub is only a **one-time migration source** for `/steepy-formula:graph-migrate`, never a second authority.
 - **Deterministic context resolution** — `context resolve` returns the rules, owners, checks, skills, and rationale applicable to a task path or target, each with the graph path that made it applicable.
 - **Human-approved promotion** — every change to stable knowledge is a reviewed, isolated scenario applied by a human-approved promotion transaction and recorded in a hash-chained revision. The core can auto-export on every promotion (configurable export directory + retention); `graph export` / `graph backup` capture a signed state at any time.
 - **A real graph engine, pinned** — ArcadeDB (pinned release) behind a portable engine adapter, with **Studio** as the professional Explorer; an in-memory reference port runs without Docker for development and tests.
 - **Local-first** — the engine runs in a local docker lifecycle bound to localhost; your graph never leaves your machine.
 - **Audit by construction** — a hash-chained in-graph Revision trail with replay detection: any out-of-band write is caught by `graph validate`.
-- **Hub-aware workflow chain** — a self-contained `brainstorm → plan → implement → review` flow where stable knowledge stays coherent, local specs/plans live under `.apex/work/`, and review's insight sweep assembles the durable decisions it discovers into a Promotion Scenario, applied only at an explicit human gate before work is declared done. Small fixes stay fast; a closed design with a machine-verifiable goal can run as a bounded autonomous loop.
+- **Graph-aware workflow chain** — a self-contained `brainstorm → plan → implement → review` flow where stable knowledge stays coherent, local specs/plans live under `.apex/work/`, and review's insight sweep assembles the durable decisions it discovers into a Promotion Scenario, applied only at an explicit human gate before work is declared done. Small fixes stay fast; a closed design with a machine-verifiable goal can run as a bounded autonomous loop.
 - **Complexity-matched models** — plans rate every task's complexity; implementation dispatches the cheapest model tier that can carry it and records each choice in a run ledger. [Provider-aware model selection](docs/workflow.md#model-selection) adapts to the harness; hosts without per-task selection use the session model.
 
 Stable knowledge stays versioned in the canonical graph. Specs and plans stay gitignored under `.apex/work/` as a local work artifact.
@@ -110,7 +110,7 @@ Open that profile in your project and ask the model to call `steepy_skill` with
 Use your harness's [command syntax](docs/installation.md#first-run-and-troubleshooting); Claude Code is shown here.
 
 1. `/steepy-formula:init` - Initialize steepy-formula in your repo. Graph-first: a pre-flight engine gate, a short interview, then the local `.apex/work/` area for gitignored specs/plans, project instructions, per-surface agents, the project bootstrap skill, a root `CLAUDE.md`, and the committed `.formula/config.json` project binding. No markdown hub is ever created: the engine is provisioned and verified before anything is written, the interview confirms Surfaces, Components, and Rules (Rules are never invented from stack detection), and the initial graph lands as one promotion scenario applied only at your explicit confirmation. It closes with `graph validate` + `context resolve` green.
-2. On an existing codebase, run `/steepy-formula:discovery` next: a seeded interview fills the hub from the code you already have — the legacy hub docs (glossary, standards, conventions) in `legacy` mode, or the canonical graph through a typed promotion scenario in `graph` mode, per the mode `steepy-formula hub-mode` declares — each proposal backed by `file:line` evidence, nothing written without your confirmation.
+2. On an existing codebase, run `/steepy-formula:discovery` next: a seeded interview fills the canonical graph from the code you already have through a typed promotion scenario — each proposal backed by `file:line` evidence, nothing written without your confirmation.
 3. Arriving from steepy-apex — your repo already carries an `.apex/` Markdown hub? `/steepy-formula:graph-migrate` walks it into the graph (extraction → preview → approval → cutover → archive) instead of init.
 4. Run `/steepy-formula:check` to verify coherence, then give your agent any task. The generated bootstrap skill declares the hub mode, resolves the task's context from the graph, and classifies it — coverage verdict + gear — before touching code.
 5. Resolve context anytime with the CLI: `steepy-formula context resolve --project <id> --path <task-path>` emits `context.json` + `context.md` — the navigation map the AI reads. That's where the rules stay honest from now on.
@@ -129,17 +129,17 @@ Claude Code syntax is shown below; see the [installation guide](docs/installatio
 |---|---|
 | [`/steepy-formula:inception`](docs/inception.md) | Turn an idea and its materials into a verified first version before the hub exists. |
 | `/steepy-formula:init` | Graph-first init — pre-flight engine + credentials gate, stack/topology detection as proposals, Surface/Component/Rule interview, the initial promotion scenario applied at your confirmation, then disk-minimal scaffolding (work area, project instructions, per-surface agents, bootstrap skill, `CLAUDE.md`); no markdown hub. |
-| `/steepy-formula:graph-migrate` | Migrate a legacy `.apex/` hub into the graph — extraction, preview, approval, transactional write, cutover, archive closure. |
-| `/steepy-formula:discovery` | Populate/refresh stable knowledge from your codebase via a seeded interview, per the declared hub mode — legacy hub docs (glossary, standards, conventions) in `legacy` mode, typed candidates promoted into the canonical graph in `graph` mode; each proposal is an item card with `file:line` evidence and a write-back preview; re-runnable, additive + diff-gated. After inception, import its decisions once (graph mode). |
-| `/steepy-formula:check` | Run the coherence gate on demand per the declared hub mode — `steepy-formula graph validate` in `graph` mode, the validate-hub linter in `legacy` mode — and report any drift. |
-| `/steepy-formula:new-surface` | Add one surface per the mode `steepy-formula hub-mode` declares — in `graph` mode a human-approved promotion (Surface + Check with its `ext_v1_command` test command) plus its specialist agent; in `legacy` mode a standard doc + specialist adapters + routing row. |
-| `/steepy-formula:brainstorm` | Turn an idea into a local `.apex/work/` spec with graph-resolved routing context; in graph mode it never mutates the hub — every delta is recorded as a typed deferred proposal for review's sweep. |
+| `/steepy-formula:graph-migrate` | Migrate a steepy-apex `.apex/` hub into the graph — extraction, preview, approval, transactional write, cutover, archive closure. |
+| `/steepy-formula:discovery` | Populate/refresh stable knowledge from your codebase via a seeded interview — typed candidates promoted into the canonical graph; each proposal is an item card with `file:line` evidence and a write-back preview; re-runnable, additive + diff-gated. After inception, import its decisions once. |
+| `/steepy-formula:check` | Run the coherence gate on demand — `steepy-formula graph validate` on the canonical graph — and report any drift. |
+| `/steepy-formula:new-surface` | Add one surface through a human-approved promotion (Surface + Check with its `ext_v1_command` test command) plus its specialist agent. |
+| `/steepy-formula:brainstorm` | Turn an idea into a local `.apex/work/` spec with graph-resolved routing context; it never mutates the graph — every delta is recorded as a typed deferred proposal for review's sweep. |
 | `/steepy-formula:plan` | Break a local spec into a step-by-step local implementation plan. |
 | `/steepy-formula:implement` | Implement a spec or plan under rigid TDD. |
-| `/steepy-formula:review` | Verify the work against its spec with real evidence: declares the hub mode, runs the branched coherence gate (`graph validate` in graph mode, the linter in legacy mode), assembles the promotion scenario from swept insights, and gates the apply on a human. |
+| `/steepy-formula:review` | Verify the work against its spec with real evidence: declares the hub mode, runs the coherence gate (`steepy-formula graph validate`), assembles the promotion scenario from swept insights, and gates the apply on a human. |
 | `/steepy-formula:loop-engineer` | Run an authorized, bounded autonomous loop over a machine-verifiable goal inside a budget and blast radius, then hand terminal evidence to review. |
 
-Deterministic runners support Claude, Codex, and OpenCode; Pi and DeepSeek report `runner-unavailable`. Gear-3 autopilot supports Linux and macOS. Native hooks and model selection depend on the host; use `check` and `review` as explicit verification gates.
+Deterministic runners support Claude, Codex, and OpenCode; Pi and DeepSeek report `runner-unavailable`. Gear-3 autopilot supports Linux and macOS. Model selection depends on the host; `check` and `review` are the verification gates on every harness.
 
 ## The graph CLI
 
@@ -150,7 +150,7 @@ steepy-formula ships a `steepy-formula` bin with three command families over the
 | `steepy-formula graph` | `init`, `validate`, `status`, `refresh`, `export`, `backup`, `restore`, `migrate-schema` | Provision the local engine, validate graph invariants + the Revision chain, report project state, refresh repository topology, and manage backup/restore/schema. |
 | `steepy-formula context` | `resolve --path <p>... \| --target <id>...` | Resolve deterministic, explainable context (layers, budget, inclusion traces) for task paths or explicit graph targets. |
 | `steepy-formula promotion` | `create`, `preview`, `apply`, `discard` | Map a typed candidates file (terms/rules/decisions) into a draft promotion scenario (`create` — nothing is applied), inspect the typed diff, apply it after an explicit human confirmation, or discard it. |
-| `steepy-formula hub-mode` | — (top level) | Declare this repo's documentation-hub mode — `graph` (engine reachable + initialized), `legacy` (`.apex/_INDEX.md` present), or `none` — with one evidence line; always exit 0: a declaration for reports and skill prose, which never re-implements the detection. |
+| `steepy-formula hub-mode` | — (top level) | Declare this repo's documentation-hub mode — `graph` (engine reachable + initialized), `migrate` (a steepy-apex `.apex/_INDEX.md` is present; next: `graph-migrate`), or `none` (next: `init`) — with one evidence line; always exit 0: a declaration for reports and skill prose, which never re-implements the detection. |
 
 Every read command refuses an unsupported schema version (exit 1); `graph migrate-schema` is the explicit recovery path. The full exit-code table prints with the CLI usage — run `steepy-formula` with no arguments to see it.
 
@@ -170,7 +170,7 @@ The package ships an MCP server (`adapters/mcp/formula-mcp.mjs`) over the same d
 
 Before touching code, the generated bootstrap skill classifies every task against the graph's rules: **COVERED** (a rule already decides it), **CONFLICT** (a rule contradicts it — the rule wins unless you explicitly override, and the override updates the graph), or **GAP** (nothing decides it). Every verdict carries `file:line` evidence.
 
-That verdict, crossed with how consequential or irreversible the change is, picks a ceremony **gear** — from gear 1 (straight to the specialist agent, the mode's coherence gate at the end) and gear 2 (a light spec implemented directly) up to gear 3 (the full `brainstorm → plan → implement → review` chain — driven manually or on **autopilot**, which runs the post-spec phases unattended and stops before the PR) and gear 4 (a bounded autonomous loop over a machine-verifiable goal, run by a deterministic controller after you ratify the goal contract and grant commit authorization). Low-stakes work stays fast; high-stakes work gets the full chain. You don't pick the ceremony — the classification does.
+That verdict, crossed with how consequential or irreversible the change is, picks a ceremony **gear** — from gear 1 (straight to the specialist agent, the graph coherence gate at the end) and gear 2 (a light spec implemented directly) up to gear 3 (the full `brainstorm → plan → implement → review` chain — driven manually or on **autopilot**, which runs the post-spec phases unattended and stops before the PR) and gear 4 (a bounded autonomous loop over a machine-verifiable goal, run by a deterministic controller after you ratify the goal contract and grant commit authorization). Low-stakes work stays fast; high-stakes work gets the full chain. You don't pick the ceremony — the classification does.
 
 Along the way, specs and plans are written under `.apex/work/` as a gitignored **local work artifact** — the disposable Work Graph stays separate from stable governance, and durable decisions are promoted into the canonical graph before work is declared done.
 
@@ -184,14 +184,14 @@ steepy-formula never commits or pushes without your say-so:
 
 - **Graph-level policy** — the `/steepy-formula:init` interview can approve a **Git policy** Rule into the graph — a candidate that `APPLIES_TO` every confirmed Surface (for example, "no `git` command without explicit confirmation"); every graph-aware skill resolves the policy with the graph, so it travels with the repo. Declining records no git Rule.
 - **`implement` asks once per run** — if you are on `main` it first offers a working branch, then asks whether to commit after each reviewed-clean task. On *yes*, the progress ledger records each task's commit range and reviews read the committed diff; on *no*, no git command runs and you commit the branch yourself at the end.
-- **`review` closes the loop** — tests and the declared-mode coherence gate are captured once, deterministically: verbatim output stays in the local evidence report while only a compact hashed receipt enters the reviewer context. With reviewed-clean commits on a branch, it offers to open a PR to `main` (and, when the target repo carries its own version-bump machinery, resolves the semver bump first). The push and the PR happen only after you confirm.
+- **`review` closes the loop** — tests and the graph coherence gate (`steepy-formula graph validate`) are captured once, deterministically: verbatim output stays in the local evidence report while only a compact hashed receipt enters the reviewer context. With reviewed-clean commits on a branch, it offers to open a PR to `main` (and, when the target repo carries its own version-bump machinery, resolves the semver bump first). The push and the PR happen only after you confirm.
 - **Gear 4 commits only under authorization** — `/steepy-formula:loop-engineer` refuses to start without a separately granted commit authorization, and its controller never bumps, pushes, or opens a PR.
 
 ## Keeping the docs honest
 
-The **Stop hook** runs at the end of each assistant turn — wired natively in Claude Code, where it mechanically blocks a turn that leaves a **legacy Markdown hub** drifting (`hooks/hooks.json` → `scripts/stop-hook.mjs`). The hook runs the legacy linter only: in graph mode — the state graph-first init always produces — there is no Markdown hub to lint, so it exits silently, and the graph gate runs at `check`/`review` time via `steepy-formula graph validate` on every harness. Codex removed plugin hooks from its harness, so the Codex gate runs at `check`/`review` time in every mode, exactly as it does on OpenCode and Pi. When a legacy hub has violations the hook asks the agent to fix the drift before ending the turn; it never loops and it fails open, so a broken hook can't lock your session.
+The coherence gate runs at `check`/`review` time on every harness — the plugin wires no end-of-turn gate — and the migration hint reaches you through `steepy-formula hub-mode` and the generated bootstrap at the start of a task: a repository still carrying a steepy-apex `.apex/` hub reports `migrate` and is pointed at `/steepy-formula:graph-migrate`.
 
-The canonical gate is the graph: `steepy-formula graph validate` checks the portable invariants and replays the Revision chain to detect any out-of-band write. Run `/steepy-formula:check` any time you want the gate on demand, without waiting for a turn to end.
+The canonical gate is the graph: `steepy-formula graph validate` checks the portable invariants and replays the Revision chain to detect any out-of-band write. Run `/steepy-formula:check` any time you want the gate on demand.
 
 For deeper drift, run `/steepy-formula:discovery` periodically: a seeded interview walks the codebase and proposes updates as item cards with `file:line` evidence and a write-back preview. It's re-runnable — additive and diff-gated, so a second run only surfaces what's new or changed.
 
@@ -227,7 +227,7 @@ What it touches:
 - It provisions a local ArcadeDB container and creates one database per project for the Stable Knowledge Graph.
 - Other command families have their own effects: workflow controllers run your tests, Git, and supported harness subprocesses; see the [Command-family effects matrix](docs/architecture.md#command-family-effects-matrix) — filesystem reads–writes–subprocesses–temporary state–providers/network — before granting trust.
 
-As with any plugin, review plugin hooks before trusting them: the hook wiring is [`hooks/hooks.json`](hooks/hooks.json) (Claude Code) plus [`scripts/stop-hook.mjs`](scripts/stop-hook.mjs); [`hooks/hooks-codex.json`](hooks/hooks-codex.json) remains in the package but the Codex harness currently loads no plugin hooks.
+The plugin ships no hooks, so there is no hook wiring to review before trusting it.
 
 ## Documentation
 
@@ -242,14 +242,14 @@ As with any plugin, review plugin hooks before trusting them: the hook wiring is
 <details>
 <summary><b>Stack detection scope</b></summary>
 
-The graph, routing rules, and linter are language-agnostic and work in any repo. **Automatic surface detection, however, is specific to the JavaScript ecosystem** (npm / pnpm / yarn workspaces, read from `package.json` and `pnpm-workspace.yaml`). For Python, Go, Rust, or other stacks the package manager is still recognized, but surfaces are not auto-discovered — you declare them during the `/steepy-formula:init` interview and they are scaffolded normally.
+The graph, context resolution, and coherence gate are language-agnostic and work in any repo. **Automatic surface detection, however, is specific to the JavaScript ecosystem** (npm / pnpm / yarn workspaces, read from `package.json` and `pnpm-workspace.yaml`). For Python, Go, Rust, or other stacks the package manager is still recognized, but surfaces are not auto-discovered — you declare them during the `/steepy-formula:init` interview and they are scaffolded normally.
 
 </details>
 
 <details>
-<summary><b>Legacy Markdown semantics</b></summary>
+<summary><b>Coming from steepy-apex</b></summary>
 
-The `.apex/` Markdown hub is preserved only as migration semantics: it feeds `/steepy-formula:graph-migrate` and is removed from normal reads at cutover. After cutover the canonical graph is the single authority — there is no second resolver and no permanent bidirectional Markdown ↔ graph synchronization. Harnesses outside Claude Code, Codex, OpenCode, Pi, and DeepSeek Harness don't get a native install — but the artifacts steepy-formula *generates* are tool-agnostic: the graph CLI, the skills, and the linter work with any agent, and you can wire the linter into another agent's hook system manually.
+A repository that still carries a steepy-apex `.apex/` Markdown hub is a one-time migration source: run `/steepy-formula:graph-migrate` to move it into the graph (extraction → preview → approval → cutover → archive). Until then `steepy-formula hub-mode` reports `migrate` and every workflow script refuses to run. After cutover the canonical graph is the single authority — there is no second resolver and no Markdown ↔ graph synchronization.
 
 </details>
 

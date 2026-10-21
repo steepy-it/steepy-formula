@@ -28,7 +28,7 @@ body:
     id: output
     attributes:
       label: Relevant output
-      description: Output of the failing command — or of `node scripts/validate-hub.mjs .` if the hub is involved.
+      description: Output of the failing command — or of `steepy-formula graph validate` if the graph is involved.
       render: shell
   - type: input
     id: environment

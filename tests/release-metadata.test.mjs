@@ -339,7 +339,6 @@ test('README and linked guides document install paths and release safety notes',
     'runs Node.js scripts from the plugin package',
     'Core workflows do not require network access to third-party services; the runtime dependency set is a single pinned package (`neo4j-driver`, Apache-2.0) kept behind the engine adapter.',
     'Command-family effects matrix',
-    'review plugin hooks',
   ]) {
     assert.ok(readme.includes(required), `README must mention: ${required}`);
   }
@@ -348,6 +347,41 @@ test('README and linked guides document install paths and release safety notes',
     /writes `\.apex\/` governance files/,
     'README must not overstate graph-first init as writing `.apex/` governance files',
   );
+});
+
+test('README describes a graph-only product: tagline, modes, gate timing, and no hooks', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8');
+  const lines = readme.split('\n');
+
+  assert.ok(
+    lines.includes(readJson('.claude-plugin/plugin.json').description),
+    'the README tagline must be the plugin description, verbatim',
+  );
+  assert.doesNotMatch(readme, /Stop hook|stop-hook|validate-hub|hooks\/hooks|\blinter\b/i,
+    'README must not name the removed Stop hook, its wiring, or the Markdown linter');
+  assert.doesNotMatch(readme, /\blegacy\b/i, 'README carries no legacy-mode branch');
+  assert.match(readme, /The plugin ships no hooks/, 'README trust section must say the plugin ships no hooks');
+  assert.match(readme, /\*\*Graph-aware workflow chain\*\*/);
+  assert.doesNotMatch(readme, /Hub-aware workflow chain/);
+
+  const honest = readme.slice(readme.indexOf('## Keeping the docs honest'), readme.indexOf('## Data and external services'));
+  assert.match(honest, /`check`\/`review` time/, 'the gate runs at check/review time');
+  assert.match(
+    honest,
+    /migration hint reaches you through `steepy-formula hub-mode` and the generated bootstrap at the start of a task/,
+    'the migration hint reaches the user through hub-mode and the generated bootstrap',
+  );
+  assert.doesNotMatch(honest, /end of (?:each|a) (?:assistant )?turn|turn to end/i, 'no end-of-turn gate is claimed');
+
+  const hubModeRow = lines.find((line) => line.startsWith('| `steepy-formula hub-mode` |'));
+  assert.ok(hubModeRow, 'the CLI table must carry the hub-mode row');
+  for (const required of ['`graph`', '`migrate`', '`none`', '`graph-migrate`', '`init`']) {
+    assert.ok(hubModeRow.includes(required), `the hub-mode row must name ${required}`);
+  }
+
+  const migrateRow = lines.find((line) => line.startsWith('| `/steepy-formula:graph-migrate` |'));
+  assert.ok(migrateRow, 'the skills table must carry the graph-migrate row');
+  assert.match(migrateRow, /Migrate a steepy-apex `\.apex\/` hub into the graph/);
 });
 
 test('README pins the local .apex/work contract and drops stale stable-hub workflow claims', () => {
@@ -523,10 +557,14 @@ test('README documents the shipped graph product: CLI families, canonical author
     assert.ok(readme.includes(required), `README must mention: ${required}`);
   }
 
+  assert.doesNotMatch(readme, /legacy migration semantics|Legacy Markdown semantics/i,
+    'README replaces the legacy-semantics framing with the "Coming from steepy-apex" note');
+  const comingFrom = readme.indexOf('Coming from steepy-apex');
+  assert.ok(comingFrom >= 0, 'README must carry the "Coming from steepy-apex" note');
   assert.match(
-    readme,
-    /legacy migration semantics/i,
-    'README must frame the .apex Markdown hub as legacy migration semantics only',
+    readme.slice(comingFrom, comingFrom + 600),
+    /`\/steepy-formula:graph-migrate`/,
+    'the "Coming from steepy-apex" note must point at graph-migrate',
   );
   assert.doesNotMatch(
     readme,
@@ -759,11 +797,15 @@ test('COMMUNITY_SUBMISSION.md contains marketplace review copy and safety disclo
     'writes Claude Code agent and skill artifacts',
     'runs Node.js scripts from the plugin package',
     'Core workflows do not require network access to third-party services; the runtime dependency set is a single pinned package (`neo4j-driver`, Apache-2.0) kept behind the engine adapter.',
-    'Stop hook',
     'Apache-2.0',
   ]) {
     assert.ok(submission.includes(required), `COMMUNITY_SUBMISSION.md must mention: ${required}`);
   }
+  assert.doesNotMatch(submission, /Stop hook|stop-hook|validate-hub|routing-table|\blegacy\b/i,
+    'COMMUNITY_SUBMISSION.md describes a graph-only product: no Stop hook, linter, routing table, or legacy mode');
+  const migrateScenario = submission.split('\n').find((line) => line.includes('`.apex/_INDEX.md`'));
+  assert.ok(migrateScenario, 'the reviewer scenarios must cover a repository carrying a steepy-apex hub');
+  assert.match(migrateScenario, /run `hub-mode`[\s\S]*reports `migrate` and names `graph-migrate`/i);
 
   assert.doesNotMatch(
     submission,
@@ -854,4 +896,81 @@ test('manifest descriptions are graph-only and identical across every carrier', 
     assert.equal(value, marketplaceForm, `${label} must carry the marketplace description`);
     assert.doesNotMatch(value, /legacy|Markdown hub|mode-aware/i, label);
   }
+});
+
+test('RELEASE.md is graph-only: no linter step, no Stop hook, and D4 gates at check/review time', () => {
+  const release = readFileSync(join(root, 'RELEASE.md'), 'utf8');
+
+  // The linter survives only in the dated 2026-07-15 canary note (dated evidence stays dated).
+  const linterParagraphs = release.split(/\n\s*\n/).filter((paragraph) => /validate-hub/.test(paragraph));
+  assert.equal(linterParagraphs.length, 1, 'validate-hub may appear only in the dated canary note');
+  assert.match(linterParagraphs[0], /^\*\*Graph-first cells in rows 4–6/);
+  assert.doesNotMatch(release, /The Stop hook stays quiet|hooks\/hooks|stop-hook|legacy hubs/,
+    'RELEASE.md must not promise the removed Stop hook, its wiring, or legacy-hub canary cells');
+  assert.doesNotMatch(release, /--hub-mode/, 'the canary commands carry no --hub-mode flag');
+  assert.doesNotMatch(release, /can publish only after tests, hub coherence/,
+    'the release workflow runs no hub-coherence job');
+
+  const d4Start = release.indexOf('- **D4 — end-of-turn gate approximation.**');
+  assert.ok(d4Start >= 0, 'the D4 verification row must stay');
+  const d4 = release.slice(d4Start, release.indexOf('**Harness quirks observed'));
+  assert.match(d4, /No harness ships an end-of-turn hook/);
+  assert.match(d4, /`steepy-formula graph validate`\) runs at `check`\s*\/\s*`review` time/);
+  assert.match(d4, /\*\*Resolved 2026-07-15/, 'the dated resolution stays dated');
+  assert.doesNotMatch(d4, /hooks\/hooks|stays in the package/, 'D4 claims no shipped hook wiring');
+});
+
+test('contributor guide, GitHub templates, and the workflow-chain caption name the graph gate only', () => {
+  const read = (path) => readFileSync(join(root, path), 'utf8');
+
+  const contributing = read('CONTRIBUTING.md');
+  assert.doesNotMatch(contributing, /validate-hub|legacy linter/);
+  assert.match(contributing, /\*\*Knowledge stays coherent\*\* — the canonical graph passes `steepy-formula graph validate`\./);
+
+  const pullRequest = read('.github/pull_request_template.md');
+  assert.doesNotMatch(pullRequest, /validate-hub|anything the linter reads/);
+  assert.match(pullRequest, /^- \[ \] [^\n]*`steepy-formula graph validate`/m);
+
+  const bugReport = read('.github/ISSUE_TEMPLATE/bug_report.yml');
+  assert.doesNotMatch(bugReport, /validate-hub/);
+  assert.match(bugReport, /Output of the failing command — or of `steepy-formula graph validate` if the graph is involved\./);
+
+  const featureRequest = read('.github/ISSUE_TEMPLATE/feature_request.yml');
+  assert.doesNotMatch(featureRequest, /routing table|pre-1\.0/);
+
+  const chain = read('assets/workflow-chain.svg');
+  assert.doesNotMatch(chain, /validate-hub/);
+  assert.match(chain, />graph validate gate → PR</);
+});
+
+test('CHANGELOG.md records the graph-only break under Unreleased, above v1.0.0, without picking a version', () => {
+  const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
+  const unreleased = changelog.search(/^## Unreleased$/m);
+  const v100 = changelog.indexOf('## v1.0.0 (');
+  assert.ok(unreleased >= 0, 'CHANGELOG.md must carry a "## Unreleased" heading');
+  assert.ok(unreleased < v100, '"## Unreleased" must sit above "## v1.0.0"');
+  const entry = changelog.slice(unreleased, v100);
+
+  assert.match(entry, /\*\*Breaking:\*\*/);
+  assert.match(entry, /graph-only/);
+  assert.match(entry, /`\.apex\/_INDEX\.md`[\s\S]*`(?:steepy-formula )?hub-mode` reports `migrate`[\s\S]*exit 25[\s\S]*`graph-migrate`/);
+  for (const removed of [
+    '`scripts/validate-hub.mjs`',
+    'Stop hook',
+    '`hooks/`',
+    '`scripts/new-surface.mjs`',
+    // Split so this suite never reads as a consumer of a retired template source
+    // (tests/template.test.mjs scans tests/ for the literal paths).
+    ...[['_IN', 'DEX.md'], ['routing', '-row.md']].map(([prefix, suffix]) => `\`templates/${prefix}${suffix}\``),
+    '`render-claude-md.mjs`',
+    '`--routing-index`',
+    '`--standard`',
+    '`--hub-mode`',
+    '`--no-gate`',
+  ]) {
+    assert.ok(entry.includes(removed), `the Unreleased entry must name the removal of ${removed}`);
+  }
+  assert.match(entry, /OpenCode[^\n]*`\.formula\/config\.json`/);
+  assert.match(entry, /generated bootstrap and `AGENTS\.md` navigation[\s\S]*`migrate`[\s\S]*`graph-migrate`[\s\S]*`none`[\s\S]*`init`[\s\S]*`customized`/);
+  assert.match(entry, /allowlist sentence/);
 });

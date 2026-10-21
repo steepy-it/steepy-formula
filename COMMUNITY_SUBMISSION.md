@@ -17,14 +17,13 @@ Land governed project knowledge in a canonical Stable Knowledge Graph, route wor
 
 Your AI documentation stops rotting.
 
-steepy-formula creates a navigable documentation graph — a Markdown hub under `.apex/` in legacy mode, or the canonical Stable Knowledge Graph in graph mode — routes work by surface, and validates that the graph remains coherent as the project evolves.
+steepy-formula governs a repository's stable knowledge in the canonical Stable Knowledge Graph, routes work by surface, and validates that the graph remains coherent as the project evolves.
 
 ## What the plugin includes
 
 - Eleven canonical skills: `/steepy-formula:inception`, `/steepy-formula:init`, `/steepy-formula:graph-migrate`, `/steepy-formula:new-surface`, `/steepy-formula:check`, `/steepy-formula:brainstorm`, `/steepy-formula:plan`, `/steepy-formula:implement`, `/steepy-formula:review`, `/steepy-formula:discovery`, and `/steepy-formula:loop-engineer`.
-- A Stop hook that runs the legacy hub linter quietly when the hub is green — a no-op in graph mode, where the gate is `steepy-formula graph validate` at check/review time.
 - Node.js 24+ scripts for stack detection, hub validation, project scaffolding, and workflow controllers, plus the `steepy-formula` graph engine CLI (`graph` init/validate/export, `context resolve`, typed `promotion` create/preview/apply) that graph-first init gates on.
-- Templates for surface standards, specialist agents, routing-table rows, a managed `AGENTS.md` root, a thin `CLAUDE.md` import, and a canonical project bootstrap skill; the legacy `.apex/` hub templates remain for `legacy`-mode repositories.
+- Templates for specialist agents, a managed `AGENTS.md` root, a thin `CLAUDE.md` import, and a canonical project bootstrap skill.
 
 ## Runtime behavior and safety
 
@@ -34,7 +33,6 @@ steepy-formula creates a navigable documentation graph — a Markdown hub under 
 - steepy-formula runs Node.js scripts from the plugin package, and runs the graph engine as a local Docker container bound to localhost.
 - Core workflows do not require network access to third-party services; the runtime dependency set is a single pinned package (`neo4j-driver`, Apache-2.0) kept behind the engine adapter.
 - **Command-family effects matrix:** filesystem reads–writes–subprocesses–temporary state–providers/network are command-specific. Local validation/scaffolding, the graph families (`graph`, `context`, `promotion`), session-store reporting, version writes, review/controllers, inception runs, release evidence, live model mapping, and native installation/canaries have distinct effects.
-- Users should review the Stop hook during Claude Code plugin trust review.
 
 ## Validation before submission
 
@@ -66,7 +64,7 @@ final imported package in a repository-capable environment with Node 24, Git, an
 |---|---|---|
 | Positive | Initialize a small disposable Node repository with a working test command and Docker available. | Interview completes; the initial graph promotion is applied at confirmation; managed root, bootstrap, and per-surface agents are generated; check passes. |
 | Positive | Run check on a coherent initialized project. | Reports coherence (`steepy-formula graph validate` green) without changing project files. |
-| Positive | In a legacy `.apex/` hub, add a documentation link to a missing file, then run check. | Reports the broken reference with an actionable location. |
+| Positive | In a repository carrying `.apex/_INDEX.md`, run `hub-mode`. | Reports `migrate` and names `graph-migrate`. |
 | Positive | Brainstorm a small covered change and approve the resulting spec. | Publishes a READY local spec and the appropriate next-phase handoff. |
 | Positive | Add a new surface to an initialized project. | Registers the surface through a human-approved graph promotion and writes its native specialist adapters. |
 | Negative | Request an autonomous loop without a complete goal or commit authorization. | Refuses autonomous execution and identifies the missing inputs. |

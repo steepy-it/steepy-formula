@@ -19,6 +19,6 @@ body:
   - type: markdown
     attributes:
       value: |
-        steepy-formula is pre-1.0 with a deliberate design (hub, routing table, work artifacts).
+        steepy-formula has a deliberate design (canonical graph, surface routing, work artifacts).
         Feature PRs land only after the approach is agreed in an issue — that is what this template is for.
         See [CONTRIBUTING.md](../../blob/main/CONTRIBUTING.md).
