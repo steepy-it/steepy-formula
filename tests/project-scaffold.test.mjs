@@ -1213,6 +1213,128 @@ test('repair refuses two root mounts aliasing the same output before any write',
   }
 });
 
+test('repair detects a mount retargeted after staging before writing either destination', () => {
+  const hubRoot = seedGraphHub();
+  const outside = tempHub();
+  try {
+    const logical = join(hubRoot, 'AGENTS.md');
+    const first = join(outside, 'first.md');
+    const second = join(outside, 'second.md');
+    renameSync(logical, first);
+    copyFileSync(first, second);
+    symlinkSync(first, logical);
+    const desired = model({ description: 'Changed.',
+      resolutions: { 'v1:project-instructions:customized': 'replace',
+        'v1:web-agent-codex:customized': 'replace' } });
+    const plan = planProjectScaffold({ hubRoot, model: desired, templatesDir });
+    assert.deepEqual(plan.conflicts, []);
+    const before = fileState(outside);
+    assert.throws(() => applyProjectScaffold({ hubRoot, plan, checkpoint({ phase }) {
+      if (phase === 'after-staging') {
+        unlinkSync(logical);
+        symlinkSync(second, logical);
+      }
+    } }), /identity|TOCTOU/);
+    assert.deepEqual(fileState(outside), before);
+    assert.equal(readlinkSync(logical), second);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('canonical generated target and ancestor symlinks are closed planner symlink conflicts', async (t) => {
+  const cases = [
+    {
+      label: 'generated bootstrap target symlink',
+      artifactId: 'project-bootstrap',
+      path: '.agents/skills/portable-demo-bootstrap/SKILL.md',
+      mutate(hubRoot, outside) {
+        const target = join(hubRoot, this.path);
+        const mirror = join(outside, 'bootstrap.md');
+        copyFileSync(target, mirror);
+        unlinkSync(target);
+        symlinkSync(mirror, target);
+        return { link: target, destination: mirror };
+      },
+    },
+    {
+      label: 'generated adapter target symlink',
+      artifactId: 'web-agent-codex',
+      path: '.codex/agents/web-agent.toml',
+      mutate(hubRoot, outside) {
+        const target = join(hubRoot, this.path);
+        const mirror = join(outside, 'web-agent.toml');
+        copyFileSync(target, mirror);
+        unlinkSync(target);
+        symlinkSync(mirror, target);
+        return { link: target, destination: mirror };
+      },
+    },
+    {
+      label: 'generated bootstrap ancestor symlink',
+      artifactId: 'project-bootstrap',
+      path: '.agents/skills/portable-demo-bootstrap/SKILL.md',
+      mutate(hubRoot, outside) {
+        const ancestor = join(hubRoot, '.agents/skills/portable-demo-bootstrap');
+        const mirror = join(outside, 'portable-demo-bootstrap');
+        renameSync(ancestor, mirror);
+        symlinkSync(mirror, ancestor);
+        return { link: ancestor, destination: mirror };
+      },
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.label, () => {
+      const hubRoot = seedGraphHub();
+      const outside = mkdtempSync(join(tmpdir(), 'steepy-project-symlink-copy-'));
+      try {
+        const { link, destination } = scenario.mutate(hubRoot, outside);
+        const before = fileState(outside);
+        const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+        assert.deepEqual(plan.conflicts.find(({ artifactId }) => artifactId === scenario.artifactId), {
+          id: `v1:${scenario.artifactId}:symlink`,
+          artifactId: scenario.artifactId,
+          path: scenario.path,
+          reason: 'symlink',
+          choices: ['abort'],
+        });
+        assert.equal(plan.operations.some(({ artifactId }) => artifactId === scenario.artifactId), false);
+        assert.equal(readlinkSync(link), destination);
+        assert.deepEqual(fileState(outside), before, 'planning must be read-only');
+      } finally {
+        rmSync(hubRoot, { recursive: true, force: true });
+        rmSync(outside, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test('broken, cyclic, wrong-type, filesystem-root and work mounts are controlled planner symlink conflicts', () => {
+  const cases = {
+    broken: ['missing.md', 'symlink mount AGENTS.md could not be resolved safely'],
+    cycle: ['AGENTS.md', 'symlink mount AGENTS.md could not be resolved safely'],
+    'wrong-type': ['.claude', 'symlink mount AGENTS.md has wrong target type'],
+    'filesystem-root': ['/', 'symlink mount AGENTS.md targets the filesystem root'],
+    work: ['.apex/work/private.md', 'symlink mount AGENTS.md enters excluded .apex/work'],
+  };
+  for (const [kind, [destination, message]] of Object.entries(cases)) {
+    const hubRoot = seedGraphHub();
+    try {
+      const target = join(hubRoot, 'AGENTS.md');
+      unlinkSync(target);
+      put(hubRoot, '.apex/work/private.md', '# Work must stay excluded\n');
+      symlinkSync(destination, target);
+      assert.throws(() => bindProjectMount(hubRoot, 'AGENTS.md'), { message }, kind);
+      const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+      assert.ok(plan.conflicts.some(({ path, reason }) => path === 'AGENTS.md' && reason === 'symlink'),
+        `${kind}: ${JSON.stringify(plan.conflicts)}`);
+      assert.equal(readlinkSync(target), destination, kind);
+    } finally { rmSync(hubRoot, { recursive: true, force: true }); }
+  }
+});
+
 test('instruction and provider mounts into the inception area are symlink conflicts that keep the link', () => {
   const cases = [
     { name: 'AGENTS.md', destination: '.apex/inception/private.md' },
