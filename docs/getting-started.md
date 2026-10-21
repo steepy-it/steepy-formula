@@ -82,15 +82,15 @@ more reason every port stays bound to `127.0.0.1`.
    - lands everything as one promotion scenario: `promotion preview` → your approval →
      `promotion apply` (interactive confirm) → `graph validate` + `context resolve` green.
 3. *(optional, existing codebase)* **`/steepy-formula:discovery`** — a seeded interview fills
-   the hub from your code — the legacy hub docs, or the graph through a typed promotion
-   scenario, per the declared hub mode — every proposal confirmed by you.
+   the graph from your code through a typed promotion scenario — every proposal confirmed by you.
 4. Arriving from steepy-apex — your repo already has an `.apex/` Markdown hub?
    **`/steepy-formula:graph-migrate`** walks it into the graph instead (extraction → preview →
    approval → transactional apply → validate → cutover → archive); init itself does not
-   migrate a legacy hub.
+   migrate a steepy-apex hub.
 
-From here on, give your agent any task: the generated bootstrap skill declares the hub mode,
-resolves the task's context from the graph, and classifies it before touching code.
+From here on, give your agent any task: the generated bootstrap skill declares the hub mode
+(and stops in `migrate` or `none`, pointing at `graph-migrate` or `init`), resolves the task's
+context from the graph, and classifies it before touching code.
 
 ## 5. The engine lifecycle
 

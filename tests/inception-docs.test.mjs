@@ -158,7 +158,8 @@ test('inception guide covers the flow, helper, harnesses, and limits', () => {
   assert.match(guide, /`--option=<value>`/);
   assert.match(guide, /symlinked ancestor directory[\s\S]*named twice/i);
   assert.match(guide, /canonical[\s\S]*key order/i);
-  assert.match(guide, /missing `_INDEX\.md`/);
+  assert.match(guide, /`check` reports mode `none`/);
+  assert.doesNotMatch(guide, /Stop hook|validate-hub|_INDEX/);
   assert.match(guide, /no preset (application )?stack/i);
   assert.match(guide, /deferred/i);
   assert.match(guide, /delete[\s\S]*after (the )?discovery/i);
@@ -187,7 +188,8 @@ test('acceptance protocol covers both scenarios, evidence matrix, and setup rule
   assert.match(doc, /not a review criterion/i);
   assert.match(doc, /Scenario A[\s\S]*empty repository[\s\S]*`init`[\s\S]*`discovery`[\s\S]*inception source/i);
   assert.match(doc, /Scenario B[\s\S]*starter[\s\S]*(design system|prototype)[\s\S]*`init`[\s\S]*`discovery`[\s\S]*inception source/i);
-  assert.match(doc, /`git clone`[\s\S]*validate-hub\.mjs \.`[\s\S]*OK[\s\S]*without `\.apex\/inception\/` and `\.apex\/work\/`[\s\S]*`steepy-formula graph validate` is clean/i);
+  assert.match(doc, /`git clone`[\s\S]*without `\.apex\/inception\/` and `\.apex\/work\/`[\s\S]*`steepy-formula graph validate` is clean/i);
+  assert.doesNotMatch(doc, /validate-hub/);
   assert.match(doc, /interruption[\s\S]*between an effect's intent and its outcome[\s\S]*new session/i);
   assert.ok(doc.includes('| Run | Harness version | Plugin commit | Capabilities | Observed outcome | Observed human approver |'));
   for (const row of ['Claude Code A (with interruption)', 'Claude Code B', 'Codex A', 'Codex B']) {
@@ -195,7 +197,8 @@ test('acceptance protocol covers both scenarios, evidence matrix, and setup rule
   }
   assert.match(doc, /hand-written command sequence[\s\S]*not a proof/i);
   assert.match(doc, /model's approval is never recorded as a human approver/i);
-  assert.match(doc, /packaged plugin[\s\S]*installed steepy-formula release[\s\S]*disabled[\s\S]*`missing _INDEX\.md`/i);
+  assert.match(doc, /packaged plugin[\s\S]*installed steepy-formula release[\s\S]*disabled[\s\S]*older installed plugin/i);
+  assert.doesNotMatch(doc, /Stop hook|_INDEX/);
   assert.match(doc, /Scenario C is deferred out of v1/i);
   assert.match(norm(guideDoc()), /\[native acceptance protocol\]\(inception-acceptance\.md\)/);
 });
@@ -278,14 +281,15 @@ test('pre-merge rules agree across skills and guides', () => {
   assert.match(guide, /a blocked run with an edited approved document can still return to approval; a reserved completion binds from the frozen copies/);
   assert.match(guide, /While that intention is prepared, `classify` reports `resume-abandon` and every other `inception-state\.mjs` writer refuses/);
   assert.match(guide, /It promotes nothing until the last decision, then lands every accepted one as a typed graph candidate in a single promotion scenario/);
-  assert.match(guide, /inception-governance\.mjs documents/);
-  assert.match(guide, /formula's `init` produces graph-mode models only/);
+  assert.doesNotMatch(guide, /inception-governance\.mjs documents|legacy-mode model|For a legacy-mode model/);
+  assert.match(guide, /no `documents` step/);
   assert.doesNotMatch(guide, /recognized active lease/);
   const architecture = read('docs', 'architecture.md').split('\n');
   assert.match(architecture.find(line => line.startsWith('| `inception-snapshot.mjs` |')), /recognized scaffold lease/);
-  assert.match(architecture.find(line => line.startsWith('| `inception-governance.mjs` |')), /writes the certified stable documents/);
+  assert.match(architecture.find(line => line.startsWith('| `inception-governance.mjs` |')), /certifies no Markdown document/);
+  assert.doesNotMatch(architecture.find(line => line.startsWith('| `inception-governance.mjs` |')), /writes the certified stable documents/);
   const acceptance = read('docs', 'inception-acceptance.md').split('\n');
-  assert.match(acceptance.find(line => /complete → init → discovery/.test(line)), /Graph mode certifies no Markdown document[\s\S]*`\.formula\/`[\s\S]*reserved area/);
+  assert.match(acceptance.find(line => /complete → init → discovery/.test(line)), /Governance certifies no Markdown document[\s\S]*`\.formula\/`[\s\S]*reserved area/);
 });
 
 test('the graph promotes the pre-merge inception rules', { skip: DOGFOOD_CHECKPOINT_SKIP }, () => {

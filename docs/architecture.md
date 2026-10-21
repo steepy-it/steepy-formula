@@ -6,25 +6,24 @@ steepy-formula is a multi-harness product — one canonical core installed nativ
 
 ## Command-family effects matrix
 
-Filesystem reads–writes–subprocesses–temporary state–providers/network are not one global permission claim. Local validators read a repository while scaffolders and version transactions write it; the graph families (`graph`, `context`, `promotion`) run a local Docker engine, read the database credential from the secret-provider chain, and write curated knowledge only through a confirmed promotion (repository topology refreshes, restores, and schema migrations are explicit commands); observability may read a configured session store; review and controller workflows run tests, Git, and supported harness subprocesses with confined work state; release-evidence validation runs Git and `npm pack --dry-run` with a temporary cache but never a provider; live model-mapping verification can contact OpenCode/provider provenance; installation and native canaries use the selected host's cache, credentials, and network. Configured hooks describe wiring, while dated observations remain version-specific evidence rather than a current-runtime guarantee. The per-family table is under [Trust & safety](#trust--safety).
+Filesystem reads–writes–subprocesses–temporary state–providers/network are not one global permission claim. Local validators read a repository while scaffolders and version transactions write it; the graph families (`graph`, `context`, `promotion`) run a local Docker engine, read the database credential from the secret-provider chain, and write curated knowledge only through a confirmed promotion (repository topology refreshes, restores, and schema migrations are explicit commands); observability may read a configured session store; review and controller workflows run tests, Git, and supported harness subprocesses with confined work state; release-evidence validation runs Git and `npm pack --dry-run` with a temporary cache but never a provider; live model-mapping verification can contact OpenCode/provider provenance; installation and native canaries use the selected host's cache, credentials, and network. Dated observations remain version-specific evidence rather than a current-runtime guarantee. The per-family table is under [Trust & safety](#trust--safety).
 
 ```
 steepy-formula/
 ├── .claude-plugin/      # Claude Code plugin.json + marketplace.json + directory listing icon
-├── .codex-plugin/       # Codex plugin.json (skills, hooks, interface)
+├── .codex-plugin/       # Codex plugin.json (skills, interface)
 ├── .agents/plugins/     # marketplace.json — the repo as a Codex marketplace root
 ├── adapters/            # OpenCode plugin + Pi extension + dsh (DeepSeek Harness) plugin + MCP server (thin, dependency-free wiring)
 ├── skills/              # the 11 skills — the canonical, harness-neutral core
-├── scripts/             # Node executables the skills and hooks invoke
+├── scripts/             # Node executables the skills invoke
 │   └── formula/         # the Stable Knowledge Graph engine (core + engine adapters + CLI)
 ├── templates/           # the markdown the scaffolders render into a repo
-├── hooks/               # hooks.json (Claude) + hooks-codex.json — Stop-hook wiring
 └── tests/               # node --test suite + fixtures
 ```
 
 ## The Stable Knowledge Graph product
 
-Since the G4 cutover, the canonical authority for stable knowledge is the **Stable Knowledge Graph** — a typed, persistent, queryable graph database (spec criterion 12: the Markdown hub no longer participates in normal reads). The `.apex/` Markdown hub is preserved only as **legacy migration semantics** for one-time migration. The governance content itself lives in the graph: the migrated rules, the defined terms, and the ratified decisions.
+Since the G4 cutover, the canonical authority for stable knowledge is the **Stable Knowledge Graph** — a typed, persistent, queryable graph database (spec criterion 12: the Markdown hub no longer participates in normal reads). A repository that still carries a steepy-apex `.apex/` Markdown hub is a one-time migration source: the `graph-migrate` skill moves it into the graph. The governance content itself lives in the graph: the migrated rules, the defined terms, and the ratified decisions.
 
 ### Canonical terminology
 
@@ -53,9 +52,10 @@ The engine-independent domain core owns every graph behavior — it is the canon
 | `context-output.mjs` | The Layer 0–3 context layers, deterministic budget, and the versioned `context.json` / `context.md` contracts. |
 | `promotion.mjs` | Promotion Scenarios, the advisor, the typed diff report, and the sole-writer apply path with export-on-promotion. |
 | `scenario-assembly.mjs` | The typed-candidates → operations mapping behind `promotion create`: terms, rules, and decisions become graph operations (rules carry concern/strength and an APPLIES_TO edge; readme notes are reported out-of-graph; no `Check` is ever generated); reuses `promotion.mjs` for create/inspect — the schema's only interpreter. |
-| `hub-mode.mjs` | The one-per-run documentation-hub mode detection (`graph` / `legacy` / `none`) behind the top-level `hub-mode` CLI declaration — the single tested authority the chain skills invoke instead of re-implementing detection. |
+| `hub-mode.mjs` | The one-per-run documentation-hub mode detection (`graph` / `migrate` / `none`) behind the top-level `hub-mode` CLI declaration, with the next skill to run (`graph-migrate` for `migrate`, `init` for `none`) — the single tested authority the chain skills invoke instead of re-implementing detection. |
 | `schema-migrate.mjs` | The shadow-build schema migration workflow (transform → validate → cutover). |
-| `migrate-markdown.mjs` | The one-time legacy Markdown extraction with `file:line` provenance. |
+| `markdown-hub.mjs` | Recognizes a steepy-apex Markdown hub (`.apex/_INDEX.md`) and carries the shared refusal (exit 25) every workflow script raises while that hub is present. |
+| `migrate-markdown.mjs` | The one-time steepy-apex Markdown extraction with `file:line` provenance. |
 
 ### Engine port and adapters
 
@@ -73,7 +73,7 @@ The **capability map** is measured, never assumed: `roles: true`, `nativeConstra
 - `steepy-formula graph` — `init` (local engine lifecycle + topology), `validate`, `status`, `refresh`, `export`, `backup`, `restore`, `migrate-schema`.
 - `steepy-formula context resolve --path <p>... | --target <id>...` — emits `context.json` + `context.md` with the deterministic budget and failure codes.
 - `steepy-formula promotion create|preview|apply|discard` — `create` maps a typed candidates file into a draft scenario (invalid candidates exit 2 with the violation list; nothing is applied; the proposer is a typed `agent-proposer` actor); the typed diff IS the preview; `apply` refuses (exit 21) without an explicit human confirmation; the approver is a typed actor.
-- `steepy-formula hub-mode` — the top-level declaration command for the repo's documentation-hub mode (`graph` / `legacy` / `none`) with one evidence line; always exit 0 — a declaration for reports, not a gate.
+- `steepy-formula hub-mode` — the top-level declaration command for the repo's documentation-hub mode (`graph` / `migrate` / `none`) with one evidence line and, in `migrate` and `none`, a `next:` line naming the skill to run (`graph-migrate` or `init`); always exit 0 — a declaration for reports, not a gate.
 
 ### MCP server
 
@@ -93,32 +93,32 @@ Every promotion writes its ChangeSet and a **hash-chained Revision** in the same
 
 ## `scripts/` — the engine
 
-Pure Node, no dependencies beyond the graph adapter above. The skills and the hook shell out to these; `scripts/formula/` holds the graph engine described in the previous section.
+Pure Node, no dependencies beyond the graph adapter above. The skills shell out to these; `scripts/formula/` holds the graph engine described in the previous section.
 
 | Script | Responsibility |
 |---|---|
 | `reviewer-response.mjs` | Gates Gear-3 reviewer responses (status/artifact/signals only) with Git snapshots and replay-validated receipts, and binds task approval to its latest execution digest. The conductor requires task/final proof bound to the full plan contract and handoff, and verifies every execution ancestor against its exact phase manifest before accepting implementation. Retained approval keeps its original identity; active references advance atomically without rewriting history. The skill owns dispatch. |
 | `source-observation.mjs` | Observes branch, HEAD, index, tracked and nonignored untracked source using exact Git filenames; validates source paths separately from work artifacts and detects source continuation/drift. Unsupported submodules fail closed. |
 | `task-results.mjs` | Begins and captures immutable v2 task executions, freezes reports, resumes durable captured results without writer redispatch, projects JSON task indexes, and verifies lineage, all task reports, and current source. Same-task previous execution and latest global parent are separate links. Explicit retry executions can continue valid NEEDS_CONTEXT/BLOCKED results after a remedy while preserving partial work; malformed or ambiguous evidence cannot authorize retry. |
-| `autopilot-context.mjs` | Builds and validates versioned role-local context manifests, materializes the criteria-only review artifact, and exposes strict plan/handoff verification commands. Hub context is mode-aware: legacy hubs derive routed standards from the routing table, while graph mode resolves the context through `steepy-formula context resolve` (`resolveGraphHubContext`) into a confined run artifact, never the archived Markdown hub. |
+| `autopilot-context.mjs` | Builds and validates versioned role-local context manifests, materializes the criteria-only review artifact, and exposes strict plan/handoff verification commands. Hub context is the one resolved graph context: it resolves through `steepy-formula context resolve` (`resolveGraphHubContext`) into a confined run artifact, never the archived Markdown hub. |
 | `autopilot-observability.mjs` | Implements the dependency-free observability bridge: incremental framing, safe/exact raw persistence, event curation, redaction, and bounded multi-destination backpressure. |
-| `autopilot.mjs` | The **gear-3 autopilot conductor**. Parses the extended verdict-artifact contract at a spec head (frozen strict parser), writes deterministic versioned role manifests (including exact modular core/leaf references and scalar contract metadata), derives review evidence it can derive (criteria-only artifact, aggregate `git` diff from the run's baseline commit), then spawns `plan → implement → review` as fresh headless harness sessions — one child per finite phase/task lifecycle. Hub context for a concrete missing fact resolves through the canonical graph (`steepy-formula context resolve`), never the archived Markdown hub. It halts on `BLOCKED`, a mid-run `CONFLICT`, explicit safety/failure conditions, or I/O integrity failure; it always stops before bump/PR. |
+| `autopilot.mjs` | The **gear-3 autopilot conductor**. Parses the extended verdict-artifact contract at a spec head (frozen strict parser), writes deterministic versioned role manifests (including the resolved-context reference and scalar contract metadata), derives review evidence it can derive (criteria-only artifact, aggregate `git` diff from the run's baseline commit), then spawns `plan → implement → review` as fresh headless harness sessions — one child per finite phase/task lifecycle. Hub context for a concrete missing fact resolves through the canonical graph (`steepy-formula context resolve`), never the archived Markdown hub. It halts on `BLOCKED`, a mid-run `CONFLICT`, explicit safety/failure conditions, or I/O integrity failure; it always stops before bump/PR. |
 | `bump-version.mjs` | Stages and validates all three manifests, retains one durable recovery target, publishes by per-file atomic rename under the repository lease, and rejects incomplete transactions in `--check`. |
-| `capture-review-evidence.mjs` | The **bounded review-evidence collector**. Runs the surface test, optional Gear-4 verifier, and the declared mode's coherence gate (built-in `validate-hub` in legacy mode, the passed `--gate-command` graph gate, or `--no-gate` in mode `none`) in order; streams complete combined output to a confined current-run evidence artifact; emits only a compact hash/count/status/excerpt receipt to the reviewer context. Capture failure enters one awaited path that converges the detached child group and streams before closing its descriptor, and no later command starts. |
+| `capture-review-evidence.mjs` | The **bounded review-evidence collector**. Runs the surface test, optional Gear-4 verifier, and the coherence gate in order — a built-in `steepy-formula graph validate`, replaced verbatim by `--gate-command` when passed (there is no `--no-gate`); streams complete combined output to a confined current-run evidence artifact; emits only a compact hash/count/status/excerpt receipt to the reviewer context. Capture failure enters one awaited path that converges the detached child group and streams before closing its descriptor, and no later command starts. |
 | `cost-report.mjs` | Aggregates repository-scoped interactive-session usage and confined headless ledger/raw evidence into a harness-neutral observational cost and token report. |
 | `detect-stack.mjs` | Reads `package.json` / `pnpm-workspace.yaml` to detect the package manager and discover **surfaces** (workspace packages) with their test commands. Recognizes npm/pnpm/yarn/cargo/go/python; only the JS ecosystem is auto-discovered. |
 | `extract-changelog.mjs` | Extracts the exact `## vX.Y.Z` section body used as release notes, rejecting missing, malformed, or prefix-only version matches. |
 | `inception-protocol.mjs` | Validates and canonically renders v2 inception formats and provides token-bound publication primitives for confined staging, fsync, rename and exact-target verification. It never chooses phases, mutates descriptor state independently, or executes application commands. |
 | `inception-snapshot.mjs` | Observes complete application inventories and compares content/mode identity while excluding physically bound local workflow and Git areas, recognized scaffold lease directories and approved exclusions (before approval, the start exclusions) before traversal; Git status uses the same excluded set. |
 | `capture-inception-evidence.mjs` | Executes one approved inception check, seals separate output streams, and binds its receipt through the state helper; interrupted capture recovery never reruns the command. |
-| `inception-governance.mjs` | Prepares, writes the certified stable documents (exact bytes, mode 0644) and verifies exact init provenance, preserving completed inception evidence and rejecting application drift outside certified governance operations. A graph-mode model certifies no Markdown document: it binds the exact scaffold operations, and the stable knowledge lands through the graph's initialization promotion. |
+| `inception-governance.mjs` | Prepares and finishes exact init provenance, preserving completed inception evidence and rejecting application drift outside certified governance operations. Governance certifies no Markdown document and has no `documents` step: it binds the exact scaffold operations, and the stable knowledge lands through the graph's initialization promotion. |
 | `inception-state.mjs` | Records and verifies inception run state under `.apex/inception/`: the run descriptor, classification of the starting state, phase transitions, approval and checkpoint records, persisted units and the sole writer, full snapshots, immutable effect records, verification cycles/sessions, derived summary/completion, recoverable byte-reserved publication, resume notes, and descriptor-independent abandon. It never asks questions, chooses a phase, approves, or runs project commands. |
 | `live-scaffold-canary.mjs` | Builds an isolated scaffold fixture and binds every row to source revision, exact payload hash, product version, and installation composition. Claude/Codex/OpenCode can PASS only `descriptor-nonce-response`, an evidence slice rather than plugin-load or specialist proof; Pi and DSH remain descriptor-free for Steepy's deterministic runner and unsupported/unauthenticated outcomes stay `NOT RUN`. |
-| `loop-engineer.mjs` | The **terminal Gear-4 controller**. It validates the ratified goal and commit authorization, drives verifier-bounded attempts through an injected headless runner, enforces blast radius and controller-owned keep/discard commits, performs whole-branch review, resumes from durable events, and emits only validated terminal projections. Legacy mode binds the routing row (`--routing-index .apex/_INDEX.md --standard …`); graph mode takes `--graph-target apex:<projectId>:surface:<surface>` and resolves the surface context into the loop's `hub-context/`, recorded in `RUN_STARTED` so a resume under another mode or target halts with `HUB_MODE_DRIFT`. |
-| `project-scaffold.mjs` | Public v1 planner and applicator for portable project instructions. It validates a confirmed project model (including its `hubMode`), previews an explicit operation/conflict plan, applies it under an exclusive repository lock, and makes a second repair a zero-write no-op. The model's hub mode selects the rendered navigation and specialist orientation: graph mode points at `steepy-formula hub-mode` and `steepy-formula context resolve`, legacy mode at the routing table in `.apex/_INDEX.md`. |
+| `loop-engineer.mjs` | The **terminal Gear-4 controller**. It validates the ratified goal and commit authorization, drives verifier-bounded attempts through an injected headless runner, enforces blast radius and controller-owned keep/discard commits, performs whole-branch review, resumes from durable events, and emits only validated terminal projections. It takes `--graph-target apex:<projectId>:surface:<surface>` and resolves the surface context into the loop's `hub-context/`, recorded in `RUN_STARTED` so a resume under another binding or target halts with `HUB_MODE_DRIFT`. |
+| `project-scaffold.mjs` | Public v1 planner and applicator for portable project instructions. It validates a confirmed project model (including its `hubMode`), previews an explicit operation/conflict plan, applies it under an exclusive repository lock, and makes a second repair a zero-write no-op. The scaffold is graph-only: a model must declare `hubMode: graph`, and the rendered navigation and specialist orientation point at `steepy-formula hub-mode` and `steepy-formula context resolve`. |
 | `publish-directory-branch.mjs` | Builds the Claude directory payload commit from a source commit's tracked tree minus the root-anchored denylist (`tests/`, `.github/`, `.codex-plugin/`, `CLAUDE.md`) through a temporary index, leaving the working tree and real index untouched. It skips a version the branch already carries, refuses a lower one, parents each new commit on the previous payload commit with a `Source-Commit` trailer, and pushes to `claude-directory` without ever forcing. |
 | `push-version-guard.mjs` | Implements the development-only Claude PreToolUse guard that blocks invalid, equal or numerically downgraded versions on `git push` from `main`, while failing open for unrelated commands or unavailable Git state. |
-| `render-claude-md.mjs` | Root-instruction CLI. Its default (legacy) channel drives the public planner to maintain the managed `AGENTS.md` root spine and its thin `CLAUDE.md` import without overwriting user-owned bytes; `--mode graph` renders the root `CLAUDE.md` as the full project document carrying the graph navigation block between `<!-- steepy:start -->` / `<!-- steepy:end -->` markers (init's fresh render, graph-migrate's `--upsert` cutover), preserving user content outside the markers. |
+| `render-claude-md.mjs` | Root-instruction CLI. Graph-only: it renders the root `CLAUDE.md` as the full project document carrying the graph navigation block between `<!-- steepy:start -->` / `<!-- steepy:end -->` markers (init's fresh render, graph-migrate's `--upsert` cutover), preserving user content outside the markers; `--mode` accepts only `graph`, and the CLI refuses (exit 25) while a steepy-apex Markdown hub is present. |
 | `sanitize.mjs` | Provides shared dependency-free validation for safe relative paths, single-line values, YAML double-quoted scalars, non-root hub targets, and physical binding of supported project symlink mounts. |
 | `structural-promotion.mjs` | The graph-flow structural scaffolder: maps a structural input file (Project/Surface/Component skeleton plus approved Rules and Terms) into a DRAFT Promotion Scenario through the core `createScenario` — the seam the `init` and `new-surface` graph flows drive, because `promotion create` carries only typed knowledge candidates. From an approved `testCommand` it derives the surface's verification Rule and its Check with the command persisted as `ext_v1_command`; ADDs already present in the stable graph are skipped and reported, and nothing is ever applied — preview/apply stay behind the ordinary `steepy-formula promotion` commands. |
 | `template.mjs` | Performs strict pure-string `{{placeholder}}` substitution and rejects unknown template variables instead of leaking unresolved markers. |
@@ -241,10 +241,6 @@ parallel conductors require distinct Git worktrees. Deterministic process-group 
 only on tested `linux` and `darwin`, owns only the group it spawned, and is neither OS sandboxing nor
 containment of descendants that deliberately escape that group.
 
-## `hooks/` — the Stop hook
-
-`hooks.json` registers a single Claude Code `Stop` hook that runs `stop-hook.mjs` at the end of every turn. `hooks-codex.json` declares Codex wiring using `$PLUGIN_ROOT`; native loading and protocol compatibility depend on the host version and require a real-host check. On a compatible host, violations of a legacy Markdown hub produce a `decision: block` response; coherent or absent hubs stay silent, and so does a graph-mode repository, whose gate (`steepy-formula graph validate`) runs at `check`/`review` time. The hook does not re-block while `stop_hook_active` is set. The path is quoted to survive spaces. When native hooks are unavailable, `check` and `review` remain the explicit gates.
-
 ## Portable project instructions
 
 The public scaffold derives its output only from templates plus a confirmed project model:
@@ -266,10 +262,10 @@ project-scaffold v1 planner/applicator
 
 `AGENTS.md` is the only common root spine. The canonical bootstrap is harness-neutral in
 `.agents`; Claude reaches it through its thin stub. The triads are native routing and
-metadata only. The semantic authority depends on the model's `hubMode`: in graph mode it is the
+metadata only. The semantic authority is the
 canonical graph, reached through `steepy-formula hub-mode` and `steepy-formula context resolve`
 (there is no routing table, and the root `CLAUDE.md` is rendered separately with the graph
-navigation block); in legacy mode it is `.apex/_INDEX.md` and the surface standards. The scaffold emits ordinary files and supports existing symlink mounts at the
+navigation block). The scaffold emits ordinary files and supports existing symlink mounts at the
 repository entries `.apex`, `.agents`, `.claude`, `.codex`, `.opencode`, `AGENTS.md`, and
 `CLAUDE.md`. Repair updates their physical destinations while preserving the links. Descendant
 links remain refused. It never resolves a user-owned semantic conflict automatically.
@@ -279,7 +275,7 @@ degradation; that guidance does not hardcode a host project's bootstrap name.
 
 ## `templates/` — what gets scaffolded
 
-Markdown templates with `{{placeholder}}` variables — project instruction artifacts are rendered by the public planner; the graph-mode pair (`surface-agent-graph.md`, `bootstrap-skill-graph.md`) is completed by the `graph-migrate` and `new-surface` graph flows' prose; legacy hub sources such as `_INDEX.md` and `routing-row.md` are kept for legacy hubs and migration semantics. A script-substituted unknown placeholder throws, so a template typo on that path is a build error, not leaked output.
+Markdown templates with `{{placeholder}}` variables — project instruction artifacts are rendered by the public planner; the graph-mode pair (`surface-agent-graph.md`, `bootstrap-skill-graph.md`) is completed by the `graph-migrate` and `new-surface` graph flows' prose; A script-substituted unknown placeholder throws, so a template typo on that path is a build error, not leaked output.
 
 | Template | Becomes |
 |---|---|
@@ -295,16 +291,16 @@ Markdown templates with `{{placeholder}}` variables — project instruction arti
 
 Run with `npm test` (`node --test tests/*.test.mjs`) — no test framework, just the Node built-in runner. Coverage by concern:
 
-- **Engine:** `detect-stack`, `new-surface`, `structural-promotion`, `render-claude-md`, `validate-hub`, work-path confinement (`work-paths`), and bounded review-evidence capture — one suite each.
+- **Engine:** `detect-stack`, `new-surface`, `structural-promotion`, `render-claude-md`, `markdown-hub` (the steepy-apex hub recognizer), work-path confinement (`work-paths`), and bounded review-evidence capture — one suite each.
 - **Stable Knowledge Graph:** `formula-ontology`, `formula-ids`, `formula-engine-contract` (parameterized: in-memory + ArcadeDB), `formula-validate-graph`, `formula-revision`, `formula-export`, `formula-arcadedb` (docker-gated), `formula-topology`, `formula-resolve`, `formula-context-output`, `formula-promotion`, `formula-promotion-apply`, `formula-hub-mode`, `formula-scenario-assembly`, `formula-bakeoff-veto` (docker-gated), `formula-boundary` (docker-gated), `formula-envelope` (docker-gated), `formula-cli-graph`, `formula-cli-context`, `formula-schema-migrate`, `formula-migrate-md`, `formula-mcp`, `formula-e2e` (docker-gated).
-- **Scaffolding flow:** `init` (repair mode, non-destructive), `project-scaffold` (public planning/apply/conflict/lock behavior), `git-policy`, and `e2e-smoke` (a hub built from templates + one surface must lint green).
-- **Plugin wiring:** `hooks` (Stop-hook robustness), `workflow-skills` (the brainstorm→plan→implement→review skills are valid, hub-aware, and correctly chained), `release-metadata` (identity, README/RELEASE/COMMUNITY copy stay consistent).
+- **Scaffolding flow:** `init` (repair mode, non-destructive), `project-scaffold` (public planning/apply/conflict/lock behavior), `git-policy`, and `migrate-state` (the `migrate` hub-mode state: graph primitives keep working while every workflow script refuses).
+- **Plugin wiring:** `workflow-skills` (the brainstorm→plan→implement→review skills are valid, hub-aware, and correctly chained), `release-metadata` (identity, README/RELEASE/COMMUNITY copy stay consistent).
 - **Multi-harness:** `portability-contract` (zero `CLAUDE_*`/absolute paths in `skills/`, open-subset frontmatter, engine-root resolution), `adapters` (Codex manifests, OpenCode plugin, Pi extension, DeepSeek Harness plugin — behavior-tested with stub hosts), `canary-structural` (isolated-HOME, env-scrubbed engine runs through literal skill-relative paths), `npm-pack` (the tarball carries every manifest, adapter, skill, and script).
 - **Dogfood:** `dogfood-hub` imports the local-only recovery-checkpoint export of this repo's migrated graph (gitignored, so a fresh clone or CI skips these cases with an explicit reason), validates it, replays the chain, and resolves representative context.
 - **Autopilot and Gear 4:** `autopilot` (headless command builder, contract parser + refusal guards, and the conductor drive loop — hermetic fake-harness children, real signals, process-group kill verification), `task-results`, `reviewer-response`, `source-observation`, `workflow-state`, and `loop-engineer` (crash/replay of the terminal controller).
 - **Inception:** `inception-state`, `inception-protocol`, `inception-snapshot`, `inception-governance`, `inception-recovery`, `capture-inception-evidence`, `inception-application-scope`, `inception-skill`, and `inception-docs`.
 - **Release tooling:** `bump-version`, `version-policy`, `write-all`, `push-version-guard`, `publish-directory-branch`, `validate-release-evidence`, `release-workflow`, and `extract-changelog`.
-- **Fixtures:** `good-hub` / `bad-hub` (linter cases) and `pnpm-*` / `single-pkg` (stack-detection cases).
+- **Fixtures:** `good-hub` / `modular-hub` / `conflict-hub` (Markdown-hub migration cases) and `pnpm-*` / `single-pkg` (stack-detection cases).
 
 ## Superseded rules (post-cutover promotions)
 
@@ -314,7 +310,7 @@ The following former Hub rules are superseded in their post-cutover form:
 - **Anti-orphan rule superseded** — the Markdown "every doc reachable from `_INDEX.md`" rule is replaced by **semantic reachability from Project**: every curated stable node must be reachable from its Project root in the graph (a blocking validator invariant).
 - **Zero-dependency rule superseded** — replaced by the **bounded dependency policy**: a small, pinned, encapsulated dependency set (exactly one package today, `neo4j-driver`) is allowed behind the engine adapter; the stable domain model never exposes driver records.
 - **Stable/Work separation** — stable governance lives in the canonical graph; the Work Graph stays file-based, gitignored, and disposable under `.apex/work/`; deleting work files can never touch the graph.
-- **Markdown as legacy migration semantics only** — the current Markdown rules are preserved only as migration input until cutover; after cutover there is no permanent Markdown ↔ graph synchronization.
+- **Markdown as a one-time migration source** — a steepy-apex hub's Markdown rules are migration input only (`graph-migrate`); after cutover there is no permanent Markdown ↔ graph synchronization.
 
 ## Follow-ups (tracked debt)
 
@@ -368,7 +364,7 @@ Filesystem reads–writes–subprocesses–temporary state–providers/network v
 
 | Command family | Effects |
 |---|---|
-| Local validation and scaffolding | Reads the selected repository; scaffold/version commands write governed project files and durable transaction state. `validate-hub` is read-only. |
+| Local validation and scaffolding | Reads the selected repository; scaffold/version commands write governed project files and durable transaction state.  |
 | Graph families (`graph`, `context`, `promotion`, `hub-mode`) | `graph init` runs Docker: it pulls the pinned ArcadeDB image on first use, creates or reuses one container per project with every port bound to `127.0.0.1`, and writes the committed `.formula/config.json` project binding. Engine commands read the database password from the secret-provider chain (the macOS keychain through `security`, then the owner-only `.formula/secrets.json`, then `STEEPY_FORMULA_*` environment variables) and talk Bolt to the local container. `context resolve` writes `context.json`/`context.md` to its output directory and `graph export`/`graph backup` write snapshot files. Curated knowledge changes only through `promotion apply`, after explicit confirmation; `graph refresh` rewrites the observed repository topology under the automated-writer identity, `graph migrate-schema` rebuilds the graph through a shadow build and cutover, and `graph restore` overwrites a non-empty database only with `--force`, after a verified pre-restore backup. `hub-mode` only reads. |
 | Observability and usage reports | Reads repository ledgers and, unless disabled, the selected harness session store; it does not infer missing usage as zero. |
 | Review/controller workflows | Run declared tests, Git, and supported harness subprocesses; Gear-3/4 create confined work state and require their stated authorization. |
@@ -386,7 +382,7 @@ project; after a complete inception run it also writes the `.apex/init-provenanc
 certificate. It never writes a Markdown hub. This does not promise that every command writes only
 there; review the command family before granting trust.
 
-As with any plugin, review plugin hooks before trusting them: the full hook wiring is three small files, [`hooks/hooks.json`](../hooks/hooks.json) (Claude Code), [`hooks/hooks-codex.json`](../hooks/hooks-codex.json) (Codex), and [`scripts/stop-hook.mjs`](../scripts/stop-hook.mjs).
+The plugin ships no hooks, so there is no hook wiring to review before trusting it.
 
 ### Autopilot task execution receipts
 

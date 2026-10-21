@@ -2798,7 +2798,8 @@ test('docs/architecture.md documents the shipped Stable Knowledge Graph product 
     'Stable Knowledge Graph',
     'semantic reachability from Project',
     'bounded dependency policy',
-    'legacy migration semantics',
+    'graph-migrate',
+    'one-time migration',
   ]) {
     assert.match(architecture, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'), `architecture must document: ${required}`);
   }

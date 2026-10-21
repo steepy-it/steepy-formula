@@ -4,7 +4,7 @@ This protocol is a release gate after review. It is not a review criterion: revi
 
 ## Setup rule
 
-Every run loads the packaged plugin under test (a branch or a release tag), with the installed steepy-formula release disabled. An older installed Stop hook reports `missing _INDEX.md` on every inception turn and spoils the evidence. Record the loaded plugin commit in the matrix.
+Every run loads the packaged plugin under test (a branch or a release tag), with the installed steepy-formula release disabled. An older installed plugin can interfere with an inception turn and spoil the evidence. Record the loaded plugin commit in the matrix.
 
 ## Scenarios
 
@@ -44,7 +44,7 @@ Run these through the packaged skill, in new sessions where indicated. They supp
 | manual confirmation missing | An automatic green cannot satisfy a manual or both-type required check. One explicit human response may cover multiple named checks/procedures. |
 | application fix during verification | New cycle reruns all required automatic and manual checks; no impact-based selection of old successes. Earlier failed evidence remains historical. |
 | unchanged verification resume | Snapshot-policy success remains applicable; mutable-resource reobserve gets new session-bound evidence. Missing reobservation stays necessary without rerunning unrelated valid checks. |
-| complete → init → discovery | init-provenance pending/final receipts certify exact governance operations; resume pending init with the retained original plan and idempotent public apply after a resolved replacement. Graph mode certifies no Markdown document: the `.formula/` binding written by `graph init` is a reserved area, never drift, and the initialization promotion lands the stable knowledge. Completed source/evidence stays byte-identical. |
+| complete → init → discovery | init-provenance pending/final receipts certify exact governance operations; resume pending init with the retained original plan and idempotent public apply after a resolved replacement. Governance certifies no Markdown document: the `.formula/` binding written by `graph init` is a reserved area, never drift, and the initialization promotion lands the stable knowledge. Completed source/evidence stays byte-identical. |
 | application drift after complete/init | Inception source rejects only this import; ordinary discovery remains available. No old-decision fallback, reopening or bootstrap replay. Foreign provider files and unmanaged root edits remain visible. |
 | final abandon interrupted after descriptor move | `abandon --resume` uses canonical intention/child identities, preserves the intact archive, ends with a receipt, and never restarts automatically. Repeating it is a verified no-op. |
 
@@ -52,7 +52,7 @@ Include publication interruptions before/after staging, ordered target prefixes 
 
 ## Copy validation
 
-A copy of only the versioned files (for example a `git clone` of the branch) must validate: `node <engine-root>/scripts/validate-hub.mjs .` prints OK without `.apex/inception/` and `.apex/work/`, and `steepy-formula graph validate` is clean against the initialized graph. Check this after each completed scenario.
+A copy of only the versioned files (for example a `git clone` of the branch) must validate without `.apex/inception/` and `.apex/work/`: `steepy-formula graph validate` is clean against the initialized graph. Check this after each completed scenario.
 
 ## Evidence rules
 

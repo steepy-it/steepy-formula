@@ -114,7 +114,7 @@ The adapter registers eleven `steepy-formula-<skill>` commands, a model-invocabl
 ### Requirements
 
 - **A supported harness** — Claude Code, Codex, OpenCode, Pi Coding Agent, or DeepSeek Harness. One canonical skill set serves all five; where a harness lacks a capability (subagent dispatch, per-dispatch model choice), the skills degrade along a declared path — stated in the output, never silent.
-- **Node.js >= 24** — the graph CLI (`steepy-formula`), the legacy hub linter (`validate-hub.mjs`), and the scaffolders run on Node. The harness machinery uses Node built-ins only; the graph engine adapter adds exactly one pinned dependency, `neo4j-driver` (Apache-2.0), declared in `package.json`: an npm install resolves it, and a checkout installs it from the committed lockfile with `npm ci`. Node 24 is the supported runtime floor; CI validates Node 24.
+- **Node.js >= 24** — the graph CLI (`steepy-formula`) and the scaffolders run on Node. The harness machinery uses Node built-ins only; the graph engine adapter adds exactly one pinned dependency, `neo4j-driver` (Apache-2.0), declared in `package.json`: an npm install resolves it, and a checkout installs it from the committed lockfile with `npm ci`. Node 24 is the supported runtime floor; CI validates Node 24.
 - **The `steepy-formula` CLI on PATH** — skills and the generated project instructions call it by
   name. Claude Code provides it through the plugin's `bin/`. On Codex, OpenCode, Pi, and DeepSeek
   Harness, install it once: `npm ci --omit=dev && npm link` inside a checkout, or
@@ -151,10 +151,10 @@ A successful graph-first `init` provisions the local engine, lands the initial g
 promotion you confirm, and writes the local `.apex/work/` area, project instructions, the
 specialist adapters, the root `CLAUDE.md`, and the committed `.formula/config.json` binding — it
 never creates a Markdown hub (`.apex/_INDEX.md`). `check` should then report a coherent graph
-(`steepy-formula graph validate`). A repository that already carries a legacy `.apex/` hub is routed
+(`steepy-formula graph validate`). A repository carrying a steepy-apex `.apex/` hub is routed
 to `graph-migrate` instead. See [getting started](getting-started.md) for the engine lifecycle,
 [workflow](workflow.md) for subsequent tasks, and [architecture](architecture.md) for command
-effects, hooks, and adapter boundaries. Pi and DeepSeek have no Steepy deterministic runner for
+effects and adapter boundaries. Pi and DeepSeek have no Steepy deterministic runner for
 Gear-3 autopilot or Gear-4 loops.
 
 ## Upgrading an existing hub
@@ -164,21 +164,16 @@ After you update the plugin, run `check` in each repository it governs.
 ### Specialist adapters
 
 This release ports the steepy-apex v1.2.0 specialist adapter templates: each Claude and OpenCode
-description names its surface and path, and a legacy adapter reaches its standard through the
-surface's row in the routing table. The generated provenance stays `v1`, and no earlier rendering
+description names its surface and path. The generated provenance stays `v1`, and no earlier rendering
 is recognized, so an adapter written by an earlier version — even an untouched one — is a
 `<agent> <harness> adapter at <path> is customized` conflict that only an explicit `replace`
 resolves. Copy out any hand edits first: `replace` rewrites the adapter to the current rendering.
 
-- **Graph mode.** `check` (`steepy-formula graph validate`) does not inspect adapters, and an
-  `init` re-run only reports. Preview the portable scaffold planner with your confirmed project
-  model (`node <engine-root>/scripts/project-scaffold.mjs --hub . --model <model.json>`), set
-  `replace` for each listed adapter conflict in the model's `resolutions`, then apply the
-  zero-conflict plan with `--apply`.
-- **Legacy hubs** (`.apex/_INDEX.md`). `check` and the Stop hook report the conflict, and the
-  Stop hook blocks. Run `/steepy-formula:new-surface` repair for the surface and choose `replace`
-  (`--resolution <id>=replace`), or move the hub into the graph with
-  `/steepy-formula:graph-migrate`.
+`check` (`steepy-formula graph validate`) does not inspect adapters, and an `init` re-run only
+reports. Preview the portable scaffold planner with your confirmed project model
+(`node <engine-root>/scripts/project-scaffold.mjs --hub . --model <model.json>`), set `replace` for
+each listed adapter conflict in the model's `resolutions`, then apply the zero-conflict plan with
+`--apply`. A steepy-apex hub is migrated with `/steepy-formula:graph-migrate`.
 
 ### In-flight runs and stored formats
 

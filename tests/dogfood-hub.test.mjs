@@ -632,7 +632,7 @@ test('stable documentation locks the context-efficient autopilot contract and ne
   const architecture = readFileSync(join(repoRoot, 'docs', 'architecture.md'), 'utf8');
   const workflow = readFileSync(join(repoRoot, 'docs', 'workflow.md'), 'utf8');
   assert.match(workflow, /verdict\/gear\/drive come from manifest contract scalars/i);
-  assert.match(workflow, /every matching leaf[^.]*concrete reason/i);
+  assert.doesNotMatch(workflow, /every matching leaf|legacy mode|legacy repos/i, 'workflow carries no modular-leaf or legacy-hub prose');
   assert.doesNotMatch(architecture, /phase timeout/i, 'healthy work must not halt on a phase timeout');
   assert.match(architecture, /finite phase\/task lifecycle/i);
   assert.match(architecture, /effective abstract controller tier/i);
