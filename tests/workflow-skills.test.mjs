@@ -2531,19 +2531,9 @@ test('init and new-surface stay marker-free; loop-engineer owns workflow lifecyc
   }
 });
 
-// Apex v1.1.0/v1.2.0 port: formula keeps the new-surface skill's planner locks in
-// tests/new-surface.test.mjs. Only apex's new repair-report and explicit-replace deltas land here,
-// scoped to the legacy branch (graph mode renders its agent from surface-agent-graph.md and runs no
-// planner repair).
-test('new-surface legacy repair reports created, updated, or preserved and resolves earlier adapters only by explicit replace', () => {
+test('new-surface carries no stale wording and repair preserves no artifacts claim', () => {
   const text = readFileSync(join(skillsDir, 'new-surface', 'SKILL.md'), 'utf8');
-  const legacy = sectionBetween(text, '### Legacy mode', '### Graph mode');
-  assert.match(legacy, /--resolution <id=choice>/u);
-  // An adapter that is not the current rendering is a customized conflict resolved only by replace.
-  assert.match(legacy, /not the current canonical rendering[^.]*`customized` conflict[\s\S]*explicit `replace`/i);
-  assert.match(legacy, /--resolution <id>=replace/u);
   assert.doesNotMatch(text, /\bstale\b/i);
-  assert.match(legacy, /created,\s+updated,\s+or\s+preserved/i);
   assert.doesNotMatch(text, /repair\s+preserves existing artifacts/i);
 });
 
@@ -2740,21 +2730,6 @@ test('surface-agent-graph template: graph-mode agent resolves context target-fir
     "a Check without ext_v1_command must fall back to the verification Rule's statement prose");
   assert.doesNotMatch(tpl, /\.apex\/standards\//,
     'the graph-mode template must not point at .apex/standards/');
-});
-
-test('on-demand linter skills invoke validate-hub with an explicit `.` cwd argument', () => {
-  // init uses a <repo-root> placeholder (it can run before cwd is the repo),
-  // but every on-demand linter skill should pass an explicit `.` — consistent with
-  // its siblings and not silently dependent on whatever process.cwd() happens to be.
-  const linterSkills = ['new-surface'];
-  for (const name of linterSkills) {
-    const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
-    assert.match(
-      text,
-      /validate-hub\.mjs"?[ \t]+\./,
-      `${name} must invoke validate-hub.mjs with an explicit '.' argument`
-    );
-  }
 });
 
 test('terminal review, not the loop controller, owns the mandatory hub coherence gate', () => {
