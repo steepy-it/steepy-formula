@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: Turn an idea into a local working spec under .apex/work/specs/. Classifies the idea against the routing table, dialogues one question at a time, proposes approaches, and on approval writes the spec as a gitignored work artifact.
+description: Turn an idea into a local working spec under .apex/work/specs/. Classifies the idea against the resolved graph context, dialogues one question at a time, proposes approaches, and on approval writes the spec as a gitignored work artifact.
 user-invocable: true
 ---
 <!-- steepy:manual-handoff:v1:start -->
@@ -129,14 +129,14 @@ Turn an idea into a local working spec informed by the hub. Do not write code or
 
 ## Checklist
 0. Derive coverage and gear from the human request and stable routed evidence; obtain ratification (Step 0).
-1. Orient against the hub for the mode declared by `steepy-formula hub-mode` (graph: `context resolve`; legacy: routing table + routed owning surface standard).
-1.5. Resolve a CONFLICT (doc-wins, or override) or GAP (explore-first, then write-back or brainstorm) verdict; the write-back channel branches on the hub mode declared via `steepy-formula hub-mode`.
+1. Orient against the graph (`context resolve`).
+1.5. Resolve a CONFLICT (doc-wins, or override) or GAP (explore-first, then brainstorm) verdict.
 2. Understand the idea — grill it against the hub, one question at a time (gear 2–3).
 3. Propose 2–3 approaches.
 4. Present the design as a draft in `.apex/work/specs/` and get approval, section by section (gate).
 5. Finalize the approved draft — fold in the review changes; the header stays `status: DRAFT` until the approval gate passes.
 5.5. Self-review the spec inline — free gate, gear 2 and 3 (Step 5.5).
-6. Validate the stable hub with `validate-hub.mjs` (deterministic gate).
+6. Validate the graph with `steepy-formula graph validate` (deterministic gate).
 7. Human review gate — ask the user to review the written spec, then choose drive mode: manual or autopilot (gear 3).
 8. Hand Gear 2 directly to `implement`; hand Gear 3 to `plan` (Step 8).
 
@@ -161,8 +161,8 @@ own user-delimited scope; the fresh entry's `required: none` grants no such read
 
 Scale this skill's ceremony to the gear (see "Ceremony by gear" below). This skill dispatches **no
 subagent reviewer**: a spec is prose, gated by the inline self-review (Step 5.5) plus a human review
-of the written spec (Step 7), per the "Review architecture (gear 3)" governance rule — recorded in
-`conventions.md` in legacy mode, and as a Rule in the canonical graph in graph mode.
+of the written spec (Step 7), per the "Review architecture (gear 3)" governance rule —
+recorded as a Rule in the canonical graph.
 
 **Session declaration (declare, never block).** Say whether this conversation started clean for this
 phase or has already run an earlier phase of the chain in the same session. A same-session phase
@@ -178,7 +178,7 @@ here is already enforced by that mechanism, not by this prose.
 - **Gear 1** (COVERED + low-value): produce NO spec — state the task is COVERED + low-value, cite
   the governing rule, hand straight to the specialist agent, and stop.
 - **Gear 2** (COVERED + high-value, or GAP + low-value): write a light spec that still carries the
-  Step 5 machine contract, self-review it (Step 5.5), run `validate-hub`, **skip Step 7**, and hand
+  Step 5 machine contract, self-review it (Step 5.5), run `steepy-formula graph validate`, **skip Step 7**, and hand
   the READY spec directly to
   `implement`. A light plan remains an explicit opt-in when the user already requested one or the
   spec cannot become one independently testable implementation task.
@@ -188,7 +188,7 @@ here is already enforced by that mechanism, not by this prose.
 ### Step 1 — Orient against the hub
 
 **Declare the hub mode first.** Run `steepy-formula hub-mode` and carry its declared mode —
-`graph`, `legacy`, or `none`, each printed with one `evidence:` line — through the rest of the
+`graph`, `migrate`, or `none`, each printed with one `evidence:` line — through the rest of the
 run. This is the same once-per-run
 declaration Step 1.5 governs (declared here, it is not re-declared there): the command always
 exits 0, it is a declaration, not a gate, and the command is the single authority — this prose
@@ -199,8 +199,7 @@ never re-implements its detection. The declared mode branches the orientation:
   `context.json` + `context.md`). The resolved context supplies the owning **surface** (or shows
   the idea is cross-cutting), its Rules — the standards-equivalent the design must respect — and
   its Terms. The bound specialist agent is `.claude/agents/<surface>-agent.md` by naming
-  convention (there is no routing table in graph mode). Read no Markdown hub file: graph-first
-  init never creates one, and none is required here. On exit 10 UNRESOLVED — normal in a
+  convention. On exit 10 UNRESOLVED — normal in a
   freshly graph-first-initialized repo, where no topology bridge links the detected Packages
   to the curated Components yet — fall back to the deterministic surface targets:
   `steepy-formula context resolve --target apex:<projectId>:surface:<slug(name)>` for each
@@ -212,19 +211,11 @@ never re-implements its detection. The declared mode branches the orientation:
   `steepy-formula graph status` — exit 3, `initialized: no`, or an engine failure means the
   graph binding is missing or failed: tell the user to run the `init` skill (invoke it the way
   your harness invokes skills) first and stop.
-- **`legacy` mode:** read `.apex/_INDEX.md` in full. Using the routing table, classify the idea
-  to its owning **surface** (or note it as cross-cutting),
-  then follow the exact standard links in the routing row: load its single-file standard or
-  modular core. For a core, match the mini-routing conditions against the current idea's
-  paths/topics, read every matching leaf in table order, and record the concrete reason for each
-  selection in the new spec. Zero matches means core only. Never manufacture
-  `.apex/standards/<surface>.md`, read unrelated leaves, or use a read-all fallback. The same
-  actual matched paths govern any later surface write-back; a filename convention is not routing
-  authority.
-- **Mode `none`:** no hub on either channel — the repo is not initialized. The "not initialized"
-  signal in graph-first repos is the missing graph binding (`steepy-formula graph status`), never
-  a missing `.apex/_INDEX.md`. Tell the user to run the `init` skill (invoke it the way your
-  harness invokes skills) first and stop.
+- **`migrate` mode:** the repo still carries a pre-graph Markdown hub.
+  Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow.
+- **Mode `none`:** no graph — the repo is not initialized. The "not initialized" signal is the
+  missing graph binding (`steepy-formula graph status`). Tell the user to run the `init` skill
+  (invoke it the way your harness invokes skills) first and stop.
 
 ### Step 1.5 — Resolve a CONFLICT or GAP verdict
 
@@ -233,35 +224,28 @@ If Step 0's verdict was COVERED, skip this step. Otherwise, resolve the verdict 
 **Hub-mode declaration (once per run).** Step 1's orientation already made this declaration; if
 this run somehow reaches its first hub-delta decision without it — here, or later when
 a Step 2 delta routes back to this channel — run `steepy-formula hub-mode` and carry its declared
-mode — `graph`, `legacy`, or `none`, each printed with one `evidence:` line — through the rest of
-the run. The command always exits 0: it is a declaration, not a gate, and this prose never
-re-implements its detection — the command is the single authority. The mode branches the
-write-back channel (see "Write-back routing" below): in `graph` mode brainstorm NEVER mutates the
-hub — no graph mutation, no `.apex/*.md` edit — every delta (a term, a latent convention, a
-CONFLICT override) is recorded in the spec as a typed deferred proposal (Step 5) for downstream
-review's sweep to promote; in `legacy` mode the write-back routing runs exactly as today; in
-`none` mode there is no hub on either channel — nothing to write back, deltas stay in the spec as
-typed deferred proposals.
+mode — `graph`, `migrate`, or `none`, each printed with one `evidence:` line — through the rest of
+the run, stopping as Step 1 does for `migrate` and `none`. The command always exits 0: it is a
+declaration, not a gate, and this prose never re-implements its detection — the command is the single authority.
+Brainstorm NEVER mutates the hub — no graph mutation, no `.apex/*.md` edit —
+every delta (a term, a latent convention, a
+CONFLICT override) is recorded in the spec as a
+typed deferred proposal (Step 5) for downstream review's sweep to promote.
 
 **On CONFLICT** (Step 0 found that a hub rule and the intended change contradict): stop
 and surface the contradiction with its `file:line` citation. Default is **doc-wins**: the plan
 bends to the documented rule — but never silently. Tell the user what the rule says and ask them
 to confirm doc-wins, or to declare an explicit override.
 - **Confirm** → proceed under the documented rule.
-- **Override** → in `legacy` mode, the doc changes: rewrite the governing doc
-  (`standards/<surface>.md` or `conventions.md`) to state the new rule and its why in
-  active form only — a stable doc never carries the superseded rule (history lives in git
-  and the spec). In `graph` mode, never touch the hub from here: record the override in the spec as a
+- **Override** → never touch the hub from here: record the override in the spec as a
   typed deferred proposal (Step 5) and proceed under the new rule on this branch — downstream
   review's sweep promotes it, so the temporary doc-vs-reality divergence it leaves is recorded,
   explicit, never silent. Code and doc must never diverge silently.
 
 **On GAP** (no rule decides it): **explore the codebase first**, before any user brainstorm.
 - A **consistent latent convention** (≥2–3 concordant occurrences) means the code already decided
-  it → do NOT brainstorm; route it by the declared hub mode — in `legacy` mode **write it back**
-  to the hub (see "Write-back routing" below) so it becomes COVERED; in `graph` mode record it in
-  the spec as a typed deferred proposal (Step 5) and follow it for this run — the hub catches up
-  at promotion. Then proceed.
+  it → do NOT brainstorm; record it in the spec as a typed deferred proposal (Step 5) and
+  follow it for this run — the hub catches up at promotion. Then proceed.
 - A **single isolated precedent** is weak → surface it to the user ("one precedent here — elevate
   to a rule or treat as a one-off?"); do not canonise automatically.
 - **No precedent** → a genuine design gap → brainstorm with the user (Steps 2–4).
@@ -270,8 +254,8 @@ to confirm doc-wins, or to declare an explicit override.
 
 **Gear 2 and 3.** Grill the idea against the hub, one question at a time — surface and sharpen, don't just collect requirements. Treat the open decisions as a **design tree**: each decision branches into the ones that hang off it. Work the tree in dependency order — never ask a decision whose prerequisites are still unsettled. Split facts from decisions: **facts** are this skill's job — explore the codebase instead of asking; never ask the user for something look-up-able. **Decisions** are the user's — put each one to them and wait. Ask multiple-choice when possible and recommend an answer. Focus on purpose, constraints, and success criteria — and challenge along these hub-aware dimensions:
 
-- **Sharpen terminology against the glossary.** When a term conflicts with, or is vaguer than, the canonical terms channel for the declared mode — the resolved context's Terms in `graph` mode, `.apex/glossary.md` in `legacy` mode — call it out and propose the canonical term ("you say 'doc' — Standard, Convention, Glossary, or a Work artifact? Those are different things in the hub").
-- **Probe concrete edge-case scenarios.** Stress the hub relationships the idea touches with specific invented scenarios — surface ownership, durable decision vs work artifact, when the anti-orphan rule bites — and force a precise answer.
+- **Sharpen terminology against the resolved context's Terms.** When a term conflicts with, or is vaguer than, the resolved context's Terms, call it out and propose the canonical term ("you say 'doc' — Rule, Term, Decision, or a Work artifact? Those are different things in the hub").
+- **Probe concrete edge-case scenarios.** Stress the hub relationships the idea touches with specific invented scenarios — surface ownership, durable decision vs work artifact, graph reachability from the Project root — and force a precise answer.
 - **Cross-reference the code for Drift.** When the user states how something works, check whether the code agrees (`scripts/`, `skills/`, `templates/`, `tests/`); surface any divergence between the docs and reality.
 
 **Exit criterion.** Step 2 is done when every branch of the design tree has been visited and nothing is left silently assumed, and the user confirms shared understanding.
@@ -331,7 +315,7 @@ For every new gear-2 and gear-3 spec, use this canonical machine-readable metada
 
 Do not place cross-cutting surfaces inside the owning-surface value. The finalized spec records exactly one `Feature complexity: mechanical | integration | design` field, selecting the one value that describes the feature as a whole.
 
-If the Step 2 grilling surfaced a **speculative hub-delta** (a term or rule worth promoting once the work proves it), or Step 1.5 routed a delta here under `graph` mode (a term, a latent convention, a CONFLICT override), record it in the spec as a **typed deferred proposal** — never a canonised hub edit; downstream review's sweep promotes it if it holds. Type every deferred proposal with the candidate schema that sweep consumes mechanically — the same typed-candidates file `steepy-formula promotion create` reads, whose wrapper (`scripts/formula/core/scenario-assembly.mjs`) is that schema's only interpreter; this prose maps nothing itself:
+If the Step 2 grilling surfaced a **speculative hub-delta** (a term or rule worth promoting once the work proves it), or Step 1.5 routed a delta here (a term, a latent convention, a CONFLICT override), record it in the spec as a **typed deferred proposal** — never a canonised hub edit; downstream review's sweep promotes it if it holds. Type every deferred proposal with the candidate schema that sweep consumes mechanically — the same typed-candidates file `steepy-formula promotion create` reads, whose wrapper (`scripts/formula/core/scenario-assembly.mjs`) is that schema's only interpreter; this prose maps nothing itself:
 
 - `term` — `term` + `definition`;
 - `rule` — `title` + `statement`, plus `concern`, `strength` (`must`|`should`), and `appliesTo`
@@ -340,7 +324,7 @@ If the Step 2 grilling surfaced a **speculative hub-delta** (a term or rule wort
 
 README/user-facing deltas are not typed candidates — they stay prose notes in the spec (out of graph V1) and are promoted by direct edit, as today.
 
-Do not register the spec in `.apex/_INDEX.md` and do not create a specs sub-index.
+Do not create a specs sub-index.
 Specs are local workflow artifacts, not stable hub documentation.
 
 ### Step 5.5 — Self-review the spec (free gate)
@@ -352,46 +336,23 @@ Read the spec you just wrote with fresh eyes and fix any of these inline — no 
 2. **Internal consistency** — do the design, success criteria, and architecture agree with each other?
 3. **Scope check** — is this focused enough for a single plan, or does it need decomposition first?
 4. **Ambiguity check** — could a requirement be read two ways? Pick one and make it explicit.
-5. **Hub binding** — is the owning surface stated correctly, and — if Step 1.5 produced a hub delta — was it routed for the declared hub mode (legacy: the write-back was actually written; graph: the typed deferred proposal was actually recorded in the spec)?
+5. **Hub binding** — is the owning surface stated correctly, and — if Step 1.5 produced a hub delta — was the typed deferred proposal actually recorded in the spec?
 6. **Feature complexity** — is there exactly one `Feature complexity` field, and is its value exactly `mechanical | integration | design`?
 7. **Machine contract** — does the spec contain the canonical ownership fields, exactly one literal `## Success criteria` H2, and unique sequential `SC1`…`SCn` IDs?
 
 ### Write-back routing
 
-When a GAP resolution or a CONFLICT override yields a durable decision, route it by the hub mode
-declared at Step 1.5 — this prose never re-implements the detection:
-
-- **`graph`** → no write-back, ever. Brainstorm NEVER mutates the hub in graph mode — no graph
-  mutation, no `.apex/*.md` edit; the spec stays the only artifact this skill produces. Every
-  delta — a term, a latent convention, a CONFLICT override — is recorded in the spec as a typed
-  deferred proposal (Step 5). The recurrence and decision filters below are the legacy channel's
-  gates: they do not gate recording here — the spec is local, and downstream review's sweep judges
-  what survives to promotion.
-- **`legacy`** → the write-back routing runs exactly as today. Write it back **only if the fork
-  will recur** (a future task will face the same choice):
-  - a term / ambiguity → `.apex/glossary.md`
-  - a rule scoped to one surface → the exact routed single standard, modular core, or matching leaf
-  - a cross-cutting recurring fork → `.apex/conventions.md`
-- **`none`** → there is no hub on either channel: nothing to write back — the delta stays in the
-  spec as a typed deferred proposal, promoted only if a hub ever exists downstream.
-
-A *decision*-shaped write-back to `.apex/conventions.md` passes a second filter: record it
-only when the decision is **hard to reverse**, **surprising without context**, and **the
-result of a real trade-off**. Any one missing → the decision stays local in the spec.
-Terms/ambiguities (glossary write-backs) keep the recurrence test only.
-
-A genuine **one-off** stays local in the `.apex/work/` spec — do not bloat the hub. Write back
-**inline** as the decision crystallizes, not batched at the end.
+Brainstorm never writes back to the graph. Every delta is a typed deferred proposal (Step 5).
 
 ### Step 6 — Validate (deterministic gate)
 
-Run the linter:
+Run the read-only graph gate:
 
 ```bash
-node <engine-root>/scripts/validate-hub.mjs .
+steepy-formula graph validate
 ```
 
-It MUST print `steepy validate-hub: OK`. Fix a violation only if your own Step 1.5 write-back introduced it. Anything else is pre-existing drift: report it and point the user to the `check` skill — do not fix unrelated hub docs here. A spec under `.apex/work/specs/` is intentionally ignored by the linter and does not need registration. In `graph` mode the linter is a no-op by design — a graph-first `.apex/` holds only the gitignored `work/` area, which it treats as coherent — and graph coherence is gated downstream by review's `steepy-formula graph validate`; brainstorm never mutates the graph, so there is nothing of its own to gate here.
+It MUST exit 0 with `violations: 0` and a clean revision-chain replay. Brainstorm never mutates the graph, so any violation is pre-existing drift: report it and point the user to the `check` skill — do not fix it mid-phase.
 
 ### Step 7 — Human review gate
 

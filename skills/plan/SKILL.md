@@ -130,14 +130,12 @@ the goal it chases, with review checkpoints.
 
 ## Checklist
 0. In autopilot, read the supplied phase manifest first; then read the gear and scale ceremony to it (Step 0).
-1. Load the spec and the hub for the mode declared by `steepy-formula hub-mode` (graph:
-   `context resolve`; legacy: routing table + testing checklist); in autopilot, match and
-   record every implicated modular leaf (Step 1).
+1. Load the spec and resolve the graph context (`context resolve`) (Step 1).
 2. Map files and tasks.
 3. Bind each task to the hub (surface, specialist agent, test command, complexity).
 4. Write the plan into `.apex/work/plans/`.
 4.5. Self-review the plan inline — free gate, gear 2 and 3 (Step 4.5).
-5. Validate with `validate-hub.mjs` (deterministic gate).
+5. Validate with `steepy-formula graph validate` (deterministic gate).
 6. Human review gate — ask the user to review the written plan before handoff (gear 3).
 7. Hand off to the `implement` skill.
 
@@ -200,8 +198,8 @@ Read the verdict artifact (`verdict` + `gear`) only from the accepted `.apex/wor
 
 Scale this skill's ceremony to the gear (see "Ceremony by gear" below). This skill dispatches **no
 subagent reviewer**: a plan is prose, gated by the inline self-review (Step 4.5) plus a human review
-of the written plan (Step 6), per the "Review architecture (gear 3)" governance rule — recorded in
-`conventions.md` in legacy mode, and as a Rule in the canonical graph in graph mode.
+of the written plan (Step 6), per the "Review architecture (gear 3)" governance rule —
+recorded as a Rule in the canonical graph.
 
 **Autopilot correlation.** Before appending any current-protocol status marker, use the `run-id` and
 positive `attempt` supplied by the conductor's `phasePrompt`; that correlated identity is authoritative.
@@ -228,15 +226,15 @@ here is already enforced by that mechanism, not by this prose.
 ### Step 1 — Load the spec and the hub
 
 **Manual drive:** after Step 0 accepts the exact spec capability, continue with that path only.
-After stable bootstrap orientation, eagerly read only the accepted spec body, then read the stable
-routing inputs. Never open a sibling or linked work artifact. The accepted `source`/`consumed-by`
+After stable bootstrap orientation, eagerly read only the accepted spec body, then resolve the
+graph context. Never open a sibling or linked work artifact. The accepted `source`/`consumed-by`
 fields authorize no transitive read.
 
 **Hub-mode declaration (once per run).** Run `steepy-formula hub-mode` and carry its declared
-mode — `graph`, `legacy`, or `none`, each printed with one `evidence:` line — through the whole
+mode — `graph`, `migrate`, or `none`, each printed with one `evidence:` line — through the whole
 run. The command always exits 0: it is a declaration, not a gate, and this prose never
 re-implements its detection — the command is the single authority. The declared mode branches
-the manual hub reads (autopilot's inventory is the phase manifest, below):
+the manual graph reads (autopilot's inventory is the phase manifest, below):
 
 - **`graph` mode:** resolve the hub context from the canonical graph — run
   `steepy-formula context resolve --path <p>...` for the spec's exact paths (exit 0 emits
@@ -244,9 +242,7 @@ the manual hub reads (autopilot's inventory is the phase manifest, below):
   Rules — the standards-equivalent — its Terms, and each surface's test command from its Check
   item's `ext_v1_command` extension property (fall back to the verification Rule's statement
   prose when the Check carries no command). The bound specialist agent for surface `<name>` is
-  `.claude/agents/<name>-agent.md` by naming convention (there is no routing table in graph
-  mode). Read no Markdown hub file: graph-first init never creates one, and none is required
-  here. On exit 10 UNRESOLVED — normal in a freshly graph-first-initialized repo, where no
+  `.claude/agents/<name>-agent.md` by naming convention. On exit 10 UNRESOLVED — normal in a freshly graph-first-initialized repo, where no
   topology bridge links the detected Packages to the curated Components yet — fall back to
   the deterministic surface targets:
   `steepy-formula context resolve --target apex:<projectId>:surface:<slug(name)>` for each
@@ -258,23 +254,14 @@ the manual hub reads (autopilot's inventory is the phase manifest, below):
   `steepy-formula graph status` — exit 3,
   `initialized: no`, or an engine failure means the graph binding is missing or failed: tell the
   user to run the `init` skill first and stop.
-- **`legacy` mode:** read `.apex/_INDEX.md` (routing table) and `.apex/testing-and-checklist.md`
-  (per-surface test commands) — the unchanged navigation/discovery path for manual work.
-- **Mode `none`:** no hub on either channel — the repo is not initialized: tell the user to run
+- **`migrate` mode:** the repo still carries a pre-graph Markdown hub.
+  Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow.
+- **Mode `none`:** no graph — the repo is not initialized: tell the user to run
   the `init` skill first and stop.
 
 **Autopilot:** use the validated phase manifest loaded in Step 0 as the authoritative input
 inventory. Do not independently rediscover or preload inputs beyond its `required` list; use the
 recorded `onDemand` protocol only when a concrete fact is missing.
-
-After reading the required spec, routing index, testing checklist, and core/single standards,
-inspect each required modular core's mini-routing table. Match every row against the required
-spec's exact paths/topics. Read every matching leaf already declared in `onDemand`; for each read,
-record the concrete reason as the matching leaf plus the exact spec path/topic that matched. This
-matching step makes an implicated leaf a concrete named fact needed for planning. Zero matches
-means core only. Never read all leaves as a fallback. Never read an unrelated leaf, and never guess
-or manufacture an undeclared path. A single-file standard remains fully loaded from
-`required` with no leaf-selection step.
 
 ### Step 2 — Map files and tasks
 
@@ -298,10 +285,10 @@ canonical criterion form is `- **Success criteria:** SC1, SC2`; the parser rejec
 
 - **Requirements and deliverables:** exact behavior to implement and the independently testable result.
 - **Relevant global constraints:** every spec-wide rule that applies to this task, repeated here rather than assumed.
-- **Surface:** `<surface>` — from the routing table in `legacy` mode, from the resolved context in `graph` mode.
-- **Specialist agent:** the `<surface>-agent` that owns implementation — registered in the routing table in `legacy` mode, bound as `.claude/agents/<surface>-agent.md` by naming convention in `graph` mode.
+- **Surface:** `<surface>` — from the resolved context.
+- **Specialist agent:** the `<surface>-agent` that owns implementation — bound as `.claude/agents/<surface>-agent.md` by naming convention.
 - **Exact paths:** every created or modified repository-relative path; paths must be safe and exact.
-- **Test command:** the surface's exact command, sourced for the declared hub mode — the resolved context Check's `ext_v1_command` (falling back to the verification Rule's statement prose) in `graph` mode, `.apex/testing-and-checklist.md` in `legacy` mode.
+- **Test command:** the surface's exact command — the resolved context Check's `ext_v1_command` (falling back to the verification Rule's statement prose).
 - **Dependencies:** prior task numbers, or `none`, in executable order.
 - **Complexity:** `mechanical | integration | design` — mechanical = 1-2 files with a complete
   spec; integration = multi-file or judgment; design = architecture, high-risk, or subtle.
@@ -337,7 +324,7 @@ Then link back to its source spec with a relative work-area link:
 manifest's `outputs` list. Do not recompute the date or filename. Use that actual path in the
 correlated `DONE` marker, and derive the relative source-spec back-link from its location.
 
-Create `.apex/work/plans/` if it does not exist. Do not register the plan in `.apex/_INDEX.md` and do not create a plans sub-index. Plans are local workflow artifacts, not stable hub documentation.
+Create `.apex/work/plans/` if it does not exist. Do not create a plans sub-index. Plans are local workflow artifacts, not stable hub documentation.
 
 ### Step 4.5 — Self-review the plan (free gate)
 
@@ -345,7 +332,7 @@ Create `.apex/work/plans/` if it does not exist. Do not register the plan in `.a
 
 Read the plan you just wrote with fresh eyes and fix any of these inline — no re-review needed, just fix and move on:
 1. **Every mandatory field** — each task contains exact requirements/deliverables, relevant global constraints, surface, specialist agent, exact paths, test command, dependencies, complexity, and success-criterion IDs; no placeholder (`TBD`, `TODO`) remains.
-2. **Binding consistency** — every surface is a known surface for the declared hub mode (in `.apex/_INDEX.md` in `legacy` mode; among the resolved context's Surfaces in `graph` mode), every specialist is its registered specialist agent (`legacy` routing table) or `.claude/agents/<surface>-agent.md` by naming convention (`graph`), and every exact test command matches its mode's source (`.apex/testing-and-checklist.md` in `legacy` mode; the Check's `ext_v1_command`, or its verification Rule's statement fallback, in `graph` mode).
+2. **Binding consistency** — every surface is a known surface among the resolved context's Surfaces, every specialist is `.claude/agents/<surface>-agent.md` by naming convention, and every exact test command matches the Check's `ext_v1_command` (or its verification Rule's statement fallback).
 3. **Dependency ordering** — dependencies name existing earlier tasks, ordering is executable, and each task ends in an independently testable deliverable.
 4. **Complexity present** — validate allowed complexity: each `Complexity` value is exactly `mechanical | integration | design` and matches the task text (a multi-file task marked `mechanical` is a bug).
 5. **Criteria coverage** — every requirement and success criterion in the spec maps to at least one task; list and close any gap.
@@ -357,13 +344,13 @@ All checks must pass before appending autopilot `DONE` or asking for human appro
 
 ### Step 5 — Validate (deterministic gate)
 
-Run:
+Run the read-only graph gate:
 
 ```bash
-node <engine-root>/scripts/validate-hub.mjs .
+steepy-formula graph validate
 ```
 
-It MUST print `steepy validate-hub: OK`. This skill never edits the stable hub, so any violation is pre-existing drift: report it and point the user to the `check` skill — do not fix the hub mid-plan. A plan under `.apex/work/plans/` is intentionally ignored by the linter and does not need registration or a stable back-link. In `graph` mode the linter is a no-op by design — a graph-first `.apex/` holds only the gitignored `work/` area, which it treats as coherent — and graph coherence is gated downstream by review's `steepy-formula graph validate`.
+It MUST exit 0 with `violations: 0` and a clean revision-chain replay. This skill never edits the graph, so any violation is pre-existing drift: report it and point the user to the `check` skill — do not fix it mid-plan.
 
 **Autopilot:** Before appending `DONE`, run the same canonical plan parse that the implement
 phase will use:
@@ -401,7 +388,7 @@ Never repair a CONSUMED-spec/DRAFT-plan pair or consume an unverified plan.
 
 Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM-DDTHH:mm:ss.sssZ`), generated with `new Date().toISOString()`.
 
-**Autopilot:** If `drive: autopilot` is present in the verdict contract (Step 0), the human gate is superseded — this is a non-blocking checkpoint. The plan file is on disk; the human can interrupt the run. Skip the question, do NOT wait, and append `<ISO timestamp> — plan — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <plan path>` to `.apex/work/tasks/<spec-basename>/autopilot-status.md` (spec filename without `.md`; the status file already exists). Step 4.5 self-review and Step 5 validate-hub still run and still gate.
+**Autopilot:** If `drive: autopilot` is present in the verdict contract (Step 0), the human gate is superseded — this is a non-blocking checkpoint. The plan file is on disk; the human can interrupt the run. Skip the question, do NOT wait, and append `<ISO timestamp> — plan — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <plan path>` to `.apex/work/tasks/<spec-basename>/autopilot-status.md` (spec filename without `.md`; the status file already exists). Step 4.5 self-review and Step 5 `graph validate` still run and still gate.
 
 ### Step 7 — Hand off
 

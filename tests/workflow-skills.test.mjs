@@ -45,7 +45,7 @@ function checkSkill(name, mustReference) {
 }
 
 test('brainstorm: valid user-invocable skill, writes spec into .apex/work/specs/', () => {
-  checkSkill('brainstorm', ['.apex/work/specs/', '.apex/_INDEX.md', 'validate-hub.mjs']);
+  checkSkill('brainstorm', ['.apex/work/specs/', 'steepy-formula graph validate']);
 });
 
 test('brainstorm: local-work contract is explicit and forbids stable registration', () => {
@@ -56,12 +56,12 @@ test('brainstorm: local-work contract is explicit and forbids stable registratio
     'brainstorm description must describe the local working-spec contract'
   );
   assert.match(text, /5\. Finalize the approved draft/);
-  assert.match(text, /6\. Validate the stable hub with `validate-hub\.mjs` \(deterministic gate\)\./);
+  assert.match(text, /6\. Validate the graph with `steepy-formula graph validate` \(deterministic gate\)\./);
   assert.match(text, /### Step 5 — Finalize the approved draft/);
   assert.match(text, /Create `\.apex\/work\/specs\/` if it does not exist\./);
-  assert.match(text, /Do not register the spec in `\.apex\/_INDEX\.md` and do not create a specs sub-index\./);
+  assert.match(text, /Do not create a specs sub-index\./);
   assert.match(text, /Specs are local workflow artifacts, not stable hub documentation\./);
-  assert.match(text, /A spec under `\.apex\/work\/specs\/` is intentionally ignored by the linter and does not need registration\./);
+  assert.doesNotMatch(text, /_INDEX\.md|validate-hub|\blegacy\b/i, 'brainstorm is graph-only: no Markdown hub, linter, or legacy branch');
   assert.doesNotMatch(text, /hub-governed spec/i);
 });
 
@@ -91,9 +91,9 @@ test('brainstorm: Step 1.5 resolves CONFLICT — doc-wins, confirm, override→d
   assert.match(step15, /doc-wins/i, 'CONFLICT resolution must default to doc-wins');
   assert.match(step15, /confirm/i, 'CONFLICT resolution must require explicit user confirmation');
   assert.match(step15, /override/i, 'CONFLICT resolution must support an explicit override');
-  assert.match(step15, /the doc changes/i, 'override must update the governing doc');
-  assert.match(step15, /active form only/i, 'override must state the new rule in active form only');
-  assert.match(step15, /never\s+carries the superseded rule/i, 'stable docs must never carry the superseded rule');
+  assert.match(step15, /never touch the hub from here/i, 'an override must never mutate the hub from brainstorm');
+  assert.match(step15, /typed deferred proposal/i, 'an override is recorded as a typed deferred proposal');
+  assert.doesNotMatch(step15, /the doc changes|rewrite the governing doc/i, 'override must not rewrite a governing doc');
   assert.doesNotMatch(step15, /record the supersession/i, 'override must not prescribe a supersession ledger');
 });
 
@@ -103,41 +103,20 @@ test('brainstorm: Step 1.5 resolves GAP — explore-first, consistency threshold
   assert.match(step15, /explore the codebase first/i, 'GAP resolution must explore the codebase before brainstorming');
   assert.match(step15, /2–3|2-3/, 'GAP resolution must define a ≥2-3 occurrence consistency threshold');
   assert.match(step15, /do NOT brainstorm/, 'a consistent latent convention must skip the brainstorm');
-  assert.match(step15, /write it back/i, 'a consistent latent convention must be written back to the hub');
+  assert.match(step15, /typed deferred proposal/i, 'a consistent latent convention is recorded as a typed deferred proposal');
   assert.match(step15, /isolated precedent/i, 'a single isolated precedent must be named');
   assert.match(step15, /do not canonise automatically/i, 'an isolated precedent must not be auto-canonised');
   assert.match(step15, /no precedent/i, 'the no-precedent branch must be named');
   assert.match(step15, /genuine design gap/i, 'no precedent must be framed as a genuine design gap');
 });
 
-test('brainstorm: write-back routing wired — recurring→hub (glossary/standards/conventions), one-off stays local', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
-  const writeBack = sectionBetween(text, '### Write-back routing', '### Step 6');
-  assert.match(writeBack, /will recur/i, 'write-back must be gated on the fork recurring');
-  assert.match(writeBack, /\.apex\/glossary\.md/, 'a term/ambiguity must route to the glossary');
-  assert.match(writeBack, /exact routed single standard, modular core, or matching leaf/i, 'a surface-scoped rule must follow the actual owning route');
-  assert.match(writeBack, /\.apex\/conventions\.md/, 'a cross-cutting recurring fork must route to conventions.md');
-  assert.match(writeBack, /one-off/i, 'a genuine one-off must be named');
-  assert.match(writeBack, /stays local/i, 'a one-off must stay local, not bloat the hub');
-  assert.match(writeBack, /\.apex\/work\//, 'a one-off stays local in the .apex/work/ spec');
-  assert.match(writeBack, /inline/i, 'write-back must happen inline, not batched at the end');
-});
-
-test('brainstorm: write-back three-condition filter for decision-shaped conventions entries', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
-  const writeBack = sectionBetween(text, '### Write-back routing', '### Step 6');
-  assert.match(writeBack, /hard to reverse/i, 'decision write-backs must require hard-to-reverse');
-  assert.match(writeBack, /surprising without context/i, 'decision write-backs must require surprising-without-context');
-  assert.match(writeBack, /real trade-off/i, 'decision write-backs must require a real trade-off');
-  assert.match(writeBack, /any one missing.*stays local|stays local in the spec/i, 'a decision failing any condition must stay local in the spec');
-  assert.match(writeBack, /recurrence test only|keep the recurrence test/i, 'glossary write-backs must keep the recurrence test only');
-});
-
 test('brainstorm: Step 2 is hub-aware grilling (gear 2-3), mutates no doc', () => {
   const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
   const step2 = sectionBetween(text, '### Step 2 — Understand', '### Step 3');
   assert.match(step2, /Gear 2 and 3/, 'Step 2 grilling must be gated to gear 2 and 3');
-  assert.match(step2, /glossar/i, 'Step 2 must name glossary/terminology sharpening');
+  assert.match(step2, /resolved context's Terms/, 'Step 2 must sharpen terminology against the resolved context Terms');
+  assert.match(step2, /Rule, Term, Decision, or a Work artifact\?/, 'Step 2 must name the graph node kinds');
+  assert.match(step2, /graph reachability from the Project root/, 'Step 2 must probe graph reachability');
   assert.match(step2, /scenario/i, 'Step 2 must probe concrete edge-case scenarios');
   assert.match(step2, /drift/i, 'Step 2 must cross-reference code for Drift');
   assert.match(step2, /one at a time|one question/i, 'Step 2 must keep one-question-at-a-time discipline');
@@ -172,7 +151,7 @@ test('brainstorm: Step 2 grilling has structure — design tree, facts/decisions
 });
 
 test('plan: valid user-invocable skill, writes plan into .apex/work/plans/', () => {
-  checkSkill('plan', ['.apex/work/plans/', '.apex/work/specs/', 'testing-and-checklist.md', '-agent', 'validate-hub.mjs']);
+  checkSkill('plan', ['.apex/work/plans/', '.apex/work/specs/', '-agent', 'steepy-formula graph validate']);
 });
 
 test('plan: local-work contract is explicit and forbids stable registration', () => {
@@ -187,9 +166,9 @@ test('plan: local-work contract is explicit and forbids stable registration', ()
   assert.match(text, /### Step 4 — Write the local working plan/);
   assert.match(text, /> Source spec: \[<topic>\]\(\.\.\/specs\/<YYYY-MM-DD-topic>\.md\)/);
   assert.match(text, /Create `\.apex\/work\/plans\/` if it does not exist\./);
-  assert.match(text, /Do not register the plan in `\.apex\/_INDEX\.md` and do not create a plans sub-index\./);
+  assert.match(text, /Do not create a plans sub-index\./);
   assert.match(text, /Plans are local workflow artifacts, not stable hub documentation\./);
-  assert.match(text, /A plan under `\.apex\/work\/plans\/` is intentionally ignored by the linter and does not need registration or a stable back-link\./);
+  assert.doesNotMatch(text, /_INDEX\.md|validate-hub|testing-and-checklist|\blegacy\b/i, 'plan is graph-only: no Markdown hub, linter, or legacy branch');
 });
 
 test('chain skills: byte-identical canonical manual handoff contract', () => {
@@ -1005,20 +984,10 @@ test('plan: autopilot consumes its phase manifest first; manual discovery remain
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   assert.match(step1, /Manual drive/i, 'Step 1 must explicitly preserve manual-drive discovery');
   assert.match(step1, /read only the accepted spec body/i, 'manual drive must read the selected full spec only');
-  assert.match(step1, /\.apex\/_INDEX\.md/, 'manual drive must retain routing-table discovery');
-  assert.match(step1, /\.apex\/testing-and-checklist\.md/, 'manual drive must retain testing-checklist discovery');
-  assert.match(step1, /each required modular core[^.]*mini-routing table/i,
-    'manifest-backed plan must inspect every required modular core mini-routing table');
-  assert.match(step1, /required\s+spec[^.]*exact paths\/topics/i,
-    'plan modular matching must use the required spec exact paths/topics');
-  assert.match(step1, /read every matching\s+leaf[^.]*`onDemand`/i,
-    'plan must read every matching declared onDemand leaf');
-  assert.match(step1, /record[^.]*concrete reason[^.]*matching leaf/i,
-    'plan must record a concrete reason for every matching leaf read');
-  assert.match(step1, /zero\s+(?:leaves\s+)?match(?:es)?[^.]*core only/i,
-    'plan must retain core-only loading for zero matches');
-  assert.match(step1, /never read\s+all leaves[^.]*fallback/i,
-    'plan must prohibit a read-all modular fallback');
+  assert.match(step1, /`steepy-formula hub-mode`/, 'manual drive must orient through the declared hub mode');
+  assert.match(step1, /`steepy-formula context resolve --path <p>\.\.\.`/, 'manual drive must orient through context resolve');
+  assert.doesNotMatch(step1, /_INDEX\.md|testing-and-checklist|mini-routing|modular core|\bleaf\b|\bleaves\b/i,
+    'plan Step 1 carries no Markdown-hub, routing-table, or modular-leaf reading');
 });
 
 test('plan: each task is a self-contained spec-to-brief contract with every mandatory field', () => {
@@ -1066,7 +1035,7 @@ test('plan: self-review gates completeness, binding, ordering, coverage, safe pa
   const step45 = sectionBetween(text, '### Step 4.5', '### Step 5');
   assert.match(step45, /every mandatory field/i, 'self-review must check every mandatory field');
   assert.match(step45, /known surface/i, 'self-review must validate a known surface');
-  assert.match(step45, /registered specialist agent/i, 'self-review must validate the registered specialist agent');
+  assert.match(step45, /specialist[^.]*\.claude\/agents\/<surface>-agent\.md/i, 'self-review must validate the specialist agent by naming convention');
   assert.match(step45, /dependency ordering/i, 'self-review must validate dependency ordering');
   assert.match(step45, /criteria coverage/i, 'self-review must validate criteria coverage');
   assert.match(step45, /allowed complexity/i, 'self-review must validate allowed complexity');
@@ -1728,48 +1697,6 @@ function contractRows(text, heading) {
     .slice(2).map((line) => line.slice(1, -1).split('|').map((cell) => cell.trim()));
 }
 
-// Fixture validator for the documented content contract only. It deliberately does not model or
-// enforce manual skill execution.
-function assertFreshBrainstormRoutingFixture(fixture) {
-  const registeredPaths = new Map(
-    fixture.routingRows.split('\n').map((row) => {
-      const match = row.match(/^\| `([^`]+)` \| \[[^\]]+\]\(([^)]+)\) \|/);
-      assert.ok(match, `invalid fixture routing row: ${row}`);
-      return [match[1], `.apex/${match[2]}`];
-    }),
-  );
-  for (const synthesizedPath of fixture.absentSynthesizedPaths) {
-    assert.ok(!fixture.existingPaths.includes(synthesizedPath), `${synthesizedPath} must be absent`);
-  }
-
-  for (const routeCase of [fixture.single, ...fixture.modular.cases]) {
-    const { taskEvidence } = routeCase;
-    assert.ok(taskEvidence.paths.length > 0 && taskEvidence.topics.length > 0);
-    const registeredPath = registeredPaths.get(taskEvidence.surface);
-    assert.ok(registeredPath, `missing fixture route for ${taskEvidence.surface}`);
-    assert.ok(fixture.existingPaths.includes(registeredPath));
-
-    const miniRouting = taskEvidence.surface === fixture.modular.surface
-      ? fixture.modular.miniRouting
-      : [];
-    const expectedLeaves = miniRouting.filter(({ when }) => (
-      when.pathPrefixes.some((prefix) => taskEvidence.paths.some((path) => path.startsWith(prefix)))
-      || when.topics.some((topic) => taskEvidence.topics.includes(topic))
-    )).map(({ path }) => (
-      `${registeredPath.slice(0, registeredPath.lastIndexOf('/') + 1)}${path}`
-    ));
-    const expectedPaths = [registeredPath, ...expectedLeaves];
-    assert.deepEqual(routeCase.declaredSelection.map(({ path }) => path), expectedPaths);
-    assert.ok(routeCase.declaredSelection.every(({ path, reason }) => (
-      fixture.existingPaths.includes(path) && reason.length > 0
-    )));
-    assert.equal(routeCase.readAllFallback, false);
-    for (const synthesizedPath of fixture.absentSynthesizedPaths) {
-      assert.ok(!routeCase.declaredSelection.some(({ path }) => path === synthesizedPath));
-    }
-  }
-}
-
 function assertRegularReviewBumpFixture(fixture) {
   assert.deepEqual(Object.keys(fixture.inputs), ['criteria', 'task-results', 'branch-diff']);
   assert.ok(!('spec' in fixture.inputs), 'regular-review bump fixtures must not gain a full spec');
@@ -1842,104 +1769,9 @@ test('fresh brainstorm derives coverage and ratifies every gear without historic
   assert.doesNotMatch(step0, /Read the verdict artifact[^]*spec head|Artifact absent and full gear-3|upstream workflow chain first/i);
   assert.match(step0, /Gear 3[^]*valid[^]*fresh entry/i);
   const step1 = sectionBetween(text, '### Step 1 —', '### Step 1.5');
-  assert.match(step1, /exact[^]*routing[^]*single-file[^]*modular core/i);
-  assert.match(step1, /every matching leaf[^]*reason[^]*zero matches[^]*core only/i);
   assert.doesNotMatch(step1, /Read the owning surface standard `\.apex\/standards\/<surface>\.md`/i);
   const step4 = sectionBetween(text, '### Step 4 —', '### Step 5 —');
   assert.ok(/existing target[^]*stop[^]*no[^]*read[^]*overwrite/i.test(step4), 'fresh brainstorm must not reuse a historical draft');
-});
-
-test('fresh brainstorm routing fixture selects registered custom/core paths and only reason-matched leaves', () => {
-  const fixture = {
-    routingRows: [
-      '| `payments` | [Payment policy](standards/domain/payment-policy.md) | `payments-agent` | — |',
-      '| `editor` | [Editor core](standards/editor/core.md) | `editor-agent` | — |',
-    ].join('\n'),
-    existingPaths: [
-      '.apex/standards/domain/payment-policy.md',
-      '.apex/standards/editor/core.md',
-      '.apex/standards/editor/api.md',
-      '.apex/standards/editor/style.md',
-      '.apex/standards/editor/storage.md',
-    ],
-    absentSynthesizedPaths: ['.apex/standards/payments.md', '.apex/standards/editor.md'],
-    single: {
-      taskEvidence: {
-        surface: 'payments',
-        paths: ['services/payments/refunds.mjs'],
-        topics: ['payment policy'],
-      },
-      declaredSelection: [
-        { path: '.apex/standards/domain/payment-policy.md', reason: 'exact single-file routing link' },
-      ],
-      readAllFallback: false,
-    },
-    modular: {
-      surface: 'editor',
-      miniRouting: [
-        {
-          path: 'api.md',
-          when: { pathPrefixes: ['editor/api/'], topics: ['public API'] },
-        },
-        {
-          path: 'style.md',
-          when: { pathPrefixes: ['editor/ui/'], topics: ['visual styling'] },
-        },
-        {
-          path: 'storage.md',
-          when: { pathPrefixes: ['editor/storage/'], topics: ['storage migration'] },
-        },
-      ],
-      cases: [
-        {
-          taskEvidence: {
-            surface: 'editor',
-            paths: ['editor/api/routes.mjs', 'editor/storage/migrations/003.sql'],
-            topics: ['storage migration'],
-          },
-          declaredSelection: [
-            { path: '.apex/standards/editor/core.md', reason: 'registered modular core' },
-            { path: '.apex/standards/editor/api.md', reason: 'task path matches editor/api/' },
-            { path: '.apex/standards/editor/storage.md', reason: 'task path/topic matches storage' },
-          ],
-          readAllFallback: false,
-        },
-        {
-          taskEvidence: {
-            surface: 'editor',
-            paths: ['docs/editor-release-notes.md'],
-            topics: ['release notes'],
-          },
-          declaredSelection: [
-            { path: '.apex/standards/editor/core.md', reason: 'zero leaf matches means core only' },
-          ],
-          readAllFallback: false,
-        },
-      ],
-    },
-  };
-  assertFreshBrainstormRoutingFixture(fixture);
-
-  const wrongRoute = structuredClone(fixture);
-  wrongRoute.single.declaredSelection[0].path = '.apex/standards/payments.md';
-  assert.throws(() => assertFreshBrainstormRoutingFixture(wrongRoute));
-
-  const unrelatedLeaf = structuredClone(fixture);
-  unrelatedLeaf.modular.cases[0].declaredSelection[2] =
-    { path: '.apex/standards/editor/style.md', reason: 'unrelated leaf' };
-  assert.throws(() => assertFreshBrainstormRoutingFixture(unrelatedLeaf));
-
-  const readAllLeaves = structuredClone(fixture);
-  readAllLeaves.modular.cases[0].declaredSelection.splice(2, 0,
-    { path: '.apex/standards/editor/style.md', reason: 'read-all fallback' });
-  readAllLeaves.modular.cases[0].readAllFallback = true;
-  assert.throws(() => assertFreshBrainstormRoutingFixture(readAllLeaves));
-
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
-  const step1 = sectionBetween(text, '### Step 1 —', '### Step 1.5');
-  assert.match(step1, /follow the exact standard links in the routing row/i);
-  assert.match(step1, /every matching leaf in table order[^]*concrete reason/i);
-  assert.match(step1, /Never manufacture[^]*read unrelated leaves[^]*read-all fallback/i);
 });
 
 test('publication preflight refuses existing unbound review output before collection and guards unconsumed links', () => {
@@ -2515,20 +2347,19 @@ test('review: Step 0 declares the hub mode via steepy-formula hub-mode — the p
     'the declaration must not probe .apex/_INDEX.md existence to detect the mode');
 });
 
-test('brainstorm: graph mode NEVER mutates the hub — every delta is a typed deferred proposal', () => {
+test('brainstorm: NEVER mutates the hub — every delta is a typed deferred proposal', () => {
   const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
   const step15 = sectionBetween(text, '### Step 1.5', '### Step 2 — Understand');
-  assert.match(step15, /in `graph` mode brainstorm NEVER mutates the\s+hub — no graph mutation, no `\.apex\/\*\.md` edit/,
-    'graph mode must forbid both graph mutation and .apex/*.md edits');
-  assert.match(step15, /every delta \(a term, a latent convention, a\s+CONFLICT override\) is recorded in the spec as a\s+typed deferred proposal/,
-    'every graph-mode delta must be recorded in the spec as a typed deferred proposal');
+  assert.match(step15, /Brainstorm NEVER mutates the\s+hub — no graph mutation, no `\.apex\/\*\.md` edit/,
+    'brainstorm must forbid both graph mutation and .apex/*.md edits');
+  assert.match(step15, /every delta \(a term, a latent convention, a\s+CONFLICT override\) is recorded in the spec as a\s+typed\s+deferred proposal/,
+    'every delta must be recorded in the spec as a typed deferred proposal');
   const writeBack = sectionBetween(text, '### Write-back routing', '### Step 6');
-  assert.match(writeBack, /\*\*`graph`\*\* → no write-back, ever/,
-    'the write-back channel must be closed in graph mode');
-  assert.match(writeBack, /Brainstorm NEVER mutates the hub in graph mode/,
-    'the routing section must restate the graph-mode no-mutation rule');
-  assert.match(writeBack, /recorded in the spec as a\s+typed\s+deferred proposal \(Step 5\)/,
-    'the graph-mode branch must route deltas to the typed deferred proposal channel');
+  assert.match(writeBack, /brainstorm never writes back to the graph/i,
+    'the routing section must close the write-back channel');
+  assert.match(writeBack, /every delta is a typed deferred proposal \(Step 5\)/i,
+    'the routing section must route every delta to the typed deferred proposal channel');
+  assert.doesNotMatch(writeBack, /\.apex\/(glossary|conventions)\.md|\blegacy\b/i, 'no Markdown write-back channel survives');
 });
 
 test('brainstorm: typed deferred proposals use the promotion candidate schema — term/rule/decision, never a canonised hub edit', () => {
@@ -2547,18 +2378,6 @@ test('brainstorm: typed deferred proposals use the promotion candidate schema �
   assert.match(step5, /`decision` — `title` \+ `statement` \+ `context`/, 'the decision candidate shape must be pinned');
 });
 
-test('brainstorm: legacy write-back channel is unchanged — runs exactly as today, override still rewrites the doc', () => {
-  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
-  const step15 = sectionBetween(text, '### Step 1.5', '### Step 2 — Understand');
-  assert.match(step15, /in `legacy` mode the write-back routing runs exactly as today/,
-    'the Step 1.5 mode branch must keep legacy write-back exactly as today');
-  assert.match(step15, /\*\*Override\*\* → in `legacy` mode, the doc changes:/,
-    'a CONFLICT override must still rewrite the governing doc in legacy mode');
-  const writeBack = sectionBetween(text, '### Write-back routing', '### Step 6');
-  assert.match(writeBack, /\*\*`legacy`\*\* → the write-back routing runs exactly as today/,
-    'the legacy routing branch must run exactly as today');
-});
-
 test('brainstorm: Step 1.5 declares the hub mode via steepy-formula hub-mode — the prose never re-implements detection', () => {
   const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
   const step15 = sectionBetween(text, '### Step 1.5', '### Step 2 — Understand');
@@ -2574,9 +2393,8 @@ test('brainstorm: Step 1.5 declares the hub mode via steepy-formula hub-mode —
     'the declaration must not read the engine facts initialized: field itself');
   assert.doesNotMatch(declaration, /_INDEX\.md/,
     'the declaration must not probe .apex/_INDEX.md existence to detect the mode');
-  const writeBack = sectionBetween(text, '### Write-back routing', '### Step 6');
-  assert.match(writeBack, /route it by the hub mode\s+declared at Step 1\.5 — this prose never re-implements the detection/,
-    'write-back routing must defer to the Step 1.5 declared mode, never re-detect');
+  assert.match(step15, /`graph`, `migrate`, or `none`/, 'Step 1.5 declaration lists exactly graph, migrate, none');
+  assert.doesNotMatch(step15, /`legacy`|\blegacy\b/i, 'Step 1.5 carries no legacy branch');
 });
 
 // Mode-aware orientation (init-graph-first): each chain skill's Step 1 declares the hub mode and
@@ -2584,13 +2402,15 @@ test('brainstorm: Step 1.5 declares the hub mode via steepy-formula hub-mode —
 // .apex/_INDEX.md, no standards/, no testing-and-checklist.md to read, so the graph branch must
 // require none of them.
 test('workflow chain: Step 1 orientation is mode-aware — the graph branch requires no markdown-hub read', () => {
+  // graphOnly skills carry the migrate stop and no legacy bullet; the rest keep the old expectation
+  // until their own task (implement, review) moves them.
   const step1Bounds = {
-    brainstorm: ['### Step 1 — Orient against the hub', '### Step 1.5'],
-    plan: ['### Step 1 — Load the spec and the hub', '### Step 2'],
-    implement: ['### Step 1 — Load the accepted input and derive current-run artifacts', '### Step 2'],
-    review: ['### Step 1 — Load bounded review inputs and the hub', '### Step 2'],
+    brainstorm: { bounds: ['### Step 1 — Orient against the hub', '### Step 1.5'], graphOnly: true },
+    plan: { bounds: ['### Step 1 — Load the spec and the hub', '### Step 2'], graphOnly: true },
+    implement: { bounds: ['### Step 1 — Load the accepted input and derive current-run artifacts', '### Step 2'], graphOnly: false },
+    review: { bounds: ['### Step 1 — Load bounded review inputs and the hub', '### Step 2'], graphOnly: false },
   };
-  for (const [s, [start, end]] of Object.entries(step1Bounds)) {
+  for (const [s, { bounds: [start, end], graphOnly }] of Object.entries(step1Bounds)) {
     const text = readFileSync(join(skillsDir, s, 'SKILL.md'), 'utf8');
     const step1 = sectionBetween(text, start, end);
     if (s === 'review') {
@@ -2612,17 +2432,32 @@ test('workflow chain: Step 1 orientation is mode-aware — the graph branch requ
     assert.doesNotMatch(graphBullet, /_INDEX\.md|testing-and-checklist|\.apex\/standards\//,
       `${s} graph orientation must require no _INDEX.md, standards/, or testing-and-checklist read`);
 
-    const legacyBullet = step1.match(/- \*\*`legacy` mode:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)?.[0];
-    assert.ok(legacyBullet, `${s} Step 1 must keep the legacy orientation branch`);
-    assert.match(legacyBullet, /_INDEX\.md/, `${s} legacy orientation must keep the routing-table read`);
+    if (graphOnly) {
+      assert.match(step1, /`graph`, `migrate`, or `none`/, `${s} Step 1 mode list is exactly graph, migrate, none`);
+      const migrateBullet = step1.match(/- \*\*`migrate` mode:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)?.[0];
+      assert.ok(migrateBullet, `${s} Step 1 must carry the migrate stop bullet`);
+      assert.match(migrateBullet,
+        /Stop and tell the user to run the `graph-migrate` skill \(invoke it the way your harness invokes skills\) before any other workflow\./,
+        `${s} migrate bullet carries the exact stop sentence`);
+      assert.doesNotMatch(step1, /`legacy`|\blegacy\b/i, `${s} Step 1 carries no legacy branch`);
+      assert.doesNotMatch(text, /testing-and-checklist\.md/, `${s} never names testing-and-checklist.md`);
+      assert.doesNotMatch(step1, /_INDEX\.md/, `${s} Step 1 never names .apex/_INDEX.md`);
+    } else {
+      const legacyBullet = step1.match(/- \*\*`legacy` mode:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)?.[0];
+      assert.ok(legacyBullet, `${s} Step 1 must keep the legacy orientation branch`);
+      assert.match(legacyBullet, /_INDEX\.md/, `${s} legacy orientation must keep the routing-table read`);
+    }
 
     if (s !== 'brainstorm') {
       assert.match(graphBullet, /ext_v1_command/,
         `${s} graph orientation must source the surface test command from the Check's ext_v1_command`);
       assert.match(graphBullet, /verification Rule's statement/,
         `${s} graph test-command sourcing must fall back to the verification Rule's statement prose`);
-      assert.match(legacyBullet, /testing-and-checklist\.md/,
-        `${s} legacy orientation must keep the test-command source`);
+      if (!graphOnly) {
+        const legacyBullet = step1.match(/- \*\*`legacy` mode:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)[0];
+        assert.match(legacyBullet, /testing-and-checklist\.md/,
+          `${s} legacy orientation must keep the test-command source`);
+      }
     }
 
     assert.match(step1, /- \*\*Mode `none`:\*\*/, `${s} Step 1 must handle mode none explicitly`);
@@ -2915,7 +2750,7 @@ test('on-demand linter skills invoke validate-hub with an explicit `.` cwd argum
   // init uses a <repo-root> placeholder (it can run before cwd is the repo),
   // but every on-demand linter skill should pass an explicit `.` — consistent with
   // its siblings and not silently dependent on whatever process.cwd() happens to be.
-  const linterSkills = ['new-surface', 'plan', 'review', 'brainstorm'];
+  const linterSkills = ['new-surface', 'review'];
   for (const name of linterSkills) {
     const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
     assert.match(
