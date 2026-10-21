@@ -11,7 +11,7 @@
 
 ## Short description
 
-Land governed project knowledge in a canonical Stable Knowledge Graph (graph-first init) or a legacy `.apex/` Markdown hub, route work by surface, and keep it coherent with mode-aware validation.
+Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation.
 
 ## Positioning
 

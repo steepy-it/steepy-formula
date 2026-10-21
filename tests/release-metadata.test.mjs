@@ -826,3 +826,32 @@ test('docs/workflow.md does not reference the gears diagram', () => {
   assert.ok(!workflow.includes('workflow-gears.png'));
   assert.doesNotMatch(workflow, /<img\b|<picture\b|<a\b/i);
 });
+
+test('manifest descriptions are graph-only and identical across every carrier', () => {
+  const pluginForm = 'Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation.';
+  const marketplaceForm = 'Steepy plugin marketplace: governed project knowledge in a canonical Stable Knowledge Graph, routed by surface and kept coherent with graph validation.';
+  const claudeMarketplace = readJson('.claude-plugin/marketplace.json');
+  const agentsMarketplace = readJson('.agents/plugins/marketplace.json');
+  const submission = readFileSync(join(root, 'COMMUNITY_SUBMISSION.md'), 'utf8');
+  const shortDescription = submission.split(/^## Short description\s*$/m)[1].split(/^## /m)[0].trim();
+  const pluginForms = {
+    'package.json': readJson('package.json').description,
+    '.claude-plugin/plugin.json': readJson('.claude-plugin/plugin.json').description,
+    '.codex-plugin/plugin.json': readJson('.codex-plugin/plugin.json').description,
+    '.claude-plugin/marketplace.json plugins[0]': claudeMarketplace.plugins[0].description,
+    '.agents/plugins/marketplace.json plugins[0]': agentsMarketplace.plugins[0].description,
+    'COMMUNITY_SUBMISSION.md short description': shortDescription,
+  };
+  const marketplaceForms = {
+    '.claude-plugin/marketplace.json': claudeMarketplace.description,
+    '.agents/plugins/marketplace.json': agentsMarketplace.description,
+  };
+  for (const [label, value] of Object.entries(pluginForms)) {
+    assert.equal(value, pluginForm, `${label} must carry the plugin description`);
+    assert.doesNotMatch(value, /legacy|Markdown hub|mode-aware/i, label);
+  }
+  for (const [label, value] of Object.entries(marketplaceForms)) {
+    assert.equal(value, marketplaceForm, `${label} must carry the marketplace description`);
+    assert.doesNotMatch(value, /legacy|Markdown hub|mode-aware/i, label);
+  }
+});
