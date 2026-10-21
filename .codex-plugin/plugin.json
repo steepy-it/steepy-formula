@@ -20,7 +20,6 @@
     "knowledge-graph"
   ],
   "skills": "./skills/",
-  "hooks": "./hooks/hooks-codex.json",
   "interface": {
     "displayName": "Steepy Formula",
     "category": "workflow",

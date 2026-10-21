@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Claude Code PreToolUse hook (dev-only, registered in .claude/settings.json — never
-// hooks/hooks.json, which ships to plugin users). Blocks `git push` on `main` when the
+// Claude Code PreToolUse hook (dev-only, registered in .claude/settings.json — this
+// repo's own settings; the plugin ships no hooks). Blocks `git push` on `main` when the
 // plugin version has not moved relative to origin/main, so Claude asks the user whether
 // to bump before pushing. Everything else — non-push commands, non-main branches, a
 // numerically increased valid version, or unavailable read/parse/git context — must

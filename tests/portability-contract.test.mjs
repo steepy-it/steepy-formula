@@ -115,17 +115,17 @@ test('lock (b): every skills/*/SKILL.md declares non-empty name + description fr
   );
 });
 
-test('lock (c): every skill\'s engine-root resolution (skills/<name>/../../scripts/) reaches scripts/validate-hub.mjs', () => {
-  const canonical = realpathSync(join(root, 'scripts', 'validate-hub.mjs'));
+test('lock (c): every skill\'s engine-root resolution (skills/<name>/../../scripts/) reaches scripts/formula/cli.mjs', () => {
+  const canonical = realpathSync(join(root, 'scripts', 'formula', 'cli.mjs'));
   const offenders = [];
   for (const name of skillDirNames()) {
-    const resolved = join(skillsDir, name, '..', '..', 'scripts', 'validate-hub.mjs');
+    const resolved = join(skillsDir, name, '..', '..', 'scripts', 'formula', 'cli.mjs');
     if (!existsSync(resolved)) {
       offenders.push(`${name}: ${resolved} does not exist`);
       continue;
     }
     if (realpathSync(resolved) !== canonical) {
-      offenders.push(`${name}: ${resolved} does not resolve to the canonical scripts/validate-hub.mjs`);
+      offenders.push(`${name}: ${resolved} does not resolve to the canonical scripts/formula/cli.mjs`);
     }
   }
   assert.deepEqual(

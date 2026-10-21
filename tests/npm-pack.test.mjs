@@ -119,9 +119,6 @@ test('npm tarball includes the six subagent prompt templates', () => {
 
 test('npm tarball includes the engine scripts', () => {
   assertPacked([
-    'scripts/validate-hub.mjs',
-    'scripts/stop-hook.mjs',
-    'scripts/new-surface.mjs',
     'scripts/bump-version.mjs',
     'scripts/autopilot.mjs',
     'scripts/task-results.mjs',
@@ -170,8 +167,8 @@ test('npm pack dry-run leaves no repository tarball behind', () => {
   );
 });
 
-test('npm tarball includes both harness hook manifests', () => {
-  assertPacked(['hooks/hooks.json', 'hooks/hooks-codex.json']);
+test('npm tarball ships no hooks', () => {
+  assert.deepEqual(paths.filter((path) => path.startsWith('hooks/')), [], 'no packed path starts with hooks/');
 });
 
 function reachedEngineModules(entry) {

@@ -214,7 +214,6 @@ test('npm package uses an explicit release files allowlist', () => {
     'assets/',
     'bin/',
     'docs/',
-    'hooks/',
     'scripts/',
     'skills/',
     'templates/',
@@ -295,8 +294,6 @@ test('npm dry-run package excludes local development state', () => {
       '.claude-plugin/plugin.json',
       'docs/workflow.md',
       'docs/architecture.md',
-      'hooks/hooks.json',
-      'scripts/validate-hub.mjs',
       'skills/init/SKILL.md',
       'templates/_INDEX.md',
       'package.json',
@@ -624,7 +621,7 @@ test('docs/architecture.md documents the adapters surface and multi-harness test
 
   for (const required of [
     '`.claude-plugin/` manifest + marketplace — the pre-existing plugin, unchanged behavior.',
-    '`.codex-plugin/plugin.json` (points at `skills/` and `hooks/hooks-codex.json`)',
+    '`.codex-plugin/plugin.json` (points at `skills/`)',
     '`adapters/opencode/steepy-formula.js` — a config hook pushes `skills/` into `config.skills.paths`',
     '`adapters/model-mappings.mjs` (the provider-keyed tier tables with per-row provenance)',
     '`adapters/pi/steepy-formula.js` — `session_start` bootstrap injection',

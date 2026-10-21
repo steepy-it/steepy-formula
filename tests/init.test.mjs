@@ -1,12 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { scaffold } from '../scripts/new-surface.mjs';
-import { renderTemplate } from '../scripts/template.mjs';
-import { collectViolations } from '../scripts/validate-hub.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -278,96 +274,6 @@ test('init repair semantics — initialized graph reports only; a legacy hub han
   assert.match(step8, /no re-scaffold/i, 'an already-initialized graph must not be re-scaffolded');
   assert.match(step8, /do not repair or migrate/i, 'a legacy markdown hub is neither repaired nor migrated by init');
   assert.match(step8, /stop/i, 'the legacy branch stops after the pointer');
-});
-
-// --- Legacy-hub repair MECHANIC, end-to-end through the real scripts + linter (Q4) ---
-// The graph-first init repairs nothing on disk itself (Step 1 routes a legacy hub to
-// graph-migrate; Step 8 only reports). These cases pin the LEGACY-MODE mechanics that
-// stay shipped for repos still on a markdown hub: an existing hub with user
-// customizations takes a surface addition (scaffold only the missing surface + append
-// its row) and proves the hub stays green AND the user content survives.
-
-function buildExistingHub() {
-  const hub = mkdtempSync(join(tmpdir(), 'steepy-repair-'));
-  mkdirSync(join(hub, '.apex', 'standards'), { recursive: true });
-  mkdirSync(join(hub, '.apex', 'work', 'specs'), { recursive: true });
-  mkdirSync(join(hub, '.apex', 'work', 'plans'), { recursive: true });
-  mkdirSync(join(hub, '.claude', 'agents'), { recursive: true });
-  mkdirSync(join(hub, 'apps', 'web'), { recursive: true });
-  mkdirSync(join(hub, 'apps', 'api'), { recursive: true });
-
-  for (const f of ['conventions.md', 'glossary.md', 'testing-and-checklist.md']) {
-    writeFileSync(join(hub, '.apex', f), `# ${f}\n\nuser content for ${f}\n`);
-  }
-
-  // Existing surface 'web' (standard + adapter triad), as a prior legacy scaffold produced.
-  const { row: webRow } = scaffold({ name: 'web', surfacePath: 'apps/web', agent: 'web-agent', hubRoot: hub, templatesDir: templates, testCmd: 'vitest' });
-  assert.ok(existsSync(join(hub, '.claude', 'agents', 'web-agent.md')));
-  assert.ok(existsSync(join(hub, '.codex', 'agents', 'web-agent.toml')));
-  assert.ok(existsSync(join(hub, '.opencode', 'agents', 'web-agent.md')));
-
-  // _INDEX.md rendered from the template with a CUSTOM git policy the user picked.
-  const customGitPolicy = '4. **Git policy:** Custom team rule — never force-push.';
-  const indexTpl = readFileSync(join(templates, '_INDEX.md'), 'utf8');
-  writeFileSync(
-    join(hub, '.apex', '_INDEX.md'),
-    renderTemplate(indexTpl, { projectName: 'demo', routingRows: webRow, gitPolicyDirective: customGitPolicy })
-  );
-
-  // A LOCAL work spec the user added after init — must survive a repair re-run.
-  writeFileSync(join(hub, '.apex', 'work', '.gitignore'), '*\n!.gitignore\n');
-  writeFileSync(join(hub, '.apex', 'work', 'specs', 'auth.md'), '# Auth spec\n');
-  writeFileSync(join(hub, '.apex', 'work', 'plans', 'auth-plan.md'), '# Auth plan\n');
-
-  return { hub, customGitPolicy };
-}
-
-// Append a routing row after the LAST existing table row, without regenerating the file.
-function appendRoutingRow(indexPath, row) {
-  const lines = readFileSync(indexPath, 'utf8').split('\n');
-  let last = -1;
-  for (let i = 0; i < lines.length; i++) if (lines[i].trimStart().startsWith('|')) last = i;
-  lines.splice(last + 1, 0, row.trimEnd());
-  writeFileSync(indexPath, lines.join('\n'));
-}
-
-test('a freshly-built existing hub starts green (repair precondition)', () => {
-  const { hub } = buildExistingHub();
-  const errors = collectViolations(hub).filter((v) => v.level === 'error');
-  assert.deepEqual(errors, [], JSON.stringify(errors, null, 2));
-});
-
-test('repair adds a missing surface without clobbering the existing _INDEX.md or registered specs', () => {
-  const { hub, customGitPolicy } = buildExistingHub();
-  const indexPath = join(hub, '.apex', '_INDEX.md');
-  const before = readFileSync(indexPath, 'utf8');
-
-  // Repair: a new surface 'api' is confirmed but missing. Scaffold ONLY the missing
-  // standard + adapter triad and APPEND its row — never regenerate _INDEX.md.
-  const { row: apiRow } = scaffold({ name: 'api', surfacePath: 'apps/api', agent: 'api-agent', hubRoot: hub, templatesDir: templates, testCmd: 'vitest' });
-  assert.ok(existsSync(join(hub, '.claude', 'agents', 'api-agent.md')));
-  assert.ok(existsSync(join(hub, '.codex', 'agents', 'api-agent.toml')));
-  assert.ok(existsSync(join(hub, '.opencode', 'agents', 'api-agent.md')));
-  appendRoutingRow(indexPath, apiRow);
-
-  const after = readFileSync(indexPath, 'utf8');
-  const errors = collectViolations(hub).filter((v) => v.level === 'error');
-  assert.deepEqual(errors, [], JSON.stringify(errors, null, 2));
-
-  // Non-destructive guarantees:
-  assert.match(after, /<!-- steepy-hub-version: 1 -->/, 'version stamp preserved');
-  assert.ok(after.includes(customGitPolicy), 'custom git policy preserved');
-  assert.match(after, /`web`/, 'existing web row preserved');
-  assert.match(after, /`api`/, 'new api row appended');
-  // The existing content is a strict prefix-superset: nothing removed, only the row added.
-  assert.ok(after.length > before.length, 'repair only grew the file');
-  assert.ok(after.includes(before.split('\n').filter((l) => l.includes('`web`'))[0]), 'web row byte-identical');
-
-  // Local work artifacts survived untouched.
-  const spec = readFileSync(join(hub, '.apex', 'work', 'specs', 'auth.md'), 'utf8');
-  const plan = readFileSync(join(hub, '.apex', 'work', 'plans', 'auth-plan.md'), 'utf8');
-  assert.match(spec, /Auth spec/, 'local work spec preserved');
-  assert.match(plan, /Auth plan/, 'local work plan preserved');
 });
 
 function jsonBlockAfter(text, heading) {

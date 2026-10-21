@@ -38,7 +38,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const skillsDir = join(root, 'skills');
-const goodHubDir = join(root, 'tests', 'fixtures', 'good-hub');
 
 // The eleven skills a harness discovers and chains (brief's enumeration order).
 const SKILL_NAMES = [
@@ -72,12 +71,9 @@ function skillRelative(name, ...scriptParts) {
 const gitProbe = spawnSync('git', ['--version'], { encoding: 'utf8' });
 const HAS_GIT = gitProbe.status === 0;
 
-// A fresh, isolated fixture repo: a git-initialized copy of tests/fixtures/good-hub
-// (the smallest hub validate-hub.test.mjs already proves is error/warn-free) in its
-// own temp dir. Never mutates the repo's own tests/fixtures/good-hub.
+// A fresh, isolated fixture repo: an empty git-initialized temp dir.
 function makeFixtureRepo(suffix) {
   const fixture = mkdtempSync(join(tmpdir(), `steepy-canary-fixture-${suffix}-`));
-  cpSync(goodHubDir, fixture, { recursive: true });
   const init = spawnSync('git', ['init', '--quiet'], { cwd: fixture, encoding: 'utf8' });
   if (init.status !== 0) {
     rmSync(fixture, { recursive: true, force: true });
@@ -114,68 +110,30 @@ function assertFakeHomeUntouched(fakeHome) {
 
 // --- Case 1: isolated-HOME engine run (spec criterion 9's scripted half) ----------
 
-test('validate-hub runs green through the literal skill-relative path with a CLAUDE_*-scrubbed, isolated-HOME environment, and never touches the fake HOME (criterion 9)', (t) => {
+test('hub-mode runs through the literal skill-relative path with a CLAUDE_*-scrubbed, isolated-HOME environment, and never touches the fake HOME (criterion 9)', (t) => {
   if (!HAS_GIT) {
     t.skip('git is not available in this environment');
     return;
   }
   const fakeHome = mkdtempSync(join(tmpdir(), 'steepy-canary-home-'));
-  const fixture = makeFixtureRepo('validate-hub');
+  const fixture = makeFixtureRepo('hub-mode');
   try {
-    const script = skillRelative('check', 'validate-hub.mjs');
+    const script = skillRelative('check', 'formula', 'cli.mjs');
     assert.ok(
       existsSync(script),
       `sanity: the literal skill-relative path must resolve to a real file first: ${script}`
     );
-    const result = spawnSync(process.execPath, [script, fixture], {
+    const result = spawnSync(process.execPath, [script, 'hub-mode', '--port', 'memory'], {
+      cwd: fixture,
       encoding: 'utf8',
       env: scrubbedEnv(fakeHome),
     });
     assert.equal(
       result.status,
       0,
-      `validate-hub must exit 0 on the scaffolded fixture — stderr:\n${result.stderr}\nstdout:\n${result.stdout}`
+      `hub-mode must exit 0 on the fixture repo — stderr:\n${result.stderr}\nstdout:\n${result.stdout}`
     );
-    assert.match(result.stdout, /steepy validate-hub: OK/);
-    assertFakeHomeUntouched(fakeHome);
-  } finally {
-    rmSync(fakeHome, { recursive: true, force: true });
-    rmSync(fixture, { recursive: true, force: true });
-  }
-});
-
-test('new-surface scaffolds into the fixture through the literal skill-relative path with the same isolated environment, and never touches the fake HOME', (t) => {
-  if (!HAS_GIT) {
-    t.skip('git is not available in this environment');
-    return;
-  }
-  const fakeHome = mkdtempSync(join(tmpdir(), 'steepy-canary-home-'));
-  const fixture = makeFixtureRepo('new-surface');
-  try {
-    const script = skillRelative('new-surface', 'new-surface.mjs');
-    assert.ok(
-      existsSync(script),
-      `sanity: the literal skill-relative path must resolve to a real file first: ${script}`
-    );
-    const result = spawnSync(
-      process.execPath,
-      [script, '--name', 'x', '--path', 'x', '--agent', 'x-agent', '--test', 'true', '--hub', fixture],
-      { encoding: 'utf8', env: scrubbedEnv(fakeHome) }
-    );
-    assert.equal(
-      result.status,
-      0,
-      `new-surface must exit 0 — stderr:\n${result.stderr}\nstdout:\n${result.stdout}`
-    );
-    assert.match(result.stdout, /created/);
-    assert.ok(
-      existsSync(join(fixture, '.apex', 'standards', 'x.md')),
-      'new-surface must scaffold the standard doc into the fixture'
-    );
-    assert.ok(
-      existsSync(join(fixture, '.claude', 'agents', 'x-agent.md')),
-      'new-surface must scaffold the agent doc into the fixture'
-    );
+    assert.match(result.stdout, /mode:/);
     assertFakeHomeUntouched(fakeHome);
   } finally {
     rmSync(fakeHome, { recursive: true, force: true });
@@ -225,10 +183,10 @@ test('all eleven skills/<name>/SKILL.md declare open-subset name + description f
 
 // --- Case 3: engine-root resolution invariant for all eleven skills -------------------
 
-test('engine-root resolution invariant: skills/<name>/../../scripts/validate-hub.mjs resolves to an existing file for all eleven skills', () => {
+test('engine-root resolution invariant: skills/<name>/../../scripts/formula/cli.mjs resolves to an existing file for all eleven skills', () => {
   const offenders = [];
   for (const name of SKILL_NAMES) {
-    const resolved = join(skillsDir, name, '..', '..', 'scripts', 'validate-hub.mjs');
+    const resolved = join(skillsDir, name, '..', '..', 'scripts', 'formula', 'cli.mjs');
     if (!existsSync(resolved)) {
       offenders.push(`${name}: ${resolved} does not exist`);
     }

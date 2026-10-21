@@ -11,7 +11,7 @@
 //               other repos' sessions in the report; attribution happens
 //               after files are read).
 //
-// The report is observational only (`.apex/conventions.md:92-94`): it terminates
+// The report is observational only: it terminates
 // nothing, gates nothing, and performs no network access. By default it reads
 // the descriptor's user-wide store; --session-store-root selects an exact root
 // and --no-session-store disables that collection. Degradation is explicit: a missing/unreadable store is

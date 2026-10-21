@@ -53,7 +53,7 @@ function readVersion(root, rel) {
 }
 
 // Capture console.log/console.error output around a main() call without spawning a
-// subprocess — same technique as tests/validate-hub.test.mjs's captureMain.
+// subprocess.
 function captureMain(argv, root) {
   const out = [];
   const err = [];

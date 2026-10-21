@@ -6,10 +6,8 @@
 // native-multi-harness-plugins plan: `.codex-plugin/plugin.json` (the Codex plugin
 // manifest), `.agents/plugins/marketplace.json` (the repo-level marketplace file that
 // enables `codex plugin marketplace add <owner>/<repo>` / `add ./local-checkout`), and
-// `hooks/hooks-codex.json` (the Codex-native Stop-hook manifest, `$PLUGIN_ROOT` instead
-// of Claude's `${CLAUDE_PLUGIN_ROOT}`). The existing Claude packaging
-// (`.claude-plugin/plugin.json`, `hooks/hooks.json`) is untouched by this task; it is
-// read here only to assert the three-way version lockstep.
+// no hooks manifest (the plugin ships no hooks). The existing Claude packaging
+// (`.claude-plugin/plugin.json`) is read here only to assert the three-way version lockstep.
 import { test, describe, it, before } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -93,7 +91,7 @@ test('.codex-plugin/plugin.json ships one square 512px PNG for its logo and comp
   assert.equal(png.readUInt32BE(20), 512, 'plugin icon height must be 512px');
 });
 
-test('every ./-relative path .codex-plugin/plugin.json references (skills, hooks) exists in the repo', () => {
+test('every ./-relative path .codex-plugin/plugin.json references (skills) exists in the repo', () => {
   const codexPlugin = readJson('.codex-plugin/plugin.json');
 
   assert.ok(codexPlugin.skills, 'plugin.json must declare a skills path');
@@ -101,10 +99,7 @@ test('every ./-relative path .codex-plugin/plugin.json references (skills, hooks
   assert.ok(existsSync(skillsPath), `skills path ${codexPlugin.skills} does not exist`);
   assert.ok(statSync(skillsPath).isDirectory(), `skills path ${codexPlugin.skills} must be a directory`);
 
-  assert.ok(codexPlugin.hooks, 'plugin.json must declare a hooks path');
-  const hooksPath = resolveFromRoot(codexPlugin.hooks);
-  assert.ok(existsSync(hooksPath), `hooks path ${codexPlugin.hooks} does not exist`);
-  assert.ok(statSync(hooksPath).isFile(), `hooks path ${codexPlugin.hooks} must be a file`);
+  assert.equal(codexPlugin.hooks, undefined, 'plugin.json must declare no hooks path');
 });
 
 test('.agents/plugins/marketplace.json parses and lists the steepy-formula plugin with a resolvable local source', () => {
@@ -120,37 +115,6 @@ test('.agents/plugins/marketplace.json parses and lists the steepy-formula plugi
     existsSync(sourcePath),
     `marketplace source ${entry.source} must resolve to an existing repo path`
   );
-});
-
-test('hooks/hooks-codex.json parses, uses $PLUGIN_ROOT (never CLAUDE_*), and points at an existing stop-hook script', () => {
-  const hooksCodex = readJson('hooks/hooks-codex.json');
-
-  const commands = (hooksCodex.hooks?.Stop ?? [])
-    .flatMap((entry) => entry.hooks ?? [])
-    .filter((h) => h.type === 'command')
-    .map((h) => h.command);
-  assert.ok(commands.length > 0, 'expected at least one Stop command hook');
-
-  for (const command of commands) {
-    assert.match(command, /\$PLUGIN_ROOT/, `hook command must reference $PLUGIN_ROOT: ${command}`);
-    assert.doesNotMatch(command, /CLAUDE_/, `Codex hook command must never reference CLAUDE_*: ${command}`);
-  }
-
-  assert.ok(existsSync(join(root, 'scripts', 'stop-hook.mjs')), 'scripts/stop-hook.mjs must exist');
-});
-
-test("hooks/hooks.json (Claude packaging) stays untouched by the Codex packaging task", () => {
-  // Guards the adapters standard's boundary: Claude's hook manifest is separate
-  // packaging and keeps its own env var; this task must not fold the two together.
-  const claudeHooks = readJson('hooks/hooks.json');
-  const commands = (claudeHooks.hooks?.Stop ?? [])
-    .flatMap((entry) => entry.hooks ?? [])
-    .filter((h) => h.type === 'command')
-    .map((h) => h.command);
-  assert.ok(commands.length > 0, 'expected at least one Stop command hook');
-  for (const command of commands) {
-    assert.match(command, /\$\{CLAUDE_PLUGIN_ROOT\}/, `Claude hook command must keep \${CLAUDE_PLUGIN_ROOT}: ${command}`);
-  }
 });
 
 // ---------------------------------------------------------------------------

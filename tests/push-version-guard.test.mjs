@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -311,8 +311,8 @@ test('spawned: non-push Bash command from a cwd that is not a git repo -> exit 0
 });
 
 // ---------------------------------------------------------------------------
-// Doc-lock: .claude/settings.json registers the hook; hooks/hooks.json (which
-// ships to plugin users) must stay untouched.
+// Doc-lock: .claude/settings.json registers the hook; the plugin ships no
+// hooks manifest.
 // ---------------------------------------------------------------------------
 
 test('.claude/settings.json registers a PreToolUse Bash hook pointing at push-version-guard.mjs', () => {
@@ -328,7 +328,6 @@ test('.claude/settings.json registers a PreToolUse Bash hook pointing at push-ve
   );
 });
 
-test('hooks/hooks.json (shipped to plugin users) does not reference push-version-guard.mjs', () => {
-  const hooksJson = readFileSync(join(root, 'hooks', 'hooks.json'), 'utf8');
-  assert.doesNotMatch(hooksJson, /push-version-guard/);
+test('the plugin ships no hooks manifest (hooks/hooks.json does not exist)', () => {
+  assert.equal(existsSync(join(root, 'hooks', 'hooks.json')), false);
 });

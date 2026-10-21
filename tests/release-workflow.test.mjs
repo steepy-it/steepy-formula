@@ -153,7 +153,7 @@ test('validate.yml: reusable Node 24 test, coherence, package, and product check
   assert.match(workflow, /node-version:\s*\['24'\]/);
   // Formula pins one runtime dependency (neo4j-driver): the lockfile install precedes the suite.
   assert.match(workflow, /run: npm ci\s*\n\s*- name: Run test suite\s*\n\s*run: npm test/);
-  assert.match(workflow, /node scripts\/validate-hub\.mjs \./);
+  assert.doesNotMatch(workflow, /validate-hub/);
   assert.match(workflow, /npm pack --dry-run --json/);
   assert.match(workflow, /node scripts\/bump-version\.mjs --check/);
   assert.match(workflow, /node scripts\/validate-release-evidence\.mjs --product-only/);
