@@ -1079,17 +1079,21 @@ function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, bas
   // hub/routing/testing/conventions context resolves through the canonical graph
   // (`steepy-formula context resolve`), never archived Markdown. When the legacy routing
   // file is still present (mock/archived hubs), the apex behavior is kept unchanged.
+  const hubOutputPath = `.apex/work/tasks/${specName}/context/hub-context`;
   const graphHub = !existsSync(join(cwd, routingPath))
-    ? resolveHubContext({ repoRoot: cwd, outputPath: `.apex/work/tasks/${specName}/context/hub-context` })
+    ? resolveHubContext({ repoRoot: cwd, outputPath: hubOutputPath })
     : null;
+  // The resolver is an injection seam: its answer must be the path requested.
+  if (graphHub && graphHub.contextPath !== `${hubOutputPath}/context.md`) {
+    throw new Error(`hub context path must be '${hubOutputPath}/context.md', got '${graphHub.contextPath}'`);
+  }
   const resolvedRoutingPath = graphHub ? graphHub.contextPath : routingPath;
   const resolvedTestingPath = graphHub ? graphHub.contextPath : testingPath;
   const resolvedConventionsPath = graphHub ? graphHub.contextPath : conventionsPath;
-  // The resolver's own `context.md` sits under `.apex/work/tasks/<spec>/context/hub-context/`,
-  // a directory the typed work-paths grammar has no family for; like every hub-context read
-  // it keeps the lexical guard rather than the work-path primitive.
+  // The resolver's `context.md` lives under `.apex/work/`, so it rides the typed
+  // `hub-context` family of the work-paths primitive like every other work input.
   const routingText = graphHub
-    ? readFileSync(join(cwd, assertSafeRelPath(graphHub.contextPath, 'hub context path')), 'utf8')
+    ? readWorkPath(cwd, graphHub.contextPath, { encoding: 'utf8', expect: 'work-output', family: 'hub-context' })
     : readArtifact(cwd, resolvedRoutingPath);
   const standardsBySurface = standardsBySurfaceFromRouting(routingText, { repoRoot: cwd });
   // A cross-cutting entry with no routing row loads no standard. That is a real

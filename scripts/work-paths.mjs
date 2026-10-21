@@ -123,6 +123,9 @@ function classifyRest(rest, value) {
     if (rest.length === 4 && rest[2] === 'context' && MANIFEST_NAME.test(rest[3])) {
       return { type: 'work-output', family: 'manifest' };
     }
+    if (rest.length === 5 && rest[2] === 'context' && rest[3] === 'hub-context' && rest[4] === 'context.md') {
+      return { type: 'work-output', family: 'hub-context' };
+    }
   }
   if (rest.length >= 2 && rest[0] === 'loops') {
     if (!isCanonicalLoopName(rest[1])) fail(`invalid loop run name in '${value}'`);

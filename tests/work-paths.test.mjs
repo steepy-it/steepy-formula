@@ -37,6 +37,7 @@ const FAMILIES = [
   ['criteria', `.apex/work/tasks/${RUN}/success-criteria.md`, 'criteria'],
   ['plan', '.apex/work/plans/demo-spec.md', 'work-output'],
   ['manifest', `.apex/work/tasks/${RUN}/context/phase-1-attempt-1.json`, 'work-output'],
+  ['hub-context', `.apex/work/tasks/${RUN}/context/hub-context/context.md`, 'work-output'],
   ['status', `.apex/work/tasks/${RUN}/autopilot-status.md`, 'work-output'],
   ['raw', `.apex/work/tasks/${RUN}/phase-1-attempt-1.raw.jsonl`, 'work-output'],
   ['ledger', `.apex/work/tasks/${RUN}/resource-usage.jsonl`, 'work-output'],
@@ -51,7 +52,7 @@ const FAMILIES = [
   ['review-report', `.apex/work/tasks/${RUN}/review-report.md`, 'work-output'],
 ];
 const SYMLINK_FAMILIES = [
-  'manifest', 'criteria', 'status', 'raw', 'ledger', 'diff', 'evidence', 'review-report', 'task-report', 'task-result', 'task-result-report',
+  'manifest', 'hub-context', 'criteria', 'status', 'raw', 'ledger', 'diff', 'evidence', 'review-report', 'task-report', 'task-result', 'task-result-report',
 ];
 const LOOP = '2026-09-03-demo-loop';
 const UUID = '12345678-1234-4234-8234-123456789abc';
@@ -199,6 +200,18 @@ test('grammar rejects wrong-type paths for a call site and paths outside the wor
   ];
   for (const path of outside) {
     assert.throws(() => classifyWorkPath(path), /work path/u, path);
+  }
+});
+
+test('hub-context grammar admits exactly the resolver context.md and rejects near misses', () => {
+  const base = `.apex/work/tasks/${RUN}/context/hub-context`;
+  assert.equal(classifyWorkPath(`${base}/context.md`).family, 'hub-context');
+  for (const bad of [
+    `${base}/other.md`, `${base}/sub/context.md`, `${base}-x/context.md`, `${base}/context.md/`,
+    `${base}/./context.md`, `${base}/../hub-context/context.md`, `${base}//context.md`,
+    `.apex/work/tasks/${RUN}/hub-context/context.md`, `${base}/context.md.bak`, `${base}/CONTEXT.md`,
+  ]) {
+    assert.throws(() => parseWorkPath(bad, 'work-output', 'hub-context'), /work path/u, bad);
   }
 });
 

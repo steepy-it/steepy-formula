@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { headlessCommand } from '../adapters/headless.mjs';
 import { collectHeadlessChannel } from '../scripts/cost-report.mjs';
+import { fakeResolveHubContext } from './helpers/fake-hub-context.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -885,18 +886,6 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
 `;
   }
 
-  // Graph-mode hub context: a hermetic stand-in for `resolveGraphHubContext` that
-  // writes a fixed `context.md` under the requested output path and returns the
-  // same shape, so no fixture needs a Markdown hub or the real graph CLI.
-  const HUB_CONTEXT_TEXT = '# Context (schema v1)\n\nNode built-ins only. Test command: `npm test`.\n';
-  function fakeResolveHubContext({ repoRoot, outputPath }) {
-    const outputDir = outputPath;
-    mkdirSync(join(repoRoot, outputDir), { recursive: true });
-    const contextPath = `${outputDir}/context.md`;
-    writeFileSync(join(repoRoot, contextPath), HUB_CONTEXT_TEXT);
-    return { outputDir, contextPath, bytes: Buffer.byteLength(HUB_CONTEXT_TEXT), projectId: null };
-  }
-
   // A temp git repo holding one spec, plus the paths the conductor derives from it.
   // Work artifacts are gitignored exactly as in a real hub, and the baseline is
   // committed: the conductor's fresh-run preflight demands a clean working tree.
@@ -1548,7 +1537,8 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         assert.equal(manifest.modelTier, expectedTierByPhase[phase]);
         assert.equal(Object.hasOwn(manifest.contract, 'budget'), false);
         // The graph resolver artifact stands in for routing, testing and standard alike,
-        // so it can be listed once per role; the distinct inputs are what is contracted.
+        // so the builders list it once per role; compare distinct inputs. Follow-up: Task 4
+        // de-duplicates the builders, then restore exact deepEqual on the raw lists.
         assert.deepEqual([...new Set(manifest.required.map(({ path }) => path))], expectedRequired[phase]);
         if (phase === 'implement') {
           assert.deepEqual([...new Map(manifest.onDemand.map(({ path, available }) => [path, available]))], [
@@ -2342,6 +2332,47 @@ if (process.argv[2] === '--version') {
     }
   });
 
+  it('refuses a hub-context directory that is a symlink out of the repository', async () => {
+    const run = makeRun();
+    const outside = mkdtempSync(join(tmpdir(), 'steepy-autopilot-hubctx-'));
+    try {
+      writeFileSync(join(outside, 'context.md'), 'OUTSIDE-SENTINEL\n');
+      const { code } = await drive(run, { FAKE_HARNESS_MODE: 'done' }, {
+        resolveHubContext: ({ repoRoot, outputPath }) => {
+          mkdirSync(dirname(join(repoRoot, outputPath)), { recursive: true });
+          symlinkSync(outside, join(repoRoot, outputPath));
+          return { outputDir: outputPath, contextPath: `${outputPath}/context.md`, bytes: 17, projectId: null };
+        },
+      });
+      assert.equal(code, 1);
+      const status = statusOf(run);
+      assert.match(linesWith(status, ' — ARTIFACT_FAILED — ')[0], /symlink/);
+      assert.equal(linesWith(status, ' — SPAWNED — ').length, 0, status);
+      assert.ok(!existsSync(join(run.taskDir, 'context', 'phase-plan-attempt-1.json')));
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('halts with ARTIFACT_FAILED when the resolver answers a path other than the requested one', async () => {
+    const run = makeRun();
+    try {
+      const { code } = await drive(run, { FAKE_HARNESS_MODE: 'done' }, {
+        resolveHubContext: (request) => ({
+          ...fakeResolveHubContext(request),
+          contextPath: '.apex/work/tasks/other/context/hub-context/context.md',
+        }),
+      });
+      assert.equal(code, 1);
+      const status = statusOf(run);
+      assert.match(linesWith(status, ' — ARTIFACT_FAILED — ')[0], /hub context path/);
+      assert.equal(linesWith(status, ' — SPAWNED — ').length, 0, status);
+    } finally {
+      rmSync(run.dir, { recursive: true, force: true });
+    }
+  });
+
   it('halts with ARTIFACT_FAILED when the injected hub-context resolver throws', async () => {
     const run = makeRun();
     try {
@@ -2485,8 +2516,8 @@ if (process.argv[2] === '--version') {
       const missingResult = await drive(missing, { FAKE_HARNESS_MODE: 'done' });
       assert.equal(missingResult.code, 1);
       assert.equal(linesWith(statusOf(missing), ' — SPAWNED — ').length, spawnedBefore);
-      assert.match(statusOf(missing), / — ARTIFACT_FAILED — .*phase=implement.*(?:required input does not exist|missing work artifact)/);
-      assert.ok(!existsSync(join(missing.taskDir, 'phase-1-attempt-1.raw.jsonl')));
+      assert.match(statusOf(missing), / — ARTIFACT_FAILED — .*phase=implement.*missing work artifact/);
+      assert.ok(!existsSync(join(missing.taskDir, 'phase-2-attempt-1.raw.jsonl')));
 
       const malformedResult = await drive(malformed, { FAKE_HARNESS_MODE: 'done' });
       assert.equal(malformedResult.code, 1);
