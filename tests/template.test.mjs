@@ -10,10 +10,10 @@ const templatesDir = join(here, '..', 'templates');
 
 // The portable v1 template set (apex v0.9.4 port, full adaptation). Task 16
 // retired the three legacy sources (root CLAUDE document, legacy bootstrap
-// skill, legacy surface agent): render-claude-md.mjs now delegates legacy
-// rendering to project-scaffold.mjs and new-surface.mjs composes through the
-// planner, so the retired files are deleted (USER-ADJUDICATED at pre-flight,
-// deferred from Task 13 to this task).
+// skill, legacy surface agent): project-scaffold.mjs renders every portable
+// artifact from this set and render-claude-md.mjs renders the graph CLAUDE.md
+// from its own inline template, so the retired files are deleted
+// (USER-ADJUDICATED at pre-flight, deferred from Task 13 to this task).
 const v1Templates = [
   'AGENTS.md',
   'claude-import.md',
@@ -43,11 +43,11 @@ const renderVars = {
   model: 'confirmed-model',
 };
 
-// Mode parameterization (the core formula adaptation): each mode-aware placeholder
-// is supplied by the renderer with exactly one of the two canonical renderings
-// pinned below. Graph renderings navigate via `steepy-formula hub-mode` +
-// `steepy-formula context resolve` and never mention `.apex/_INDEX.md`; legacy
-// renderings keep the markdown-hub channel.
+// The graph vocabulary (the core formula adaptation): a scaffold renders graph-mode
+// artifacts only, so each of these placeholders is supplied by the renderer with the
+// one canonical graph rendering pinned below. Graph renderings navigate via
+// `steepy-formula hub-mode` + `steepy-formula context resolve` and never mention
+// `.apex/_INDEX.md`.
 
 const graphNavigation =
   'For every task, use the `demo-project-bootstrap` skill first. If that skill is unavailable, ' +
@@ -55,18 +55,9 @@ const graphNavigation =
   '`steepy-formula context resolve --path <task-path>` (fallback ' +
   '`--target apex:<projectId>:surface:<slug>`) and load exactly what it returns.';
 
-const legacyNavigation =
-  'For every task, use the `demo-project-bootstrap` skill first. If that skill is unavailable, ' +
-  'read `.apex/_INDEX.md` before making changes.';
-
 const graphOrientation = [
   '2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line — this bootstrap applies when it reports `graph`.',
   '3. Resolve the task context: run `steepy-formula context resolve --path <task-path>` for the paths the task will touch (fallback `--target apex:<projectId>:surface:<slug>`) and load exactly the layers the resolve returns (context.json + context.md).',
-].join('\n');
-
-const legacyOrientation = [
-  '2. Read `.apex/_INDEX.md` in full for the routing table and semantic knowledge map.',
-  '3. Match the task to the owning surface and read only the minimum documents named by its routing row.',
 ].join('\n');
 
 const graphStandardOrientation =
@@ -74,27 +65,12 @@ const graphStandardOrientation =
   '(context.json + context.md) and follow the resolved rules and terms before working on this surface — ' +
   'never copy them into this adapter.';
 
-// Apex v1.1.0: a legacy adapter reaches its standard through the surface's routing
-// row, so a surface split into the modular form keeps a valid untouched adapter.
-const legacyStandardOrientation =
-  'read the standard linked in the `web` row of the routing table in `.apex/_INDEX.md` before working on this ' +
-  'surface. Follow that standard without copying its rules into this adapter.';
-
 const graphVars = {
   ...renderVars,
   navigation: graphNavigation,
   orientation: graphOrientation,
   standardOrientation: graphStandardOrientation,
 };
-
-const legacyVars = {
-  ...renderVars,
-  navigation: legacyNavigation,
-  orientation: legacyOrientation,
-  standardOrientation: legacyStandardOrientation,
-};
-
-const modeVars = { graph: graphVars, legacy: legacyVars };
 
 function template(name) {
   return readFileSync(join(templatesDir, name), 'utf8');
@@ -137,25 +113,19 @@ test('renderTemplate substitutes vars and throws on missing', () => {
   assert.throws(() => renderTemplate('{{missing}}', {}), /missing/);
 });
 
-test('v1 root instruction templates contain only their managed blocks, with mode-aware navigation', () => {
-  for (const [mode, vars] of Object.entries(modeVars)) {
-    const agents = renderTemplate(template('AGENTS.md'), vars);
-    assert.match(agents, /^<!-- steepy:managed:project-instructions:v1:start -->\n/);
-    assert.match(agents, /\n<!-- steepy:managed:project-instructions:v1:end -->\n$/);
-    assert.doesNotMatch(agents, /steepy:generated:/);
-    assert.match(agents, /demo-project/);
-    assert.match(agents, /A portable demo project\./);
-    assert.match(agents, /npm test/);
-    assert.match(agents, /web-agent/);
-    assert.match(agents, /`demo-project-bootstrap`/);
-    if (mode === 'graph') {
-      assert.match(agents, /steepy-formula hub-mode/, 'graph navigation must declare the hub mode');
-      assert.match(agents, /steepy-formula context resolve/, 'graph navigation must resolve from the graph');
-      assert.doesNotMatch(agents, /_INDEX\.md/, 'graph navigation must never reference the markdown hub');
-    } else {
-      assert.match(agents, /`\.apex\/_INDEX\.md`/, 'legacy navigation keeps the _INDEX.md fallback');
-    }
-  }
+test('v1 root instruction templates contain only their managed blocks, with graph navigation', () => {
+  const agents = renderTemplate(template('AGENTS.md'), graphVars);
+  assert.match(agents, /^<!-- steepy:managed:project-instructions:v1:start -->\n/);
+  assert.match(agents, /\n<!-- steepy:managed:project-instructions:v1:end -->\n$/);
+  assert.doesNotMatch(agents, /steepy:generated:/);
+  assert.match(agents, /demo-project/);
+  assert.match(agents, /A portable demo project\./);
+  assert.match(agents, /npm test/);
+  assert.match(agents, /web-agent/);
+  assert.match(agents, /`demo-project-bootstrap`/);
+  assert.match(agents, /steepy-formula hub-mode/, 'graph navigation must declare the hub mode');
+  assert.match(agents, /steepy-formula context resolve/, 'graph navigation must resolve from the graph');
+  assert.doesNotMatch(agents, /_INDEX\.md/, 'graph navigation must never reference the markdown hub');
 
   assert.equal(
     template('claude-import.md'),
@@ -163,117 +133,105 @@ test('v1 root instruction templates contain only their managed blocks, with mode
   );
 });
 
-test('v1 generated templates render complete provenance and native thin adapters in both hub modes', () => {
+test('v1 generated templates render complete provenance and native thin graph adapters', () => {
   const generatedNames = v1Templates.slice(2);
-  for (const [mode, vars] of Object.entries(modeVars)) {
-    const rendered = Object.fromEntries(
-      generatedNames.map((name) => [name, renderTemplate(template(name), vars)]),
-    );
+  const rendered = Object.fromEntries(
+    generatedNames.map((name) => [name, renderTemplate(template(name), graphVars)]),
+  );
 
-    for (const [name, text] of Object.entries(rendered)) {
-      assert.doesNotMatch(text, /\{\{\w+\}\}/, `${name} leaked a placeholder`);
-    }
-
-    const skill = rendered['project-bootstrap-skill.md'];
-    assert.match(
-      skill,
-      /^---\n[\s\S]*?\n---\n<!-- steepy:generated:demo-project-bootstrap:v1 -->\n/,
-    );
-    assert.match(skill, /`AGENTS\.md`/);
-    if (mode === 'graph') {
-      assert.match(skill, /steepy-formula hub-mode/);
-      assert.match(skill, /steepy-formula context resolve/);
-      assert.doesNotMatch(skill, /_INDEX\.md/, 'graph bootstrap skill must not read the markdown hub');
-    } else {
-      assert.match(skill, /`\.apex\/_INDEX\.md`/);
-    }
-    assert.match(
-      skill,
-      /Do not ordinarily enumerate, search, or read under `\.apex\/work\/\*\*`/,
-    );
-    assert.match(
-      skill,
-      /accepted handoff.*exact work inputs|exact work inputs.*accepted handoff/is,
-    );
-    assert.match(
-      skill,
-      /pathless workflow invocation.*bounded workflow-header recovery discovery/i,
-    );
-    assert.match(
-      skill,
-      /exact paths or a broader work-area scope.*explicitly delimits/i,
-    );
-    assert.match(
-      skill,
-      /child agents.*only the phase orchestrator interprets a handoff/i,
-    );
-    assert.doesNotMatch(
-      skill,
-      /phase role maps|lifecycle transitions|envelope grammar|harness-specific invocation syntax|shared protocol reference/i,
-    );
-    assert.doesNotMatch(skill, /CLAUDE\.md|\/steepy-formula:/);
-
-    const stub = rendered['claude-bootstrap-stub.md'];
-    assert.match(
-      stub,
-      /^---\n[\s\S]*?\n---\n<!-- steepy:generated:demo-project-bootstrap-stub:v1 -->\n/,
-    );
-    assert.match(
-      stub,
-      /`\.agents\/skills\/demo-project-bootstrap\/SKILL\.md`/,
-    );
-    assert.doesNotMatch(stub, /\.apex\/_INDEX|## Procedure/);
-
-    const adapters = [
-      ['surface-agent-claude.md', '<!-- steepy:generated:web-agent-claude:v1 -->'],
-      ['surface-agent-codex.toml', '# steepy:generated:web-agent-codex:v1'],
-      ['surface-agent-opencode.md', '<!-- steepy:generated:web-agent-opencode:v1 -->'],
-    ];
-    for (const [name, provenance] of adapters) {
-      const text = rendered[name];
-      assert.match(text, /web-agent/);
-      assert.match(text, /apps\/web/);
-      assert.match(text, /demo-project-bootstrap/);
-      if (name === 'surface-agent-codex.toml') {
-        assert.match(text, /# Project description: A portable demo project\./);
-      } else {
-        // Apex v1.1.0: Claude and OpenCode descriptions name the surface and its path.
-        assert.match(text, /^  Specialist for the web surface\. Use it for changes under apps\/web\.$/m);
-        assert.doesNotMatch(text, /A portable demo project\./);
-      }
-      assert.equal(text.split(provenance).length - 1, 1, `${name} must carry one provenance marker`);
-      assert.doesNotMatch(text, /Surface non-negotiables|Anti-patterns|## Conventions/);
-      assert.doesNotMatch(text, /\.apex\/standards\//, `${name} must not hard-code a standards path`);
-      if (mode === 'graph') {
-        assert.match(
-          text,
-          /steepy-formula context resolve --target apex:demo-project:surface:web/,
-          'graph adapter must resolve its surface from the graph',
-        );
-        assert.doesNotMatch(text, /_INDEX\.md/, 'graph adapter must not route through the markdown hub');
-      } else {
-        // All three legacy adapters reach the standard through the surface's routing row.
-        assert.match(text, /read the standard linked in the `web` row of the routing table in `\.apex\/_INDEX\.md`/);
-        assert.equal(text.split('.apex/_INDEX.md').length - 1, 1, `${name} must point to the routing table once`);
-      }
-    }
-    assert.match(
-      rendered['surface-agent-claude.md'],
-      /^---\n[\s\S]*?\n---\n<!-- steepy:generated:web-agent-claude:v1 -->\n/,
-    );
-    assert.match(rendered['surface-agent-claude.md'], /^model: confirmed-model$/m);
-    assert.match(rendered['surface-agent-codex.toml'], /^# steepy:generated:web-agent-codex:v1\n/);
-    assert.doesNotMatch(rendered['surface-agent-codex.toml'], /^model\s*=/m);
-    assert.match(
-      rendered['surface-agent-opencode.md'],
-      /^---\n[\s\S]*?\n---\n<!-- steepy:generated:web-agent-opencode:v1 -->\n/,
-    );
+  for (const [name, text] of Object.entries(rendered)) {
+    assert.doesNotMatch(text, /\{\{\w+\}\}/, `${name} leaked a placeholder`);
   }
+
+  const skill = rendered['project-bootstrap-skill.md'];
+  assert.match(
+    skill,
+    /^---\n[\s\S]*?\n---\n<!-- steepy:generated:demo-project-bootstrap:v1 -->\n/,
+  );
+  assert.match(skill, /`AGENTS\.md`/);
+  assert.match(skill, /steepy-formula hub-mode/);
+  assert.match(skill, /steepy-formula context resolve/);
+  assert.doesNotMatch(skill, /_INDEX\.md/, 'graph bootstrap skill must not read the markdown hub');
+  assert.match(
+    skill,
+    /Do not ordinarily enumerate, search, or read under `\.apex\/work\/\*\*`/,
+  );
+  assert.match(
+    skill,
+    /accepted handoff.*exact work inputs|exact work inputs.*accepted handoff/is,
+  );
+  assert.match(
+    skill,
+    /pathless workflow invocation.*bounded workflow-header recovery discovery/i,
+  );
+  assert.match(
+    skill,
+    /exact paths or a broader work-area scope.*explicitly delimits/i,
+  );
+  assert.match(
+    skill,
+    /child agents.*only the phase orchestrator interprets a handoff/i,
+  );
+  assert.doesNotMatch(
+    skill,
+    /phase role maps|lifecycle transitions|envelope grammar|harness-specific invocation syntax|shared protocol reference/i,
+  );
+  assert.doesNotMatch(skill, /CLAUDE\.md|\/steepy-formula:/);
+
+  const stub = rendered['claude-bootstrap-stub.md'];
+  assert.match(
+    stub,
+    /^---\n[\s\S]*?\n---\n<!-- steepy:generated:demo-project-bootstrap-stub:v1 -->\n/,
+  );
+  assert.match(
+    stub,
+    /`\.agents\/skills\/demo-project-bootstrap\/SKILL\.md`/,
+  );
+  assert.doesNotMatch(stub, /\.apex\/_INDEX|## Procedure/);
+
+  const adapters = [
+    ['surface-agent-claude.md', '<!-- steepy:generated:web-agent-claude:v1 -->'],
+    ['surface-agent-codex.toml', '# steepy:generated:web-agent-codex:v1'],
+    ['surface-agent-opencode.md', '<!-- steepy:generated:web-agent-opencode:v1 -->'],
+  ];
+  for (const [name, provenance] of adapters) {
+    const text = rendered[name];
+    assert.match(text, /web-agent/);
+    assert.match(text, /apps\/web/);
+    assert.match(text, /demo-project-bootstrap/);
+    if (name === 'surface-agent-codex.toml') {
+      assert.match(text, /# Project description: A portable demo project\./);
+    } else {
+      // Apex v1.1.0: Claude and OpenCode descriptions name the surface and its path.
+      assert.match(text, /^  Specialist for the web surface\. Use it for changes under apps\/web\.$/m);
+      assert.doesNotMatch(text, /A portable demo project\./);
+    }
+    assert.equal(text.split(provenance).length - 1, 1, `${name} must carry one provenance marker`);
+    assert.doesNotMatch(text, /Surface non-negotiables|Anti-patterns|## Conventions/);
+    assert.doesNotMatch(text, /\.apex\/standards\//, `${name} must not hard-code a standards path`);
+    assert.match(
+      text,
+      /steepy-formula context resolve --target apex:demo-project:surface:web/,
+      'graph adapter must resolve its surface from the graph',
+    );
+    assert.doesNotMatch(text, /_INDEX\.md/, 'graph adapter must not route through the markdown hub');
+  }
+  assert.match(
+    rendered['surface-agent-claude.md'],
+    /^---\n[\s\S]*?\n---\n<!-- steepy:generated:web-agent-claude:v1 -->\n/,
+  );
+  assert.match(rendered['surface-agent-claude.md'], /^model: confirmed-model$/m);
+  assert.match(rendered['surface-agent-codex.toml'], /^# steepy:generated:web-agent-codex:v1\n/);
+  assert.doesNotMatch(rendered['surface-agent-codex.toml'], /^model\s*=/m);
+  assert.match(
+    rendered['surface-agent-opencode.md'],
+    /^---\n[\s\S]*?\n---\n<!-- steepy:generated:web-agent-opencode:v1 -->\n/,
+  );
 });
 
 test('Codex adapter remains valid TOML for a quote-bearing safe-line description', () => {
   const rendered = renderTemplate(template('surface-agent-codex.toml'), {
-    ...legacyVars,
+    ...graphVars,
     description: 'The "portable" project',
   });
   const parsed = parseCodexAdapterToml(rendered);
@@ -288,7 +246,7 @@ test('Codex adapter remains valid TOML for a quote-bearing safe-line description
 test('Codex adapter remains valid TOML for a quote-bearing safe relative path', () => {
   const path = 'apps/"""quoted"/web';
   const rendered = renderTemplate(template('surface-agent-codex.toml'), {
-    ...legacyVars,
+    ...graphVars,
     description: 'The "portable" project',
     path,
   });
@@ -317,28 +275,26 @@ test('graph-mode Codex adapter resolves its standard from the graph and remains 
 });
 
 test('the generated bootstrap skill allowlists exactly the eleven canonical skills including graph-migrate and inception', () => {
-  for (const [mode, vars] of Object.entries(modeVars)) {
-    const rendered = renderTemplate(template('project-bootstrap-skill.md'), vars);
-    const enumerated = [...rendered.matchAll(/`([a-z][a-z-]*)`/g)]
-      .map((match) => match[1])
-      .filter((name) => ELEVEN_SKILLS.includes(name));
-    assert.deepEqual(
-      [...new Set(enumerated)],
-      ELEVEN_SKILLS,
-      `the ${mode} bootstrap skill must enumerate exactly the eleven canonical skills in order`,
-    );
-  }
+  const rendered = renderTemplate(template('project-bootstrap-skill.md'), graphVars);
+  const enumerated = [...rendered.matchAll(/`([a-z][a-z-]*)`/g)]
+    .map((match) => match[1])
+    .filter((name) => ELEVEN_SKILLS.includes(name));
+  assert.deepEqual(
+    [...new Set(enumerated)],
+    ELEVEN_SKILLS,
+    'the bootstrap skill must enumerate exactly the eleven canonical skills in order',
+  );
   const raw = template('project-bootstrap-skill.md');
   assert.ok(raw.includes('`graph-migrate`'), 'graph-migrate must be part of the shipped allowlist');
   assert.ok(raw.includes('`inception`'), 'inception must be part of the shipped allowlist');
   assert.match(raw, /one of the eleven canonical skills:/);
 });
 
-test('mode channels stay wired: graph variants carry the graph orientation; the retired legacy sources are gone', () => {
+test('the graph channel stays wired: graph variants carry the graph orientation; the retired legacy sources are gone', () => {
   // Task 16's retirement: the three retired-in-apex sources no longer exist, and
   // nothing under scripts/, skills/, adapters/, or tests/ references them (pinned
   // by the retirement guard below). The two graph variants stay as the graph
-  // channel for init/graph-migrate's mode-aware rendering.
+  // channel for init/graph-migrate's rendering.
   const retired = retiredTemplateNames();
   for (const name of retired) {
     assert.equal(existsSync(join(templatesDir, name)), false, `retired template must not exist: ${name}`);
@@ -347,7 +303,7 @@ test('mode channels stay wired: graph variants carry the graph orientation; the 
     assert.ok(existsSync(join(templatesDir, name)), `graph channel variant must exist: ${name}`);
   }
 
-  // The graph channel carries the graph orientation the mode renderings parameterize.
+  // The graph channel carries the graph orientation the renderings parameterize.
   const graphBootstrap = template('bootstrap-skill-graph.md');
   assert.match(graphBootstrap, /steepy-formula hub-mode/);
   assert.match(graphBootstrap, /steepy-formula context resolve/);
@@ -356,7 +312,7 @@ test('mode channels stay wired: graph variants carry the graph orientation; the 
   assert.match(graphAgent, /steepy-formula context resolve --target/);
   assert.doesNotMatch(graphAgent, /\.apex\/standards\//, 'the graph agent channel must not point at the legacy standards tree');
 
-  // The canonical mode renderings stay consistent with those channels.
+  // The canonical graph renderings stay consistent with those channels.
   assert.match(graphVars.navigation, /steepy-formula hub-mode/);
   assert.match(graphVars.navigation, /steepy-formula context resolve/);
   assert.doesNotMatch(graphVars.navigation, /_INDEX\.md/);
@@ -365,10 +321,6 @@ test('mode channels stay wired: graph variants carry the graph orientation; the 
   assert.doesNotMatch(graphVars.orientation, /_INDEX\.md/);
   assert.match(graphVars.standardOrientation, /steepy-formula context resolve --target/);
   assert.doesNotMatch(graphVars.standardOrientation, /\.apex\/standards\//);
-  assert.match(legacyVars.navigation, /\.apex\/_INDEX\.md/);
-  assert.match(legacyVars.orientation, /\.apex\/_INDEX\.md/);
-  assert.match(legacyVars.standardOrientation, /the `web` row of the routing table in `\.apex\/_INDEX\.md`/);
-  assert.doesNotMatch(legacyVars.standardOrientation, /\.apex\/standards\//);
 });
 
 // Same file-walk shape as the apex v0.9.4 retirement guard (task-16). The names
@@ -411,7 +363,7 @@ test('final v1 layout excludes retired template sources and consumer reads', () 
   // contract is carried by this suite plus the deleted files themselves.
 });
 
-test('placeholder vocabulary is complete and documented — every code-rendered var is supplied per mode (G10)', () => {
+test('placeholder vocabulary is complete and documented — every code-rendered var is supplied (G10)', () => {
   const expectedPlaceholders = {
     'AGENTS.md': ['description', 'devCommands', 'navigation', 'projectName', 'surfaceList'],
     'claude-import.md': [],
@@ -426,10 +378,8 @@ test('placeholder vocabulary is complete and documented — every code-rendered 
     assert.doesNotMatch(raw, /\r/, `${name} must use LF line endings`);
     const found = [...new Set([...raw.matchAll(/\{\{(\w+)\}\}/g)].map((match) => match[1]))].sort();
     assert.deepEqual(found, expected, `${name} placeholder vocabulary must stay wired to the renderer`);
-    for (const [mode, vars] of Object.entries(modeVars)) {
-      for (const key of expected) {
-        assert.ok(key in vars, `${name}: var ${key} missing from the ${mode} render vars`);
-      }
+    for (const key of expected) {
+      assert.ok(key in graphVars, `${name}: var ${key} missing from the graph render vars`);
     }
   }
 });

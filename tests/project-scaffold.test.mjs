@@ -7,7 +7,6 @@ import {
   linkSync,
   readlinkSync,
   chmodSync,
-  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -23,7 +22,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
 import {
   applyProjectScaffold,
   classifyProjectArtifact,
@@ -31,12 +31,8 @@ import {
   parseProjectInstructions,
   planProjectScaffold,
   planRootInstructions,
-  planSpecialistScaffold,
   previewProjectScaffold,
   recognizeProjectScaffoldLeases,
-  renderLegacyClaudeBootstrap,
-  renderLegacyClaudeMd,
-  renderLegacyClaudeSpecialist,
   renderProjectArtifact,
   validateProjectScaffoldPlan,
   withProjectScaffoldLock,
@@ -54,37 +50,25 @@ const ELEVEN_SKILLS = [
   'implement', 'review', 'loop-engineer', 'graph-migrate',
 ];
 
-// The mode-vocabulary contract pinned by tests/template.test.mjs: the renderer
-// supplies {{navigation}}, {{orientation}}, and {{standardOrientation}} with the
-// mode-selected canonical rendering. These are the portable-demo instantiations.
+// The graph vocabulary pinned by tests/template.test.mjs: the renderer supplies
+// {{navigation}}, {{orientation}}, and {{standardOrientation}} with the graph
+// rendering (a scaffold renders graph-mode artifacts only). These are the
+// portable-demo instantiations.
 const GRAPH_NAVIGATION =
   'For every task, use the `portable-demo-bootstrap` skill first. If that skill is unavailable, ' +
   'run `steepy-formula hub-mode` and quote the `mode:` line, then resolve the task context with ' +
   '`steepy-formula context resolve --path <task-path>` (fallback ' +
   '`--target apex:<projectId>:surface:<slug>`) and load exactly what it returns.';
 
-const LEGACY_NAVIGATION =
-  'For every task, use the `portable-demo-bootstrap` skill first. If that skill is unavailable, ' +
-  'read `.apex/_INDEX.md` before making changes.';
-
 const GRAPH_ORIENTATION = [
   '2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line — this bootstrap applies when it reports `graph`.',
   '3. Resolve the task context: run `steepy-formula context resolve --path <task-path>` for the paths the task will touch (fallback `--target apex:<projectId>:surface:<slug>`) and load exactly the layers the resolve returns (context.json + context.md).',
-].join('\n');
-
-const LEGACY_ORIENTATION = [
-  '2. Read `.apex/_INDEX.md` in full for the routing table and semantic knowledge map.',
-  '3. Match the task to the owning surface and read only the minimum documents named by its routing row.',
 ].join('\n');
 
 const graphStandardOrientation = (surface) =>
   `resolve this surface's context with \`steepy-formula context resolve --target apex:portable-demo:surface:${surface}\` ` +
   '(context.json + context.md) and follow the resolved rules and terms before working on this surface — ' +
   'never copy them into this adapter.';
-
-const legacyStandardOrientation = (surface) =>
-  `read the standard linked in the \`${surface}\` row of the routing table in \`.apex/_INDEX.md\` ` +
-  'before working on this surface. Follow that standard without copying its rules into this adapter.';
 
 const lockOwnerChildSource = `
 import { writeFileSync } from 'node:fs';
@@ -118,26 +102,13 @@ function model(overrides = {}) {
       { name: 'web', path: 'apps/web', agent: 'web-agent', testCmd: 'npm test' },
     ],
     resolutions: {},
-    hubMode: 'legacy',
+    hubMode: 'graph',
     ...overrides,
   };
 }
 
 function tempHub() {
   return mkdtempSync(join(tmpdir(), 'steepy-project-plan-'));
-}
-
-async function importProjectScaffoldWithoutTemplates() {
-  const isolatedRoot = tempHub();
-  const isolatedScripts = join(isolatedRoot, 'scripts');
-  mkdirSync(isolatedScripts);
-  copyFileSync(fileURLToPath(new URL('../scripts/project-scaffold.mjs', import.meta.url)),
-    join(isolatedScripts, 'project-scaffold.mjs'));
-  copyFileSync(fileURLToPath(new URL('../scripts/template.mjs', import.meta.url)),
-    join(isolatedScripts, 'template.mjs'));
-  copyFileSync(fileURLToPath(new URL('../scripts/sanitize.mjs', import.meta.url)),
-    join(isolatedScripts, 'sanitize.mjs'));
-  return import(pathToFileURL(join(isolatedScripts, 'project-scaffold.mjs')).href);
 }
 
 test('root-only planner validates an empty surface list without relaxing Project model v1', () => {
@@ -158,7 +129,7 @@ test('root-only planner validates an empty surface list without relaxing Project
     devCommands: rootOnlyModel.devCommands,
     surfaces: [],
     resolutions: {},
-    hubMode: 'legacy',
+    hubMode: 'graph',
   });
 
   const second = planRootInstructions({ hubRoot, model: rootOnlyModel, templatesDir });
@@ -299,15 +270,15 @@ test('normalizer enforces exact safe values, unique surfaces, and single-line fi
   }), /resolution.*current conflict/i);
 });
 
-test('the declared hub mode is a required closed vocabulary on the Project model', () => {
+test('the declared hub mode is a required single-value vocabulary (graph) on the Project model', () => {
   const { hubMode, ...withoutMode } = model();
-  assert.equal(hubMode, 'legacy');
+  assert.equal(hubMode, 'graph');
   assert.throws(() => normalizeProjectModel(withoutMode), /hubMode/i);
-  for (const invalid of ['none', 'Graph', 'graph ', '', 'markdown']) {
+  // A scaffold renders graph-mode artifacts only: the retired Markdown-hub mode is rejected.
+  for (const invalid of ['legacy', 'none', 'Graph', 'graph ', '', 'markdown']) {
     assert.throws(() => normalizeProjectModel(model({ hubMode: invalid })), /hubMode/i, invalid);
   }
-  assert.equal(normalizeProjectModel(model({ hubMode: 'graph' })).hubMode, 'graph');
-  assert.equal(normalizeProjectModel(model()).hubMode, 'legacy');
+  assert.equal(normalizeProjectModel(model()).hubMode, 'graph');
 });
 
 test('Project rejects unrepresentable surface test commands before planning or writes', () => {
@@ -452,7 +423,7 @@ test('empty hub produces an exact frozen plan ordered root, bootstrap, then surf
 
   assert.deepEqual(Object.keys(plan), ['schemaVersion', 'hubMode', 'operations', 'conflicts']);
   assert.equal(plan.schemaVersion, 1);
-  assert.equal(plan.hubMode, 'legacy');
+  assert.equal(plan.hubMode, 'graph');
   assert.deepEqual(plan.conflicts, []);
   assert.deepEqual(plan.operations.map(({ artifactId }) => artifactId), [
     'project-instructions',
@@ -652,46 +623,6 @@ test('unsupported root drift inside or outside the old marker block is customize
   }
 });
 
-test('legacy root drift inside or outside the old marker block is customized and replaceable', () => {
-  const normalized = normalizeProjectModel(model());
-  const current = renderProjectArtifact('claude-import', normalized);
-  const legacy = renderLegacyClaudeMd(normalized);
-  const cases = [
-    ['inside', legacy.replace('## AI navigation', '## Changed navigation')],
-    ['outside', `${legacy} `],
-  ];
-
-  for (const [label, observed] of cases) {
-    const hubRoot = tempHub();
-    put(hubRoot, 'CLAUDE.md', observed);
-    const conflictId = 'v1:claude-import:customized';
-    const blocked = planProjectScaffold({ hubRoot, model: model(), templatesDir });
-    assert.deepEqual(blocked.conflicts.find(({ id }) => id === conflictId), {
-      id: conflictId,
-      artifactId: 'claude-import',
-      path: 'CLAUDE.md',
-      reason: 'customized',
-      choices: ['replace', 'abort'],
-    }, label);
-    assert.equal(blocked.operations.some(({ artifactId }) => artifactId === 'claude-import'), false, label);
-
-    const resolved = planProjectScaffold({
-      hubRoot,
-      model: model({ resolutions: { [conflictId]: 'replace' } }),
-      templatesDir,
-    });
-    assert.deepEqual(resolved.operations.find(({ artifactId }) => artifactId === 'claude-import'), {
-      id: 'v1:op:claude-import',
-      kind: 'replace-managed',
-      artifactId: 'claude-import',
-      path: 'CLAUDE.md',
-      priorState: 'customized',
-      priorDigest: createHash('sha256').update(observed).digest('hex'),
-      content: current,
-    }, label);
-  }
-});
-
 test('v1 root blocks plus complete or partial unknown-version markers remain blocking', () => {
   const normalized = normalizeProjectModel(model());
   const current = renderProjectArtifact('project-instructions', normalized);
@@ -731,78 +662,71 @@ test('v1 root blocks plus complete or partial unknown-version markers remain blo
   }
 });
 
-test('legacy renderers are exact recognizers and one-byte drift is customized', () => {
+// Formula <= v1.2.3 rendered a whole-file CLAUDE.md for this suite's model(): this literal is
+// that exact rendering (sha256 pinned below). The planner no longer recognizes it, so an
+// untouched one is a `customized` conflict resolved only by an explicit replace.
+const V1_2_3_CLAUDE_MD = [
+  '# portable-demo',
+  '',
+  'One portable project.',
+  '',
+  '<!-- steepy:start -->',
+  '## AI navigation',
+  'Before touching code: run the `portable-demo-bootstrap` skill, or read',
+  '`.apex/_INDEX.md` (the navigation hub / DAG root).',
+  'Specialist agents live in `.claude/agents/`.',
+  '<!-- steepy:end -->',
+  '',
+  '## Dev commands',
+  '- `npm test`',
+  '',
+  '## Surfaces',
+  '- web (apps/web)',
+  '',
+].join('\n');
+
+test('an untouched formula v1.2.3 whole-file CLAUDE.md is a customized conflict resolved only by replace', () => {
+  assert.equal(
+    createHash('sha256').update(V1_2_3_CLAUDE_MD).digest('hex'),
+    '97ae9e90e9b8e9540478af9b7512447b1bb11bbcd5c4f92908136e9c93f00fa4',
+    'the literal is the exact v1.2.3 rendering',
+  );
   const normalized = normalizeProjectModel(model());
-  const legacyDigests = Object.fromEntries([
-    ['root', renderLegacyClaudeMd(normalized)],
-    ['bootstrap', renderLegacyClaudeBootstrap(normalized)],
-    ['specialist', renderLegacyClaudeSpecialist(normalized.surfaces[0])],
-  ].map(([name, content]) => [name, createHash('sha256').update(content).digest('hex')]));
-  assert.deepEqual(legacyDigests, {
-    root: '97ae9e90e9b8e9540478af9b7512447b1bb11bbcd5c4f92908136e9c93f00fa4',
-    bootstrap: 'b5286b8123a805292b9cb448bb35a7234e4afb71e53d67487b15a301be141628',
-    specialist: '48af3a09eb51b1c59ef359c62251f136de8aa52be3c596cdceac9bac6bc3a558',
-  });
   const hubRoot = tempHub();
-  put(hubRoot, 'CLAUDE.md', renderLegacyClaudeMd(normalized));
-  put(hubRoot, '.claude/skills/portable-demo-bootstrap/SKILL.md', renderLegacyClaudeBootstrap(normalized));
-  put(hubRoot, '.claude/agents/web-agent.md', renderLegacyClaudeSpecialist(normalized.surfaces[0]));
-  const legacy = planProjectScaffold({ hubRoot, model: model(), templatesDir });
-  assert.equal(legacy.operations.find(({ artifactId }) => artifactId === 'claude-import').priorState, 'legacy');
-  assert.equal(legacy.operations.find(({ artifactId }) => artifactId === 'claude-bootstrap-stub').priorState, 'legacy');
-  assert.equal(legacy.operations.find(({ artifactId }) => artifactId === 'web-agent-claude').priorState, 'legacy');
+  put(hubRoot, 'CLAUDE.md', V1_2_3_CLAUDE_MD);
 
-  put(hubRoot, '.claude/agents/web-agent.md', `${renderLegacyClaudeSpecialist(normalized.surfaces[0])} `);
-  const drifted = planProjectScaffold({ hubRoot, model: model(), templatesDir });
-  assert.equal(drifted.conflicts.find(({ artifactId }) => artifactId === 'web-agent-claude').reason, 'customized');
-});
+  const classified = classifyProjectArtifact({ hubRoot, artifact: 'claude-import', normalizedModel: normalized });
+  assert.equal(classified.priorState, 'customized');
+  assert.equal(classified.reason, 'customized');
 
-test('unmarked pre-public artifacts are conflicts and never automatically migrated', () => {
-  const hubRoot = tempHub();
-  const paths = ['CLAUDE.md', '.claude/skills/portable-demo-bootstrap/SKILL.md', '.claude/agents/web-agent.md'];
-  const contents = ['<!-- steepy:start -->\n## AI navigation\n<!-- steepy:end -->\n', '# portable-demo-bootstrap\n', '---\nname: web-agent\nmodel: sonnet\n---\n'];
-  paths.forEach((path, index) => put(hubRoot, path, contents[index]));
+  const conflictId = 'v1:claude-import:customized';
+  const blocked = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+  assert.deepEqual(blocked.conflicts.filter(({ path }) => path === 'CLAUDE.md'), [{
+    id: conflictId,
+    artifactId: 'claude-import',
+    path: 'CLAUDE.md',
+    reason: 'customized',
+    choices: ['replace', 'abort'],
+  }]);
+  assert.equal(blocked.operations.some(({ path }) => path === 'CLAUDE.md'), false);
   const before = snapshot(hubRoot);
-  const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
-  for (const path of paths) assert.ok(plan.conflicts.some((conflict) => conflict.path === path));
-  assert.throws(() => applyProjectScaffold({ hubRoot, plan }), /unresolved conflicts/i);
+  assert.throws(() => applyProjectScaffold({ hubRoot, plan: blocked }), /unresolved conflicts/i);
   assert.deepEqual(snapshot(hubRoot), before);
-});
 
-test('legacy public renderers and classification stay byte-exact without legacy template files', async () => {
-  const isolated = await importProjectScaffoldWithoutTemplates();
-  const normalized = isolated.normalizeProjectModel(model());
-  const rendered = {
-    root: isolated.renderLegacyClaudeMd(normalized),
-    bootstrap: isolated.renderLegacyClaudeBootstrap(normalized),
-    specialist: isolated.renderLegacyClaudeSpecialist(normalized.surfaces[0]),
-  };
-  assert.deepEqual(Object.fromEntries(Object.entries(rendered)
-    .map(([name, content]) => [name, createHash('sha256').update(content).digest('hex')])), {
-    root: '97ae9e90e9b8e9540478af9b7512447b1bb11bbcd5c4f92908136e9c93f00fa4',
-    bootstrap: 'b5286b8123a805292b9cb448bb35a7234e4afb71e53d67487b15a301be141628',
-    specialist: '48af3a09eb51b1c59ef359c62251f136de8aa52be3c596cdceac9bac6bc3a558',
+  const resolved = planProjectScaffold({
+    hubRoot,
+    model: model({ resolutions: { [conflictId]: 'replace' } }),
+    templatesDir,
   });
-
-  const hubRoot = tempHub();
-  const cases = [
-    ['claude-import', 'CLAUDE.md', rendered.root],
-    ['claude-bootstrap-stub', '.claude/skills/portable-demo-bootstrap/SKILL.md', rendered.bootstrap],
-    ['web-agent-claude', '.claude/agents/web-agent.md', rendered.specialist],
-  ];
-  for (const [artifactId, artifactPath, legacyContent] of cases) {
-    put(hubRoot, artifactPath, legacyContent);
-    const classified = isolated.classifyProjectArtifact({
-      hubRoot,
-      artifact: {
-        artifactId,
-        path: artifactPath,
-        content: isolated.renderProjectArtifact(artifactId, normalized, templatesDir),
-      },
-      normalizedModel: normalized,
-    });
-    assert.equal(classified.priorState, 'legacy', artifactId);
-  }
+  assert.deepEqual(resolved.operations.find(({ path }) => path === 'CLAUDE.md'), {
+    id: 'v1:op:claude-import',
+    kind: 'replace-managed',
+    artifactId: 'claude-import',
+    path: 'CLAUDE.md',
+    priorState: 'customized',
+    priorDigest: '97ae9e90e9b8e9540478af9b7512447b1bb11bbcd5c4f92908136e9c93f00fa4',
+    content: renderProjectArtifact('claude-import', normalized, templatesDir),
+  });
 });
 
 test('generated provenance detects customization, wrong targets, duplicates, and orphans', () => {
@@ -927,7 +851,7 @@ test('malformed generated conflicts offer replace and resolve to exact current o
   }
 });
 
-test('classifier reports byte digest and specialist planner is read-only and triad ordered', () => {
+test('classifier reports a current artifact with its byte digest', () => {
   const normalized = normalizeProjectModel(model());
   const hubRoot = tempHub();
   const content = renderProjectArtifact('web-agent-claude', normalized);
@@ -941,23 +865,6 @@ test('classifier reports byte digest and specialist planner is read-only and tri
   const classified = classifyProjectArtifact({ hubRoot, artifact, normalizedModel: normalized });
   assert.equal(classified.priorState, 'current');
   assert.match(classified.priorDigest, /^[a-f0-9]{64}$/);
-
-  const before = snapshot(hubRoot);
-  const specialist = planSpecialistScaffold({
-    hubRoot,
-    surface: {
-      ...normalized.surfaces[0],
-      projectName: normalized.projectName,
-      description: normalized.description,
-      hubMode: normalized.hubMode,
-    },
-    templatesDir,
-    repair: true,
-  });
-  assert.deepEqual(specialist.operations.map(({ artifactId }) => artifactId), [
-    'web-agent-codex', 'web-agent-opencode',
-  ]);
-  assert.deepEqual(snapshot(hubRoot), before);
 });
 
 test('plan validator rejects shape, ordering, placeholders, provenance, adapter syntax, and incoherent triads', () => {
@@ -973,6 +880,7 @@ test('plan validator rejects shape, ordering, placeholders, provenance, adapter 
   assert.throws(() => validateProjectScaffoldPlan({ ...plan, schemaVersion: 2 }), /schemaVersion/i);
   assert.throws(() => validateProjectScaffoldPlan({ ...plan, extra: true }), /unknown.*extra/i);
   assert.throws(() => validateProjectScaffoldPlan({ ...plan, hubMode: 'none' }), /hubMode/i);
+  assert.throws(() => validateProjectScaffoldPlan({ ...plan, hubMode: 'legacy' }), /hubMode/i);
   assert.throws(() => validateProjectScaffoldPlan({ ...plan, operations: [...plan.operations].reverse() }), /order/i);
   assert.throws(() => validateProjectScaffoldPlan(mutate(0, { path: '../AGENTS.md' })), /path/i);
   assert.throws(() => validateProjectScaffoldPlan(mutate(0, {
@@ -1377,7 +1285,7 @@ test('CLI emits deterministic preview/applied JSONL and rejects misuse without w
   assert.equal(previewLines.length, 1);
   assert.deepEqual(Object.keys(previewLines[0]), ['schemaVersion', 'hubMode', 'event', 'preview', 'conflicts']);
   assert.equal(previewLines[0].event, 'preview');
-  assert.equal(previewLines[0].hubMode, 'legacy');
+  assert.equal(previewLines[0].hubMode, 'graph');
   assert.equal(snapshot(previewHub).filter((entry) => !entry.startsWith('model.json:')).length, 0);
 
   const applied = run(['--hub', previewHub, '--model', modelPath, '--apply'], { input: 'abort\n' });
@@ -1389,6 +1297,7 @@ test('CLI emits deterministic preview/applied JSONL and rejects misuse without w
   for (const args of [
     [],
     ['--hub', previewHub],
+    ['--hub', '', '--model', modelPath],
     ['--model', modelPath, '--unknown'],
     ['--model', modelPath, '--apply=yes'],
   ]) {
@@ -1397,6 +1306,7 @@ test('CLI emits deterministic preview/applied JSONL and rejects misuse without w
     const result = run(args.map((arg) => arg === previewHub ? badHub : arg));
     assert.equal(result.status, 1, args.join(' '));
     assert.equal(result.stdout, '');
+    assert.match(result.stderr, /^project-scaffold: [^\n]+\n$/, args.join(' '));
     assert.deepEqual(snapshot(badHub), before);
   }
 });
@@ -1466,6 +1376,25 @@ test('CLI diagnostics redact secret-like conflict IDs and never echo canary valu
     assert.equal(result.status, 1, id);
     assert.doesNotMatch(result.stderr, /(?:token|auth|env|pw)-canary/i, id);
     assert.equal(snapshot(hubRoot).filter((entry) => !entry.startsWith('model.json:')).length, 0, id);
+  }
+});
+
+test('CLI refuses a hub that still carries a Markdown hub before reading the model, any stdout line, or any write', () => {
+  const script = join(here, '..', 'scripts', 'project-scaffold.mjs');
+  for (const args of [[], ['--apply']]) {
+    const hubRoot = tempHub();
+    put(hubRoot, '.apex/_INDEX.md', '# Markdown Hub\n');
+    const modelPath = join(hubRoot, 'model.json');
+    writeFileSync(modelPath, JSON.stringify(model()));
+    const before = snapshot(hubRoot);
+    const result = spawnSync(process.execPath, [script, '--hub', hubRoot, '--model', modelPath, ...args], {
+      encoding: 'utf8',
+    });
+    const label = args.join(' ') || 'preview';
+    assert.equal(result.status, MIGRATE_REFUSAL_EXIT, `${label}: ${result.stderr}`);
+    assert.equal(result.stdout, '', label);
+    assert.equal(result.stderr, `project-scaffold: ${MIGRATE_REFUSAL_MESSAGE}\n`, label);
+    assert.deepEqual(snapshot(hubRoot), before, label);
   }
 });
 
@@ -1608,97 +1537,32 @@ test('graph-mode plan renders the graph spine, bootstrap orientation, and adapte
   );
 });
 
-test('legacy plan renders the legacy spine, bootstrap orientation, and standards-tree adapters', () => {
+test('the generated bootstrap skill enumerates exactly the eleven canonical skills', () => {
+  const rendered = renderProjectArtifact('project-bootstrap', normalizeProjectModel(model()));
+  const enumerated = [...rendered.matchAll(/`([a-z][a-z-]*)`/g)]
+    .map((match) => match[1])
+    .filter((name) => ELEVEN_SKILLS.includes(name));
+  assert.deepEqual(
+    [...new Set(enumerated)],
+    ELEVEN_SKILLS,
+    'the bootstrap skill must enumerate exactly the eleven canonical skills in order',
+  );
+});
+
+test('parseProjectInstructions recognizes only the graph spine navigation', () => {
   const hubRoot = tempHub();
   const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
-  assert.equal(plan.hubMode, 'legacy');
-
-  const instructions = plan.operations.find(({ artifactId }) => artifactId === 'project-instructions');
-  assert.ok(instructions.content.includes(LEGACY_NAVIGATION));
-  assert.match(instructions.content, /`\.apex\/_INDEX\.md`/);
-
-  const bootstrap = plan.operations.find(({ artifactId }) => artifactId === 'project-bootstrap');
-  assert.ok(bootstrap.content.includes(LEGACY_ORIENTATION));
-
-  for (const artifactId of ['web-agent-claude', 'web-agent-codex', 'web-agent-opencode']) {
-    const operation = plan.operations.find((candidate) => candidate.artifactId === artifactId);
-    assert.ok(operation.content.includes(legacyStandardOrientation('web')), artifactId);
-    assert.doesNotMatch(operation.content, /steepy-formula context resolve/, artifactId);
-  }
-});
-
-test('the generated bootstrap skill enumerates exactly the eleven canonical skills in both modes', () => {
-  for (const hubMode of ['legacy', 'graph']) {
-    const normalized = normalizeProjectModel(model({ hubMode }));
-    const rendered = renderProjectArtifact('project-bootstrap', normalized);
-    const enumerated = [...rendered.matchAll(/`([a-z][a-z-]*)`/g)]
-      .map((match) => match[1])
-      .filter((name) => ELEVEN_SKILLS.includes(name));
-    assert.deepEqual(
-      [...new Set(enumerated)],
-      ELEVEN_SKILLS,
-      `the ${hubMode} bootstrap skill must enumerate exactly the eleven canonical skills in order`,
-    );
-  }
-});
-
-test('a hub-mode switch is a replaceable customized conflict, never a silent rewrite', () => {
-  const hubRoot = tempHub();
-  const legacyPlan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
-  applyProjectScaffold({ hubRoot, plan: legacyPlan });
-
-  const graphModel = model({ hubMode: 'graph' });
-  const switched = planProjectScaffold({ hubRoot, model: graphModel, templatesDir });
-  assert.deepEqual(switched.operations, []);
-  const ids = switched.conflicts.map(({ id }) => id);
-  // Only the mode-rendered artifacts flip: the spine (navigation), the bootstrap
-  // skill (orientation), and the adapter triad (standard orientation). The
-  // claude-import block and the claude bootstrap stub are mode-independent and
-  // stay current across a mode switch.
-  for (const artifactId of ['project-instructions', 'project-bootstrap', 'web-agent-claude', 'web-agent-codex', 'web-agent-opencode']) {
-    assert.ok(ids.includes(`v1:${artifactId}:customized`), `${artifactId} must block on mode switch`);
-  }
-  for (const artifactId of ['claude-import', 'claude-bootstrap-stub']) {
-    assert.equal(ids.includes(`v1:${artifactId}:customized`), false, `${artifactId} is mode-independent`);
-  }
-  for (const conflict of switched.conflicts) {
-    assert.deepEqual(conflict.choices, ['replace', 'abort']);
-  }
-
-  const resolutions = Object.fromEntries(switched.conflicts.map(({ id }) => [id, 'replace']));
-  const resolved = planProjectScaffold({
-    hubRoot,
-    model: model({ hubMode: 'graph', resolutions }),
-    templatesDir,
-  });
-  assert.deepEqual(resolved.conflicts, []);
-  assert.deepEqual(applyProjectScaffold({ hubRoot, plan: resolved }).applied, resolved.operations.length);
-
+  applyProjectScaffold({ hubRoot, plan: { ...plan, operations: [plan.operations[0]] } });
   const agents = readFileSync(join(hubRoot, 'AGENTS.md'), 'utf8');
+  const parsed = parseProjectInstructions(agents);
+  assert.equal(parsed.hubMode, 'graph');
+  assert.equal(parsed.projectName, 'portable-demo');
+
+  // The retired Markdown-hub navigation rendering no longer parses: anything else is null.
+  const markdownHubNavigation = 'For every task, use the `portable-demo-bootstrap` skill first. '
+    + 'If that skill is unavailable, read `.apex/_INDEX.md` before making changes.';
   assert.ok(agents.includes(GRAPH_NAVIGATION));
-  assert.doesNotMatch(agents, /_INDEX\.md/);
-  assert.deepEqual(parseProjectInstructions(agents), {
-    projectName: 'portable-demo',
-    description: 'One portable project.',
-    devCommands: ['npm test'],
-    surfaces: [{ name: 'web', path: 'apps/web', agent: 'web-agent', testCmd: '' }],
-    resolutions: {},
-    hubMode: 'graph',
-  });
-
-  const graphNoOp = planProjectScaffold({ hubRoot, model: graphModel, templatesDir });
-  assert.deepEqual(graphNoOp.operations, []);
-});
-
-test('parseProjectInstructions recovers the declared hub mode from both spine renderings', () => {
-  for (const hubMode of ['legacy', 'graph']) {
-    const hubRoot = tempHub();
-    const plan = planProjectScaffold({ hubRoot, model: model({ hubMode }), templatesDir });
-    applyProjectScaffold({ hubRoot, plan: { ...plan, operations: [plan.operations[0]] } });
-    const parsed = parseProjectInstructions(readFileSync(join(hubRoot, 'AGENTS.md'), 'utf8'));
-    assert.equal(parsed.hubMode, hubMode);
-    assert.equal(parsed.projectName, 'portable-demo');
-  }
+  assert.equal(parseProjectInstructions(agents.replace(GRAPH_NAVIGATION, markdownHubNavigation)), null);
 });
 
 test('graph-mode apply writes the complete artifact set and stays idempotent with preserved timestamps', () => {
@@ -1727,43 +1591,23 @@ test('graph-mode apply writes the complete artifact set and stays idempotent wit
   assert.deepEqual(after, before);
 });
 
-test('the specialist planner carries the declared hub mode into triad rendering', () => {
-  const hubRoot = tempHub();
-  const specialist = planSpecialistScaffold({
-    hubRoot,
-    surface: {
-      name: 'web', path: 'apps/web', agent: 'web-agent', testCmd: 'npm test',
-      projectName: 'portable-demo', description: 'One portable project.', hubMode: 'graph',
-    },
-    templatesDir,
-  });
-  assert.deepEqual(specialist.operations.map(({ artifactId }) => artifactId), [
-    'web-agent-claude', 'web-agent-codex', 'web-agent-opencode',
-  ]);
-  for (const operation of specialist.operations) {
-    assert.ok(operation.content.includes(graphStandardOrientation('web')), operation.artifactId);
-  }
-  assert.throws(() => planSpecialistScaffold({
-    hubRoot,
-    surface: { name: 'web', path: 'apps/web', agent: 'web-agent', testCmd: 'npm test' },
-    templatesDir,
-  }), /hubMode/i);
-});
-
-test('the validator rejects a stale plan state', () => {
+test('the validator rejects a stale or retired legacy plan state', () => {
   const hubRoot = tempHub();
   try {
     const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
-    for (const artifactId of ['web-agent-claude', 'web-agent-codex', 'web-agent-opencode']) {
-      const stale = {
-        ...plan,
-        operations: plan.operations.map((operation) => (
-          operation.artifactId === artifactId
-            ? { ...operation, kind: 'replace-generated', priorState: 'stale', priorDigest: 'a'.repeat(64) }
-            : operation
-        )),
-      };
-      assert.throws(() => validateProjectScaffoldPlan(stale), /priorState is invalid/, artifactId);
+    // `legacy` was the prior state of formula <= v1.2.3 renderings; the planner no longer recognizes them.
+    for (const priorState of ['stale', 'legacy']) {
+      for (const artifactId of ['web-agent-claude', 'web-agent-codex', 'web-agent-opencode']) {
+        const stale = {
+          ...plan,
+          operations: plan.operations.map((operation) => (
+            operation.artifactId === artifactId
+              ? { ...operation, kind: 'replace-generated', priorState, priorDigest: 'a'.repeat(64) }
+              : operation
+          )),
+        };
+        assert.throws(() => validateProjectScaffoldPlan(stale), /priorState is invalid/, `${priorState}: ${artifactId}`);
+      }
     }
   } finally {
     rmSync(hubRoot, { recursive: true, force: true });
@@ -1850,20 +1694,6 @@ test('an untouched v1.0.0-v1.0.6 triad is a customized conflict resolved only by
       choices: ['replace', 'abort'],
     })));
     assert.equal(plan.operations.some((operation) => WEB_AGENT_ADAPTERS.some(([, path]) => path === operation.path)), false);
-    const specialist = {
-      hubRoot,
-      surface: {
-        ...normalized.surfaces[0],
-        projectName: normalized.projectName,
-        description: normalized.description,
-        hubMode: normalized.hubMode,
-      },
-      templatesDir,
-    };
-    assert.throws(() => planSpecialistScaffold(specialist), /specialist scaffold already exists/);
-    const repaired = planSpecialistScaffold({ ...specialist, repair: true });
-    assert.deepEqual(repaired.operations, []);
-    assert.deepEqual(repaired.conflicts, plan.conflicts);
 
     const resolutions = Object.fromEntries(WEB_AGENT_ADAPTERS.map(([artifactId]) => [`v1:${artifactId}:customized`, 'replace']));
     const replacing = planProjectScaffold({ hubRoot, model: model({ resolutions }), templatesDir });

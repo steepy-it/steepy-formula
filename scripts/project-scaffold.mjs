@@ -20,184 +20,23 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { assertSafeRelPath, assertSafeTestCommand, bindProjectMount } from './sanitize.mjs';
 import { renderTemplate } from './template.mjs';
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATES_DIR = join(MODULE_DIR, '..', 'templates');
-// Exact recognizers for formula's own pre-portable renderings (formula <= v1.2.3:
-// the whole-file CLAUDE.md, the .claude/skills bootstrap, and the Claude specialist).
-// An untouched one classifies `legacy` and is replaced without a conflict question;
-// one byte of drift is `customized`. Apex v1.0.0 dropped these together with its own
-// prior-canonical bootstrap cohort; formula keeps the three it actually shipped.
-const LEGACY_CLAUDE_MD_TEMPLATE = [
-  "# {{projectName}}",
-  "",
-  "{{oneLineDescription}}",
-  "",
-  "{{navBlock}}",
-  "",
-  "## Dev commands",
-  "{{devCommands}}",
-  "",
-  "## Surfaces",
-  "{{surfaceList}}",
-].join('\n') + '\n';
-
-const LEGACY_CLAUDE_BOOTSTRAP_TEMPLATE = [
-  "---",
-  "name: {{projectName}}-bootstrap",
-  "description: Per-task entry point for {{projectName}}. Classifies the task via the routing table, loads minimum docs, and names the owning surface and specialist agent.",
-  "user-invocable: true",
-  "---",
-  "",
-  "# {{projectName}}-bootstrap",
-  "",
-  "Entry point for every AI task on this project. Run this first to orient before touching code.",
-  "",
-  "## Procedure",
-  "",
-  "### Step 1 — Read the project map",
-  "",
-  "Read both of the following files in full:",
-  "- `CLAUDE.md` (repo root) — project overview, dev commands, constraints.",
-  "- `.apex/_INDEX.md` — routing table, knowledge base map, core directives.",
-  "",
-  "### Step 1.5 — Detect workflow state and recommend the next step",
-  "",
-  "For feature-shaped work, check where the task already sits in the steepy workflow chain and recommend the next command (advisory — each command is independently usable):",
-  "",
-  "- No spec for this task in `.apex/work/specs/` → recommend `/steepy-formula:brainstorm`.",
-  "- A spec exists but no matching plan in `.apex/work/plans/` → recommend `/steepy-formula:plan`.",
-  "- A plan exists but its tasks are not yet implemented → recommend `/steepy-formula:implement`.",
-  "- Implementation is complete and unreviewed → recommend `/steepy-formula:review`.",
-  "",
-  "For small non-feature tasks (config, one-line fixes), skip the chain and proceed to Step 2.",
-  "",
-  "### Step 1.6 — Confirm the working branch",
-  "",
-  "Check the current branch (`git branch --show-current`). If it is `main` or `master`, ask the user before changing files or dispatching agents: **\"You're on `main` — work here, or switch to a new branch first?\"** Proceed on whichever they choose; if they want a new branch, suggest a name from the task description. This applies regardless of the gear the task turns out to be — even a gear-1 change goes straight to the specialist agent with no further checkpoint, so this is the only place that guards it.",
-  "",
-  "### Step 2 — Classify the task",
-  "",
-  "Using the routing table in `.apex/_INDEX.md`, identify which surface owns the task:",
-  "- Match the task description against the surface names and their paths.",
-  "- If the task spans multiple surfaces, pick the primary one (the surface whose files will change most).",
-  "- If the task is purely cross-cutting (CI, config, tooling), note that explicitly.",
-  "",
-  "### Step 2.5 — Coverage verdict",
-  "",
-  "Judge whether the hub already **decides** this task's key decision. Emit exactly one verdict.",
-  "A COVERED or CONFLICT verdict is invalid without a `file:line` citation as evidence.",
-  "",
-  "- **COVERED** — a hub rule *decides the fork* (you can paste the citation next to the decision",
-  "  and close the matter). Cite `file:line`. A doc merely *on the topic* does not count → that is a GAP.",
-  "- **CONFLICT** — a hub rule and the intended change contradict each other. Cite `file:line`, stop,",
-  "  and surface the contradiction to the user (the workflow skills own the resolution).",
-  "- **GAP** — no rule decides it. Before proposing any user brainstorm, **explore the codebase",
-  "  first** for an existing consistent convention (≥2–3 concordant occurrences); an isolated",
-  "  precedent is surfaced to the user, not treated as a rule.",
-  "",
-  "### Step 2.6 — Gear selection",
-  "",
-  "Cross the coverage verdict with the task's **value** (irreversibility / blast radius) to pick the",
-  "ceremony gear:",
-  "",
-  "| Gear | When | Ceremony |",
-  "|------|------|----------|",
-  "| 1 | COVERED + low-value | Straight to the specialist agent. No spec/plan/brainstorm/subagent reviewer. `validate-hub` at the end. |",
-  "| 2 | COVERED + high-value, or GAP + low-value | Light spec + `validate-hub`. No subagent reviewer. |",
-  "| 3 | GAP + high-value / irreversible | Full chain: brainstorm gate → plan → implement → review. Subagent review on the code diff only (conditional per-task + whole-branch); spec/plan get a human gate. After the spec gate, run can go `manual` (default) or `autopilot` (unattended plan → implement → review in fresh headless sessions; stops before bump/PR); drive mode chosen at the spec gate. |",
-  "| 4 | Closed design (COVERED or resolved GAP) + machine-verifiable goal (deterministic verifier) + human confirmation | Autonomous loop via /steepy-formula:loop-engineer: the human authors the goal contract, reviews results morning-after. |",
-  "",
-  "An open design GAP is never eligible for gear 4 — the chain (gear 1–3) resolves the design first.",
-  "",
-  "**Ratification — every gear:** declare the computed gear with its evidence and ask the user for",
-  "one confirmation before starting the ceremony (this may be merged with the Step 1.6 branch",
-  "question into a single message). The user may force a different gear — the override is recorded",
-  "in the verdict artifact. Never auto-assignment, never autonomy started silently.",
-  "",
-  "**Gear-4 branch:** on loop-shaped tasks (closed design + success expressible as a deterministic",
-  "command) propose gear 4. On confirmation, interview the user on the goal contract fields — goal,",
-  "surface, verifier (with explicit confirmation that it is deterministic), mode, metric-direction",
-  "(if metric), budget, blast-radius (default: the surface's paths), notes — and write",
-  "`.apex/work/loops/<YYYY-MM-DD>-<slug>/goal.md` with the verdict artifact (verdict + gear 4 +",
-  "evidence) at its head. Fields already present (a partial `goal.md` and/or slash-command",
-  "arguments passed through by the caller) are **confirmed, not re-asked**; only missing fields",
-  "are interviewed. On refusal, fall back to the coverage × value gear (1–3). This branch may be",
-  "invoked inline by `/steepy-formula:loop-engineer` when the loop is launched without a (complete)",
-  "goal contract — the bootstrap remains the sole author of the contract.",
-  "",
-  "**Boundary rule:** closed design + machine-verifiable goal → gear 4; open design + trusted",
-  "execution after the spec gate → gear 3 autopilot; otherwise → gear 3 manual. On a harness",
-  "with no headless mode, autopilot is not offered (explicit degradation).",
-  "",
-  "**Verdict artifact:** record `verdict + gear + evidence` at the head of the task's spec under",
-  "`.apex/work/`, or as a light one-line entry under `.apex/work/` when a gear-1 task produces no spec.",
-  "Downstream steepy commands read this artifact (see the workflow skills).",
-  "",
-  "### Step 3 — Load minimum docs",
-  "",
-  "Load exactly the docs needed — no more:",
-  "1. The surface standard: `.apex/standards/<surface-name>.md`",
-  "   If the routing table's Min-docs link points inside a subfolder of `standards/`, that file is",
-  "   a surface core, not a single-file standard. Read the core, match the task against its",
-  "   mini-routing table, and load every leaf whose row matches — zero matches means the core only.",
-  "   Never read the whole folder as a fallback.",
-  "2. `.apex/testing-and-checklist.md`",
-  "3. `.apex/conventions.md` (if the task touches project-wide conventions)",
-  "4. `.apex/glossary.md` (if the task involves domain terms)",
-  "",
-  "Do not load all docs speculatively.",
-  "",
-  "### Step 4 — Name the owning surface and specialist agent",
-  "",
-  "State clearly:",
-  "- **Owning surface:** `<surface-name>` (`<surface-path>`)",
-  "- **Specialist agent:** `<surface-name>-agent` — delegate surface-specific implementation to this agent.",
-  "- **Applicable skill:** (if a steepy skill applies to this task, name it)",
-  "",
-  "### Step 5 — Recommend the next step",
-  "",
-  "Based on the classified surface and task, recommend one of:",
-  "- Implement directly using the specialist agent.",
-  "- Run the narrowest test command from the surface standard to establish a baseline first.",
-  "- Update `.apex/` docs before implementing if the task changes a standard or domain term.",
-  "",
-  "Summarize the task classification in one sentence, then hand off.",
-].join('\n') + '\n';
-
-const LEGACY_CLAUDE_SPECIALIST_TEMPLATE = [
-  "---",
-  "name: {{name}}-agent",
-  "description: \"Use for {{name}} work in {{path}}.\"",
-  "model: sonnet  # standard tier — implementation from a well-specified plan; raise to opus for high-risk surfaces",
-  "tools:",
-  "  - Read",
-  "  - Grep",
-  "  - Glob",
-  "  - Edit",
-  "  - Write",
-  "  - Bash",
-  "---",
-  "You specialize in {{name}} work for `{{path}}`.",
-  "",
-  "## Owns",
-  "- `{{name}}` tasks → read `.apex/standards/{{name}}.md`.",
-  "",
-  "## Surface non-negotiables",
-  "- (Add the one or two rules most often violated on this surface.)",
-].join('\n') + '\n';
 
 const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 const TOP_LEVEL_KEYS = ['projectName', 'description', 'devCommands', 'surfaces', 'resolutions', 'hubMode'];
 const SURFACE_KEYS = ['name', 'path', 'agent', 'testCmd'];
-// The declared hub mode rides the Project model and the plan, and selects every
-// mode-aware rendering variant (spine navigation, bootstrap orientation, adapter
-// standard orientation). Its evidence comes from `steepy-formula hub-mode` at
-// scaffold time (run the command, quote the `mode:` line); a scaffold must commit
-// to a hub channel, so `none` — the undetected state — is not declarable here.
-const HUB_MODES = ['graph', 'legacy'];
+// The declared hub mode rides the Project model and the plan as a required
+// single-value key: a scaffold renders graph-mode artifacts only (spine navigation,
+// bootstrap orientation, adapter standard orientation all resolve through the
+// graph), so a `hubMode: 'legacy'` model is rejected. Its evidence comes from
+// `steepy-formula hub-mode` at scaffold time (run the command, quote the `mode:`
+// line); `none` — the undetected state — is not declarable here.
+const HUB_MODES = ['graph'];
 const NORMALIZED_MODELS = new WeakSet();
 const PROJECT_SCAFFOLD_LOCK = '.steepy-project-scaffold.lock';
 const PROJECT_SCAFFOLD_LOCK_OWNER = 'owner.json';
@@ -214,41 +53,29 @@ const PROJECT_MARKERS = {
   },
 };
 
-// The graph-mode orientation block of the generated bootstrap skill (Task 13's
-// mode-parameterized template vocabulary — the two canonical renderings per
-// placeholder are pinned by tests/template.test.mjs).
+// The orientation block of the generated bootstrap skill (Task 13's template
+// vocabulary — the one canonical graph rendering per placeholder is pinned by
+// tests/template.test.mjs).
 const GRAPH_ORIENTATION = [
   '2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line — this bootstrap applies when it reports `graph`.',
   '3. Resolve the task context: run `steepy-formula context resolve --path <task-path>` for the paths the task will touch (fallback `--target apex:<projectId>:surface:<slug>`) and load exactly the layers the resolve returns (context.json + context.md).',
 ].join('\n');
 
-const LEGACY_ORIENTATION = [
-  '2. Read `.apex/_INDEX.md` in full for the routing table and semantic knowledge map.',
-  '3. Match the task to the owning surface and read only the minimum documents named by its routing row.',
-].join('\n');
-
-function navigationText(projectName, hubMode) {
-  const prefix = `For every task, use the \`${projectName}-bootstrap\` skill first. If that skill is unavailable, `;
-  if (hubMode === 'graph') {
-    return `${prefix}run \`steepy-formula hub-mode\` and quote the \`mode:\` line, then resolve the task context with `
-      + '`steepy-formula context resolve --path <task-path>` (fallback '
-      + '`--target apex:<projectId>:surface:<slug>`) and load exactly what it returns.';
-  }
-  return `${prefix}read \`.apex/_INDEX.md\` before making changes.`;
+function navigationText(projectName) {
+  return `For every task, use the \`${projectName}-bootstrap\` skill first. If that skill is unavailable, `
+    + 'run `steepy-formula hub-mode` and quote the `mode:` line, then resolve the task context with '
+    + '`steepy-formula context resolve --path <task-path>` (fallback '
+    + '`--target apex:<projectId>:surface:<slug>`) and load exactly what it returns.';
 }
 
-function orientationText(hubMode) {
-  return hubMode === 'graph' ? GRAPH_ORIENTATION : LEGACY_ORIENTATION;
+function orientationText() {
+  return GRAPH_ORIENTATION;
 }
 
-function standardOrientationText(projectName, hubMode, surfaceName) {
-  if (hubMode === 'graph') {
-    return `resolve this surface's context with \`steepy-formula context resolve --target `
-      + `apex:${projectName}:surface:${surfaceName}\` (context.json + context.md) and follow the resolved rules `
-      + 'and terms before working on this surface — never copy them into this adapter.';
-  }
-  return `read the standard linked in the \`${surfaceName}\` row of the routing table in \`.apex/_INDEX.md\` `
-    + 'before working on this surface. Follow that standard without copying its rules into this adapter.';
+function standardOrientationText(projectName, surfaceName) {
+  return `resolve this surface's context with \`steepy-formula context resolve --target `
+    + `apex:${projectName}:surface:${surfaceName}\` (context.json + context.md) and follow the resolved rules `
+    + 'and terms before working on this surface — never copy them into this adapter.';
 }
 
 function deepFreeze(value) {
@@ -446,11 +273,9 @@ function renderVars(model, surface) {
     path: surface?.path ?? '',
     agent: surface?.agent ?? '',
     model: 'inherit',
-    navigation: navigationText(model.projectName, model.hubMode),
-    orientation: orientationText(model.hubMode),
-    standardOrientation: surface
-      ? standardOrientationText(model.projectName, model.hubMode, surface.name)
-      : '',
+    navigation: navigationText(model.projectName),
+    orientation: orientationText(),
+    standardOrientation: surface ? standardOrientationText(model.projectName, surface.name) : '',
   };
 }
 
@@ -491,11 +316,11 @@ export function renderProjectArtifact(artifactId, normalized, templatesDir = DEF
 }
 
 // Recover the exact public Project identity stored in the managed AGENTS.md block.
-// The declared hub mode is recovered from the spine navigation rendering (each
-// mode's navigation text is canonical and unambiguous). Surface test commands are
-// intentionally not encoded in root instructions, so parsed existing surfaces use
-// the neutral empty command. Generated adapters do not depend on testCmd; a
-// new-surface workflow supplies the new row's real value.
+// Only the graph spine navigation is recognized (the declared hub mode is always
+// `graph`); any other navigation — the retired Markdown-hub one included — yields
+// null. Surface test commands are intentionally not encoded in root instructions,
+// so parsed existing surfaces use the neutral empty command. Generated adapters do
+// not depend on testCmd; a new-surface workflow supplies the new row's real value.
 export function parseProjectInstructions(text, templatesDir = DEFAULT_TEMPLATES_DIR) {
   assertUtf8String(text, 'project instructions');
   const { start, end } = PROJECT_MARKERS['project-instructions'];
@@ -528,11 +353,9 @@ export function parseProjectInstructions(text, templatesDir = DEFAULT_TEMPLATES_
     surfaces.push({ name: match[1], path: match[2], agent: match[3], testCmd: '' });
   }
   const navBody = lines.slice(navAt + 1, lines.length - 1);
-  if (navBody.length !== 2 || navBody[0] !== '') return null;
-  const hubMode = navBody[1] === navigationText(projectMatch[1], 'legacy')
-    ? 'legacy'
-    : navBody[1] === navigationText(projectMatch[1], 'graph') ? 'graph' : null;
-  if (hubMode === null) return null;
+  if (navBody.length !== 2 || navBody[0] !== '' || navBody[1] !== navigationText(projectMatch[1])) {
+    return null;
+  }
   let model;
   try {
     model = normalizeRootInstructionModel({
@@ -541,7 +364,7 @@ export function parseProjectInstructions(text, templatesDir = DEFAULT_TEMPLATES_
       devCommands,
       surfaces,
       resolutions: {},
-      hubMode,
+      hubMode: 'graph',
     });
   } catch {
     return null;
@@ -569,58 +392,6 @@ function assertRootProjectionRoundTrip(model, templatesDir) {
       || JSON.stringify(parsed) !== JSON.stringify(rootProjection(model))) {
     throw new TypeError('normalized root projection must render and parse as an exact round-trip');
   }
-}
-
-function legacyNavBlock(model) {
-  return [
-    '<!-- steepy:start -->',
-    '## AI navigation',
-    `Before touching code: run the \`${model.projectName}-bootstrap\` skill, or read`,
-    '`.apex/_INDEX.md` (the navigation hub / DAG root).',
-    'Specialist agents live in `.claude/agents/`.',
-    '<!-- steepy:end -->',
-  ].join('\n');
-}
-
-function tidyLegacy(text) {
-  return `${text.replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
-}
-
-export function renderLegacyClaudeMd(normalized) {
-  const model = NORMALIZED_MODELS.has(normalized)
-    ? normalized
-    : normalizeRootInstructionModel(normalized);
-  return tidyLegacy(renderTemplate(LEGACY_CLAUDE_MD_TEMPLATE, {
-    projectName: model.projectName,
-    oneLineDescription: model.description,
-    navBlock: legacyNavBlock(model),
-    devCommands: renderVars(model).devCommands,
-    surfaceList: model.surfaces.map((surface) => `- ${surface.name} (${surface.path})`).join('\n'),
-  }));
-}
-
-export function renderLegacyClaudeBootstrap(normalized) {
-  const model = normalizedModel(normalized);
-  return renderTemplate(LEGACY_CLAUDE_BOOTSTRAP_TEMPLATE, {
-    projectName: model.projectName,
-  });
-}
-
-function escapeYamlDouble(value) {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-}
-
-export function renderLegacyClaudeSpecialist(surface) {
-  assertPlainDataObject(surface, 'surface');
-  for (const key of SURFACE_KEYS) {
-    if (!(key in surface)) throw new TypeError(`surface is missing property: ${key}`);
-  }
-  assertSlug(surface.name, 'surface.name');
-  assertRelativePath(surface.path, 'surface.path');
-  return renderTemplate(LEGACY_CLAUDE_SPECIALIST_TEMPLATE, {
-    name: surface.name,
-    path: escapeYamlDouble(surface.path),
-  });
 }
 
 function artifactDefinitions(model, templatesDir) {
@@ -836,23 +607,9 @@ function readObserved(hubRoot, artifactPath) {
   return { ...safe, exists: true, bytes, text };
 }
 
-function knownLegacy(artifact, model) {
-  if (artifact.artifactId === 'claude-import') return renderLegacyClaudeMd(model);
-  if (artifact.artifactId === 'claude-bootstrap-stub') return renderLegacyClaudeBootstrap(model);
-  const surface = surfaceForArtifact(artifact.artifactId, model);
-  if (surface && artifact.artifactId.endsWith('-claude')) {
-    return renderLegacyClaudeSpecialist(surface);
-  }
-  return null;
-}
-
-function classifyMixed(observed, artifact, model) {
+function classifyMixed(observed, artifact) {
   const { artifactId, content } = artifact;
   const text = observed.text;
-  const legacy = knownLegacy(artifact, model);
-  if (legacy !== null && text === legacy) {
-    return { priorState: 'legacy', reason: null, replacement: content };
-  }
   if (artifactId === 'claude-import'
       && (text.includes('<!-- steepy:start -->') || text.includes('<!-- steepy:end -->'))) {
     return { priorState: 'customized', reason: 'customized', replacement: content };
@@ -924,10 +681,6 @@ function classifyGenerated(observed, artifact, model) {
   if (observed.text === artifact.content) {
     return { priorState: 'current', reason: null, replacement: null };
   }
-  const legacy = knownLegacy(artifact, model);
-  if (legacy !== null && observed.text === legacy) {
-    return { priorState: 'legacy', reason: null, replacement: artifact.content };
-  }
   const markers = generatedMarkers(observed.text);
   if (markers.length > 1) {
     return { priorState: 'malformed', reason: 'duplicate', replacement: artifact.content };
@@ -958,7 +711,7 @@ function classifyInternal({ hubRoot, artifact, normalizedModel: model }) {
     return deepFreeze({ priorState: 'unsafe', priorDigest, reason: observed.reason, replacement: null });
   }
   const classified = artifact.type === 'mixed'
-    ? classifyMixed(observed, artifact, model)
+    ? classifyMixed(observed, artifact)
     : classifyGenerated(observed, artifact, model);
   return deepFreeze({ priorDigest, ...classified });
 }
@@ -1260,7 +1013,7 @@ const ROOT_OPERATION_ORDER = new Map([
   ['claude-bootstrap-stub', 3],
 ]);
 const ADAPTER_ORDER = new Map([['claude', 0], ['codex', 1], ['opencode', 2]]);
-const PRIOR_STATES = new Set(['absent', 'unmarked', 'legacy', 'customized', 'malformed']);
+const PRIOR_STATES = new Set(['absent', 'unmarked', 'customized', 'malformed']);
 const CONFLICT_REASONS = new Set([
   'unmanaged-import', 'customized', 'malformed-markers', 'unknown-version', 'duplicate',
   'wrong-target', 'surface-mismatch', 'orphan', 'symlink', 'unsafe-path',
@@ -2415,9 +2168,19 @@ export function main(argv = process.argv.slice(2)) {
       },
     }));
     if (!values.model) throw new TypeError('--model <json-file> is required');
+    if (!values.hub) throw new TypeError('--hub <dir> must be a non-empty path');
   } catch (error) {
     process.stderr.write(`project-scaffold: ${diagnosticText(error)}\n`);
     return 1;
+  }
+
+  // The migrate state (G5, P7): a hub that still carries a steepy-apex Markdown hub is
+  // refused in every mode, preview included, before the model is read, any stdout line,
+  // or any scaffold write. The planner library itself never refuses.
+  const refusal = migrateRefusal(values.hub);
+  if (refusal) {
+    process.stderr.write(`project-scaffold: ${refusal.message}\n`);
+    return refusal.code;
   }
 
   let plan;
@@ -2443,31 +2206,6 @@ export function main(argv = process.argv.slice(2)) {
     process.stderr.write(`project-scaffold: ${diagnosticText(error)}\n`);
     return 1;
   }
-}
-
-export function planSpecialistScaffold({ hubRoot, surface, templatesDir = DEFAULT_TEMPLATES_DIR, repair = false }) {
-  assertPlainDataObject(surface, 'surface');
-  const selected = {};
-  for (const key of SURFACE_KEYS) selected[key] = surface[key];
-  const specialistModel = {
-    projectName: surface.projectName ?? 'project',
-    description: surface.description ?? '',
-    devCommands: [],
-    surfaces: [selected],
-    resolutions: {},
-    hubMode: surface.hubMode,
-  };
-  const plan = planProjectScaffold({ hubRoot, model: specialistModel, templatesDir });
-  const suffixes = new Set(['-claude', '-codex', '-opencode'].map((suffix) => `${surface.agent}${suffix}`));
-  const operations = plan.operations.filter(({ artifactId }) => suffixes.has(artifactId));
-  const conflicts = plan.conflicts.filter(({ artifactId }) => suffixes.has(artifactId));
-  if (!repair && (operations.some(({ priorState }) => priorState !== 'absent') || conflicts.length > 0)) {
-    throw new Error(`specialist scaffold already exists for ${surface.agent}`);
-  }
-  // The specialist slice stays a valid public plan: it carries the declared hub mode
-  // so validateProjectScaffoldPlan/applyProjectScaffold accept it unchanged (the
-  // new-surface preparatory path applies exactly this slice).
-  return deepFreeze({ schemaVersion: 1, hubMode: specialistModel.hubMode, operations, conflicts });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

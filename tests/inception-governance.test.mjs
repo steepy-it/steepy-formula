@@ -428,12 +428,11 @@ for (const scope of ['narrow-roots', 'excluded-root', 'existing-provider']) {
 // their `documents` field (always empty), and the documents writer and its CLI command are gone.
 test('formula: governance certifies no Markdown document for any model and has no documents writer', t => {
   const root = fixture(t); const request = input(root);
-  for (const hubMode of ['graph', 'legacy']) {
-    const projectModel = { ...model(), hubMode };
-    assert.deepEqual(validateGovernanceInput({ ...request, projectModel }).documents, [], hubMode);
-    const withIndex = { ...request, projectModel, documents: [{ path: '.apex/_INDEX.md', content: '# Hub\n' }] };
-    assert.throws(() => validateGovernanceInput(withIndex), /governance: documents must be empty: init certifies no Markdown hub document/, hubMode);
-  }
+  // The Project model admits only `hubMode: 'graph'` (project-scaffold renders graph-mode artifacts only).
+  const projectModel = model();
+  assert.deepEqual(validateGovernanceInput({ ...request, projectModel }).documents, []);
+  const withIndex = { ...request, projectModel, documents: [{ path: '.apex/_INDEX.md', content: '# Hub\n' }] };
+  assert.throws(() => validateGovernanceInput(withIndex), /governance: documents must be empty: init certifies no Markdown hub document/);
   assert.equal('writeGovernanceDocuments' in governance, false, 'the documents writer is not exported');
   const path = '.apex/work/init/input.json'; put(root, path, JSON.stringify(request));
   prepareGovernance(root, request); apply(root, request);

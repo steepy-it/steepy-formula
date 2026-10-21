@@ -66,6 +66,9 @@ const REFUSING_SCRIPTS = [
     label: 'inception-governance prepare',
     args: (root) => ['prepare', '--repo-root', root, '--input', '.apex/work/init/input.json'],
   },
+  // The project planner refuses after its arg parse and before it reads the model, so no model
+  // file needs to exist; `--apply` proves the refusal precedes any scaffold write.
+  { script: 'scripts/project-scaffold.mjs', args: (root) => ['--hub', root, '--model', 'model.json', '--apply'] },
 ];
 
 // --- temp fixtures -----------------------------------------------------------------------------
