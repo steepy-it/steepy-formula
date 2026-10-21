@@ -1,15 +1,14 @@
 ---
 name: discovery
-description: Populate and refresh `.apex` hub knowledge from the real codebase via a seeded, per-item confirmed interview — in graph mode accepted items land through a typed promotion scenario; in legacy mode they edit the Markdown docs (glossary, surface standards, cross-surface conventions). Re-runnable — a second run surfaces only new or drifted items.
+description: Populate and refresh the hub's knowledge from the real codebase via a seeded, per-item confirmed interview — accepted items land through a typed promotion scenario. Re-runnable — a second run surfaces only new or drifted items.
 user-invocable: true
 ---
 
 # discovery
 
 Populate and refresh the hub's knowledge from the actual codebase, via a seeded interview the
-user confirms item by item — in `legacy` mode the Markdown docs (`glossary.md`, each surface
-standard, `conventions.md`); in `graph` mode the canonical graph's terms and rules, landed
-through a typed promotion scenario (Step 2.5).
+user confirms item by item — the canonical graph's terms and rules, landed through a typed
+promotion scenario (Step 2.5).
 
 `discovery` is a **standalone** hub-aware skill, like `init` / `new-surface` / `check` — it is not
 part of the brainstorm → plan → implement → review chain. It has its own precondition step below and
@@ -24,7 +23,7 @@ does not follow the chain skills' shared gear-selection or Model-Selection-lock 
 ### Step 0 — Preconditions
 
 **Hub-mode declaration (once per run).** Run `steepy-formula hub-mode` and carry its declared
-mode — `graph`, `legacy`, or `none`, each printed with one `evidence:` line — through the rest
+mode — `graph`, `migrate`, or `none`, each printed with one `evidence:` line — through the rest
 of the run. The command always exits 0: it is a declaration, not a gate, and this prose never
 re-implements its detection — the command is the single authority. The declared mode branches
 the whole run:
@@ -32,63 +31,48 @@ the whole run:
 - **`none`** → the hub is absent: tell the user to run the `init` skill (invoke it the way
   your harness invokes skills) — the graph-first entry point — and **stop**. `discovery`
   populates an existing hub, it does not create one.
-- **`legacy`** → the Markdown-hub procedure of this skill runs exactly as today: every step,
-  destination, and write-back below unchanged, gated by `validate-hub` (Step 3).
-- **`graph`** → the graph channel: every stage rides graph-backed inputs and destinations.
-  Step 1 scoping offers the recorded terms and rules from the Step 0 `context resolve`
-  instead of the Markdown docs; Step 2.2 hands the explorer that resolved context in place
-  of the legacy hub inputs; Step 2.4 routes accepted items to typed candidate kinds, not doc
-  sections; the write-back (Step 2.5) and the coherence gate (Step 3) branch as described at
-  those steps. The interview mechanics — item cards, previews, accept / correct / skip, the
-  emergent-area check — are mode-independent and run the same on both channels.
+- **`migrate`** → Stop and tell the user to run the `graph-migrate` skill (invoke it the way
+  your harness invokes skills) before any other workflow.
+- **`graph`** → every stage rides graph-backed inputs and destinations. Step 1 scoping offers
+  the recorded terms and rules from the Step 0 `context resolve`; Step 2.2 hands the explorer
+  that resolved context; Step 2.4 routes accepted items to typed candidate kinds, not doc
+  sections; the write-back (Step 2.5) and the coherence gate (Step 3) land and verify them
+  through the graph. The interview mechanics — item cards, previews, accept / correct / skip,
+  the emergent-area check — are the same at every stage.
 
-Then read the hub's current state before scoping the run, on the declared mode's channel:
-
-- In `legacy` mode, from the Markdown hub:
-  - `.apex/_INDEX.md` — enumerate the surfaces and their standard docs from the routing table. A
-    "Min docs" link pointing inside a **subfolder** of `standards/` marks a **modular surface**: the
-    link target is its core, and the core's mini-routing table lists its leaf docs. A plain
-    `standards/<surface>.md` link is the single-file form.
-  - `.apex/conventions.md` — the cross-surface rules already recorded.
-  - `.apex/glossary.md` — the domain terms already recorded.
-- In `graph` mode, from the canonical graph. First derive the surface targets — every part is
-  deterministic, nothing is guessed: surface names come from the repo's specialist agent files
-  (`.claude/agents/<name>-agent.md` → surface `<name>`; CLAUDE.md's Surfaces section is the
-  fallback listing when no agent files exist), the project id is the one the hub-mode
-  declaration already echoed (its `hub-mode '<projectId>'` line), and each surface's node id
-  follows the structural convention of `scripts/structural-promotion.mjs`:
-  `apex:<projectId>:surface:<slug(name)>`, under the shared slug discipline (lowercase,
-  non-alphanumeric runs collapse to `-`, edges trimmed). Then resolve the current state — the
-  recorded terms and rules — with `steepy-formula context resolve --target <surface node id>...`,
-  naming every derived surface id: the resolver walks each surface up to the project root, so
-  project-anchored terms ride along, while a bare project-root target returns an empty context —
-  never target it on its own. The derived surface node ids are the `appliesTo` targets the
-  Step 2.5 graph write-back scopes its rules to. That resolved context (`context.json` +
-  `context.md`) is the run's only hub input: Step 1 scopes against it, and Step 2.2 hands it to
-  the explorer.
+Then read the hub's current state from the canonical graph. First derive the surface targets —
+every part is deterministic, nothing is guessed: surface names come from the repo's specialist
+agent files (`.claude/agents/<name>-agent.md` → surface `<name>`; CLAUDE.md's Surfaces section is
+the fallback listing when no agent files exist), the project id is the one the hub-mode
+declaration already echoed (its `hub-mode '<projectId>'` line), and each surface's node id
+follows the structural convention of `scripts/structural-promotion.mjs`:
+`apex:<projectId>:surface:<slug(name)>`, under the shared slug discipline (lowercase,
+non-alphanumeric runs collapse to `-`, edges trimmed). Then resolve the current state — the
+recorded terms and rules — with `steepy-formula context resolve --target <surface node id>...`,
+naming every derived surface id: the resolver walks each surface up to the project root, so
+project-anchored terms ride along, while a bare project-root target returns an empty context —
+never target it on its own. The derived surface node ids are the `appliesTo` targets the
+Step 2.5 write-back scopes its rules to. That resolved context (`context.json` +
+`context.md`) is the run's only hub input: Step 1 scopes against it, and Step 2.2 hands it to
+the explorer.
 
 ### Step 1 — Run scoping
 
 Ask the user to scope the run: which surface(s) to enrich (default: all surfaces the Step 0
 state read enumerated), whether to also include the cross-cutting knowledge this run, and
-whether to add project-doc discovery (README / `docs/` / ADRs). The cross-cutting offer is
-mode-specific — offer only what the declared mode's hub actually holds:
-
-- In `legacy` mode, the cross-cutting docs: `conventions.md` and `glossary.md`.
-- In `graph` mode, the graph-backed scopes: the recorded terms and the cross-surface rules the
-  Step 0 `context resolve` returned — no Markdown doc is offered, because none exists.
+whether to add project-doc discovery (README / `docs/` / ADRs). The cross-cutting offer is the
+graph-backed scopes: the recorded terms and the cross-surface rules the Step 0 `context resolve`
+returned — no Markdown doc is offered, because none exists.
 
 This keeps a run bounded and re-runnable one surface at a time.
 
-In `graph` mode only: if `.apex/inception/run.json` exists, its `schema` is
+If `.apex/inception/run.json` exists, its `schema` is
 `steepy-inception-run/v2`, and its `status` is `complete` (with phase `complete`), also offer the
 **inception source**: import decisions only if Step 2a verifies that completed delivery. Read only
 that one file to check this, and never list `.apex/inception/`. This is a candidate offer, not a
 verified source; do not load approval or document bodies here. Otherwise do not mention the
 inception source; absent, active or blocked runs and an unsupported run format leave ordinary
-discovery available with the user's selected scope. Never migrate or restart a run. In `legacy`
-mode the inception source is never offered: formula's `init` certifies graph-mode scaffolds only,
-so a Markdown hub never carries a certified post-inception init.
+discovery available with the user's selected scope. Never migrate or restart a run.
 
 When the user chooses the inception source, run Step 2a right after this step, before Step 2. Its
 window is the certified initialization revision: the gate accepts the graph only while its head is
@@ -99,9 +83,8 @@ still the revision `init`'s promotion created, so any promotion before the gate 
 For each surface selected in Step 1, run this loop:
 
 1. **Scope (interview → areas).** Propose candidate exploration areas drawn from the knowledge-area
-   taxonomy — **Scope**, **Conventions**, **Anti-patterns**, **Testing** (in `legacy` mode these are
-   the surface-standard doc's sections; in `graph` mode they are area tags Step 2.4 later maps to
-   typed candidate kinds) — plus a couple of
+   taxonomy — **Scope**, **Conventions**, **Anti-patterns**, **Testing** (area tags Step 2.4 maps
+   to typed candidate kinds) — plus a couple of
    surface-type heuristics (e.g. a UI surface might add "component patterns"). The user picks which
    areas matter for this run, or adds their own.
 2. **Explore.** Ensure `.apex/work/discovery/` exists (create it if absent), then set
@@ -111,15 +94,10 @@ For each surface selected in Step 1, run this loop:
    dedicated pass over the same inputs, and state the inline degradation in the run's report (Step 4).
    When you dispatch, always set `model: standard`
    explicitly (the explorer's floor tier), rising to `model: most-capable` for a large or subtle
-   surface. Pass it the surface name/path, the areas picked in Step 2.1, `[REPORT_FILE]`, the
-   declared hub mode as `[HUB_MODE]`, and the declared mode's hub inputs as `[HUB_CONTEXT]`:
-   - in `legacy` mode: the routing table `.apex/_INDEX.md`, the surface's current standard
-     docs — the single `standards/<surface>.md`, or for a modular surface the core plus every
-     leaf its mini-routing table lists — and `glossary.md`, each by its exact path.
-   - in `graph` mode: the Step 0 resolved context (`context.json` + `context.md`) — the recorded
-     terms and rules relevant to this surface, with their node ids — and nothing else: no
-     Markdown hub doc exists on this channel, and the explorer's only hub input is that
-     resolved context.
+   surface. Pass it the surface name/path, the areas picked in Step 2.1, `[REPORT_FILE]`, and the
+   Step 0 resolved context (`context.json` + `context.md`) as `[HUB_CONTEXT]` — the recorded
+   terms and rules relevant to this surface, with their node ids — and nothing else: no
+   Markdown hub doc exists, and the explorer's only hub input is that resolved context.
 
    It reads the surface's code and nearby docs
    (README/`docs`/ADR), writes its full findings report — observed conventions, candidate
@@ -140,17 +118,10 @@ For each surface selected in Step 1, run this loop:
    Candidate glossary terms — print the item's full card (all 4 fields: Proposed doc text,
    Evidence, Occurrences, Why it matters). For **Discovered doc files** — which the explorer
    reports as `path → one-line purpose` (+ file:line), not a 4-field card — print that line
-   instead, followed by its own preview: in `legacy` mode which hub doc would carry the link; in
-   `graph` mode the `readme` note it would become. The interviewer routes each item to a
-   mode-correct destination; the explorer only tagged the item by area, never by destination,
+   instead, followed by its own preview: the `readme` note it would become. The interviewer routes
+   each item to a destination; the explorer only tagged the item by area, never by destination,
    because only the interviewer sees every surface:
-   - In `legacy` mode, a destination doc/section (e.g. `standards/<surface>.md → Anti-patterns`,
-     `glossary.md`, or the link target for a discovered doc), or a judged promotion to the
-     cross-surface `conventions.md` when the pattern isn't specific to this one surface. On a
-     modular surface, route within the standard by the core's mini-routing table: a rule
-     spanning the whole surface → the core; a sub-area rule → the matching leaf; a rule no
-     leaf covers → the core.
-   - In `graph` mode, one of the typed candidate kinds Step 2.5 promotes — never a doc section:
+   - One of the typed candidate kinds Step 2.5 promotes — never a doc section:
      a glossary term → `term`; a convention or anti-pattern → `rule`, scoped `appliesTo` one
      surface node id derived in Step 0 — the candidates schema admits exactly one target per
      rule, so a pattern spanning several surfaces fans out into one rule candidate per surface
@@ -165,43 +136,12 @@ For each surface selected in Step 1, run this loop:
    question at a time, with numbered options and a recommendation; use your harness's question UI if
    it has one. Never present items as bare IDs (T1, T2, …) as option labels — the short option labels
    cannot hold a draft, and the user must read the content, not a label. On a re-run, surface only
-   **new** or **drifted** items — compare against what is already recorded: in `legacy` mode the
-   docs (on a modular surface: the core plus its leaf docs); in `graph` mode the recorded terms
+   **new** or **drifted** items — compare against what is already recorded: the recorded terms
    and rules from the Step 0 `context resolve` — each rendered as a
    preview **diff** against the current state, so the same rule applies uniformly: the user always
    decides on the exact final text that lands in the hub, whether it's a fresh addition or a drift
-   correction. For a **split proposal** item card — a legacy-mode-only concept (Step 2.5 says why),
-   emitted only for a surface still in single-file
-   form — the preview shows the **complete proposed structure** instead of a text snippet: the `standards/<surface>/` tree (core + leaf files), the
-   core's mini-routing table, and the updated routing row in `_INDEX.md`. Accept/correct/skip is
-   decided on that full preview like any other item, and the bare-ID ban applies the same way; the
-   split is always a human decision — without an explicit accept, nothing is touched.
-5. **Write-back.** Route by the hub mode declared at Step 0 — this prose never re-implements
-   the detection.
-
-   In `legacy` mode the write-back routing runs exactly as today: apply only the accepted
-   items, writing **verbatim** the text approved in each item's preview (a correction may
-   retouch a line, but the write itself copies the approved preview, not the original card):
-   - conventions / anti-patterns / scope → the matching section of the surface's standard doc:
-     `standards/<surface>.md`, or on a modular surface the core or matching leaf as routed in
-     Step 2.4
-   - domain terms → `glossary.md`
-   - cross-surface rules → `conventions.md`
-   - discovered docs → a link from the appropriate hub doc, using a path relative to the hub doc
-     being edited, pointing at a file that exists on disk — verify the target exists before writing
-     the link. Never link into `.apex/work/**`.
-   - an accepted **split proposal** → creates the `standards/<surface>/` folder, redistributes the
-     rules between the core and its leaf docs, updates the routing row in `_INDEX.md` to point at
-     the new core, updates known references to the old `standards/<surface>.md` path (grep
-     `.apex/` and this project's `skills/`), and removes `standards/<surface>.md`.
-
-   Writes are **additive and diff-gated**: append new content; on a confirmed drift, replace only the
-   specific stale line. Never overwrite a file wholesale, and never clobber human-authored text —
-   every write is gated per item by the user in Step 2.4, not batched at the end. A leftover
-   reference to the removed `standards/<surface>.md` becomes a broken link — Step 3 (validate-hub)
-   blocks it, so a split cannot half-succeed silently.
-
-   In `graph` mode, the accepted item cards never edit anything directly: they become a typed
+   correction.
+5. **Write-back.** The accepted item cards never edit anything directly: they become a typed
    candidates document — the closed schema of `scripts/formula/core/scenario-assembly.mjs`,
    whose wrapper is that schema's only interpreter (kinds `term`/`rule`/`decision`/`readme`;
    this prose maps nothing itself) — written to `.apex/work/discovery/YYYY-MM-DD-<surface>-candidates.json`
@@ -219,10 +159,9 @@ For each surface selected in Step 1, run this loop:
      operation: the note is reported out-of-graph and edited directly outside the graph,
      exactly as its preview said.
 
-   Split proposals and discovered-doc link write-backs are legacy-mode-only concepts (graph
-   mode has no markdown standards): the interviewer says so when they surface — in graph mode
-   a discovered-doc item is offered as a `readme` note instead, and a split proposal is not
-   offered at all.
+   Writes are **additive and diff-gated**: the scenario only adds typed candidates, the preview's
+   typed diff shows exactly what lands, and every write is gated per item by the user in
+   Step 2.4, not batched at the end. Never clobber recorded knowledge unseen.
 
    Then drive the CLI — never an inline graph mutation:
 
@@ -240,7 +179,7 @@ For each surface selected in Step 1, run this loop:
    — run it without `--yes`: the CLI itself prompts, and a refusal is a valid outcome, not an
    error.
 
-### Step 2a — Inception source (graph mode, complete run only)
+### Step 2a — Inception source (complete run only)
 
 Run this step only when the user chose the inception source in Step 1. It runs right after Step 1
 and before Step 2; the run then continues with Step 2 for the selected surfaces. It turns the
@@ -332,27 +271,15 @@ in this step ends only the inception source; Step 2, Step 3 and Step 4 still run
 
 ### Step 3 — Coherence gate
 
-Run the coherence gate for the mode declared at Step 0 — this prose never re-implements the
-detection:
-
-- **`graph`** → `steepy-formula graph validate` — the run is not done until the portable graph
-  invariants and the revision-chain replay come back clean — plus, when a promotion scenario
-  was applied in Step 2.5, one sanity `steepy-formula context resolve` of a representative
-  path or target from the work just promoted, confirming the resolver still answers.
-- **`legacy`** → the hub linter, exactly as today:
-
-  ```bash
-  node <engine-root>/scripts/validate-hub.mjs .
-  ```
-
-  The output MUST be `steepy validate-hub: OK`. Fix any stable-hub violations (a broken link,
-  an unresolved discovered-doc link) and re-run until green. In graph mode the same strictness
-  binds `graph validate` and the sanity `context resolve`: any invariant violation or a failed
-  resolve is an incomplete run — fix and re-run until green.
+Run `steepy-formula graph validate` — the run is not done until the portable graph invariants and
+the revision-chain replay come back clean — plus, when a promotion scenario was applied in
+Step 2.5, one sanity `steepy-formula context resolve` of a representative path or target from the
+work just promoted, confirming the resolver still answers. Any invariant violation or a failed
+resolve is an incomplete run — fix and re-run until green.
 
 ### Step 4 — Report
 
-Summarize, per surface: items added, items updated (drift), docs discovered/linked, and any areas
+Summarize, per surface: items added, items updated (drift), docs discovered, and any areas
 skipped — so the user sees exactly what changed and that nothing was clobbered. If a re-run found
 nothing new, report it as a no-op: no file changed.
 
@@ -372,5 +299,5 @@ Never hardcode a concrete model id in `explore-surface-prompt.md` or `explore-in
 
 This flow dispatches **no reviewer subagent**: every write is gated per item by
 the human in the Step 2.4 seeded interview (Step 2a.3 for the inception source); the Step 3
-coherence gate for the declared hub mode is the deterministic net. The Explore subagent dispatched
+coherence gate is the deterministic net. The Explore subagent dispatched
 in Step 2.2 and the inception explorer dispatched in Step 2a.2 are explorers, not reviewers.

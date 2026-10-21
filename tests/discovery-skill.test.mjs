@@ -80,12 +80,13 @@ test('discovery: explorer completion is self-contained, with counts in the repor
   assert.doesNotMatch(text, /implementer-prompt\.md|\.md:\d+(?:-\d+)?/);
   assert.match(text, /status: <DONE\|BLOCKED>\n\s+artifact: \[REPORT_FILE\]\n\s+changed-paths: none\n\s+signals: <short IDs or none>/);
   assert.match(text, /item counts per area[^]*report/i);
-  // Formula: the explorer's hub inputs are mode-filled through [HUB_MODE]/[HUB_CONTEXT].
-  assert.match(text, /\*\*Hub mode:\*\* \[HUB_MODE\]/);
+  // Graph-only: the explorer's one hub input is the Step 0 resolved context, passed as [HUB_CONTEXT].
+  assert.doesNotMatch(text, /HUB_MODE/, 'the explorer prompt carries no hub-mode parameter');
   assert.match(text, /\*\*Hub context:\*\* \[HUB_CONTEXT\]/);
   const skill = readFileSync(skillPath, 'utf8');
   assert.match(skill, /explore-surface-prompt\.md[^]*Output Format/i);
-  assert.match(skill, /\[HUB_MODE\][^]*\[HUB_CONTEXT\]/);
+  assert.doesNotMatch(skill, /HUB_MODE/, 'the skill dispatches no hub-mode parameter');
+  assert.match(skill, /\[HUB_CONTEXT\]/);
   assert.match(skill, /BLOCKED[^]*report[^]*stop[^]*interview/i);
 });
 
@@ -147,6 +148,11 @@ test('discovery: SKILL.md states the precondition — hub absent → run the abs
   assert.doesNotMatch(text, /\/steepy-formula:/, 'must not use a Claude-only namespaced slash invocation');
   assert.match(text, /absent/i, 'must name the absent-hub precondition');
   assert.match(text, /stop/i, 'must instruct the skill to stop when the hub is missing');
+  assert.match(
+    flat(text),
+    /Stop and tell the user to run the `graph-migrate` skill \(invoke it the way your harness invokes skills\) before any other workflow\./,
+    'the migrate mode must carry the exact graph-migrate stop',
+  );
 });
 
 test('discovery: SKILL.md has a run-scoping step (surface + cross-cutting docs)', () => {
@@ -156,8 +162,8 @@ test('discovery: SKILL.md has a run-scoping step (surface + cross-cutting docs)'
   assert.match(step1, /surface/i, 'run-scoping step must reference surface(s)');
   assert.match(
     step1,
-    /cross-cutting|conventions\.md|glossary\.md/i,
-    'run-scoping step must reference cross-cutting docs (conventions.md / glossary.md)'
+    /cross-cutting|terms|rules/i,
+    'run-scoping step must reference the cross-cutting terms and rules'
   );
 });
 
@@ -195,18 +201,6 @@ test('discovery: SKILL.md dispatches explore-surface-prompt.md and sets model: e
   assert.ok(idx !== -1, 'must dispatch skills/discovery/explore-surface-prompt.md');
   const window = text.slice(idx, idx + 700);
   assert.match(window, /model:\s*(cheap|standard|most-capable)\b/, 'must set an explicit model tier near the dispatch');
-});
-
-test('discovery: SKILL.md states the discovered-doc linking rule', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  assert.match(text, /relative/i, 'linking rule must require a relative path');
-  assert.match(text, /(exist|resolve)/i, 'linking rule must require the target to exist/resolve');
-  assert.match(text, /never link into `?\.apex\/work/i, 'linking rule must forbid linking into .apex/work');
-});
-
-test('discovery: SKILL.md runs validate-hub.mjs with an explicit "." argument', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  assert.match(text, /validate-hub\.mjs"?[ \t]+\./, 'must invoke validate-hub.mjs with an explicit \'.\' argument');
 });
 
 test('discovery: SKILL.md namespaces every shipped workflow slash invocation', () => {
@@ -313,44 +307,6 @@ test('discovery: SKILL.md Step 2.2 dispatch is harness-conditional with an inlin
   );
 });
 
-test('discovery: explore-surface-prompt.md names the split proposal and both trigger conditions', () => {
-  const text = readFileSync(promptPath, 'utf8');
-  assert.match(text, /split proposal/i, 'must name the split proposal item card');
-  assert.match(text, /150\s*lines?/, 'must name the 150-line threshold as a trigger condition');
-  assert.match(text, /heterogeneous/i, 'must name heterogeneous rule clusters as the other trigger condition');
-});
-
-test('discovery: SKILL.md Step 2.4 requires the complete-structure preview for a split proposal', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  const step24 = sectionBetween(text, '4. **Seeded interview.**', '5. **Write-back.**');
-  assert.match(step24, /split proposal/i, 'must name the split proposal case');
-  assert.match(step24, /core/i, 'must require the core doc in the preview');
-  assert.match(step24, /routing row/i, 'must require the updated routing row in the preview');
-});
-
-test('discovery: SKILL.md Step 2.5 lists the split write-back moves', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  const step25 = sectionBetween(text, '5. **Write-back.**', '### Step 3');
-  assert.match(step25, /removes `?standards\/<surface>\.md`?/i, 'must state removal of the single old standard file');
-  assert.match(step25, /routing row/i, 'must state the routing-row update in _INDEX.md');
-});
-
-test('discovery: SKILL.md Step 0 recognizes the modular folder form from the routing-table link', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  const step0 = sectionBetween(text, '### Step 0', '### Step 1');
-  assert.match(step0, /subfolder/i, 'must recognize a modular surface from a link inside a standards/ subfolder');
-  assert.match(step0, /core/i, 'must name the link target as the surface core');
-  assert.match(step0, /mini-routing/i, 'must name the mini-routing table as the leaf list');
-});
-
-test('discovery: SKILL.md routes modular-surface items via the core mini-routing table', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  const step2 = sectionBetween(text, '### Step 2', '### Step 3');
-  assert.match(step2, /mini-routing/i, 'must route modular write-backs by the mini-routing table');
-  assert.match(step2, /leaf/i, 'must name the leaf as a write-back destination');
-  assert.match(step2, /no\s+leaf\s+covers/i, 'must send a rule no leaf covers to the core');
-});
-
 test('discovery: SKILL.md Step 0 declares the hub mode via steepy-formula hub-mode — the prose never re-implements detection', () => {
   const text = readFileSync(skillPath, 'utf8');
   const step0 = sectionBetween(text, '### Step 0', '### Step 1');
@@ -366,8 +322,12 @@ test('discovery: SKILL.md Step 0 declares the hub mode via steepy-formula hub-mo
     'the declaration must not probe .apex/_INDEX.md existence to detect the mode');
   assert.match(step0, /`none`[\s\S]{0,220}the `init` skill[\s\S]{0,140}graph-first[\s\S]{0,80}stop/,
     'the none branch must tell the user to run the init skill (graph-first) and stop');
-  assert.match(step0, /`legacy`[\s\S]{0,200}runs exactly as today/,
-    'the legacy branch must keep the Markdown-hub procedure exactly as today');
+  assert.match(flat(step0), /`graph`, `migrate`, or `none`/, 'the mode list is exactly graph, migrate, or none');
+  assert.match(
+    flat(step0),
+    /\*\*`migrate`\*\* → Stop and tell the user to run the `graph-migrate` skill \(invoke it the way your harness invokes skills\) before any other workflow\./,
+    'the migrate branch must stop and point at graph-migrate',
+  );
 });
 
 test('discovery: SKILL.md graph write-back rides typed candidates → promotion create/preview/apply — never an inline graph mutation', () => {
@@ -405,95 +365,62 @@ test('discovery: SKILL.md graph write-back rides typed candidates → promotion 
     'the decision shape must carry the schema\'s anchoring caveat — unreachable at preview, blocking at apply'
   );
   assert.match(flat, /kind: ?'readme', note/, 'the readme candidate shape must be pinned');
-  assert.match(
-    step25,
-    /split proposals and discovered-doc link write-backs are legacy-mode-only concepts/i,
-    'the graph channel must mark split proposals and discovered-doc links as legacy-mode-only'
-  );
 });
 
-test('discovery: SKILL.md legacy write-back channel is unchanged — runs exactly as today', () => {
-  const text = readFileSync(skillPath, 'utf8');
-  const step25 = sectionBetween(text, '5. **Write-back.**', '### Step 3');
-  assert.match(
-    step25,
-    /In `legacy` mode the write-back routing runs exactly as today/,
-    'the legacy write-back branch must run exactly as today'
-  );
-  assert.match(step25, /standards\/<surface>\.md/, 'legacy write-back must keep the standards destinations');
-  assert.match(step25, /glossary\.md/, 'legacy write-back must keep the glossary destination');
-  assert.match(step25, /conventions\.md/, 'legacy write-back must keep the conventions destination');
-});
-
-test('discovery: SKILL.md Step 3 coherence gate branches on the declared hub mode', () => {
+test('discovery: SKILL.md Step 3 coherence gate is the graph gate', () => {
   const text = readFileSync(skillPath, 'utf8');
   const step3 = sectionBetween(text, '### Step 3', '### Step 4');
   assert.match(step3, /graph validate/, 'graph mode must gate on steepy-formula graph validate');
   assert.match(step3, /context resolve/, 'graph mode must sanity context resolve after an applied scenario');
-  assert.match(step3, /validate-hub\.mjs"?[ \t]+\./, 'legacy mode must keep validate-hub.mjs . as the gate');
-  assert.match(step3, /exactly as today/, 'the legacy gate branch must run exactly as today');
+  assert.doesNotMatch(step3, /validate-hub|legacy|migrate/i, 'the gate is the graph gate only');
 });
 
-test('discovery: explore-surface-prompt.md restricts the split proposal to the single-file form', () => {
-  const text = readFileSync(promptPath, 'utf8');
-  assert.match(text, /single-file form/i, 'split proposal must be restricted to the single-file form');
-  assert.match(
-    text,
-    /never gets a split proposal|already split/i,
-    'must state a folder-form surface gets no split proposal'
-  );
-});
+// The Markdown-hub files graph-first init never creates: no passage of the skill, and no dispatch
+// of the explorer, may require reading any of them.
+const MARKDOWN_HUB_FILE = /_INDEX\.md|\bstandards\/|conventions\.md|glossary\.md/;
 
-// The legacy Markdown-hub files graph-first init never creates: no graph-mode passage of the
-// skill, and no graph-mode dispatch of the explorer, may require reading any of them.
-const LEGACY_HUB_FILE = /_INDEX\.md|\bstandards\/|conventions\.md|glossary\.md/;
-
-test('discovery: SKILL.md graph channel requires no Markdown-hub file — every graph-mode passage is doc-free', () => {
+test('discovery: SKILL.md requires no Markdown-hub file — every passage is doc-free', () => {
   const text = readFileSync(skillPath, 'utf8');
-  const graphPassages = [
-    ['Step 0 mode branch', sectionBetween(text, '- **`graph`** → the graph channel', 'Then read the hub')],
-    ['Step 0 state read', sectionBetween(text, '- In `graph` mode, from the canonical graph', '### Step 1')],
-    ['Step 1 scoping', sectionBetween(text, '- In `graph` mode, the graph-backed scopes', 'This keeps a run bounded')],
-    ['Step 2.2 explorer inputs', sectionBetween(text, '- in `graph` mode: the Step 0 resolved context', 'It reads the surface')],
-    ['Step 2.4 routing', sectionBetween(text, '- In `graph` mode, one of the typed candidate kinds', 'Decide **accept')],
-    ['Step 2.5 write-back', sectionBetween(text, 'In `graph` mode, the accepted item cards', 'Then drive the CLI')],
-    ['Step 3 gate', sectionBetween(text, '- **`graph`** → `steepy-formula graph validate`', '- **`legacy`**')],
+  assert.doesNotMatch(text, MARKDOWN_HUB_FILE, 'the skill must not require _INDEX.md, standards/, conventions.md, or glossary.md');
+  const passages = [
+    ['Step 0 mode branch', sectionBetween(text, '- **`graph`** →', 'Then read the hub')],
+    ['Step 0 state read', sectionBetween(text, 'Then read the hub', '### Step 1')],
+    ['Step 1 scoping', sectionBetween(text, '### Step 1', '### Step 2')],
+    ['Step 2.2 explorer inputs', sectionBetween(text, 'Pass it the surface name/path', 'It reads the surface')],
+    ['Step 2.4 routing', sectionBetween(text, '4. **Seeded interview.**', '5. **Write-back.**')],
+    ['Step 2.5 write-back', sectionBetween(text, '5. **Write-back.**', 'Then drive the CLI')],
+    ['Step 3 gate', sectionBetween(text, '### Step 3', '### Step 4')],
   ];
-  for (const [label, passage] of graphPassages) {
-    assert.doesNotMatch(
-      passage,
-      LEGACY_HUB_FILE,
-      `${label}: the graph channel must not require _INDEX.md, standards/, conventions.md, or glossary.md`
-    );
+  for (const [label, passage] of passages) {
+    assert.doesNotMatch(passage, MARKDOWN_HUB_FILE, `${label}: must not require a Markdown hub file`);
+    assert.doesNotMatch(passage, /legacy/i, `${label}: must not branch on a second channel`);
   }
 });
 
-test('discovery: SKILL.md Step 0 graph bullet routes every stage graph-first — the "run as today" claim is gone', () => {
+test('discovery: SKILL.md Step 0 graph bullet routes every stage graph-first', () => {
   const text = readFileSync(skillPath, 'utf8');
-  assert.doesNotMatch(text, /Steps 1–2\.4 run as today/, 'the false "Steps 1–2.4 run as today" claim must be gone');
-  assert.doesNotMatch(text, /unchanged explorer subagent/, 'the "unchanged explorer subagent" claim must be gone');
   const step0 = sectionBetween(text, '### Step 0', '### Step 1');
-  const flat = step0.replace(/\s+/g, ' ');
+  const flat0 = step0.replace(/\s+/g, ' ');
   assert.match(
-    flat,
-    /Step 1 scoping offers the recorded terms and rules from the Step 0 `context resolve` instead of the Markdown docs/,
-    'the graph bullet must send Step 1 scoping to the resolved context, not the Markdown docs'
+    flat0,
+    /Step 1 scoping offers the recorded terms and rules from the Step 0 `context resolve`/,
+    'the graph bullet must send Step 1 scoping to the resolved context',
   );
   assert.match(
-    flat,
-    /Step 2\.2 hands the explorer that resolved context in place of the legacy hub inputs/,
-    'the graph bullet must hand the explorer the resolved context in place of the legacy hub inputs'
+    flat0,
+    /Step 2\.2 hands the explorer that resolved context/,
+    'the graph bullet must hand the explorer the resolved context',
   );
   assert.match(
-    flat,
+    flat0,
     /Step 2\.4 routes accepted items to typed candidate kinds, not doc sections/,
-    'the graph bullet must route Step 2.4 acceptances to typed candidate kinds'
+    'the graph bullet must route Step 2.4 acceptances to typed candidate kinds',
   );
 });
 
 test('discovery: SKILL.md Step 0 graph state read derives its surface targets deterministically', () => {
   const text = readFileSync(skillPath, 'utf8');
-  const stateRead = sectionBetween(text, '- In `graph` mode, from the canonical graph', '### Step 1');
+  const stateRead = sectionBetween(text, 'Then read the hub', '### Step 1');
   const flat = stateRead.replace(/\s+/g, ' ');
   assert.match(
     flat,
@@ -541,20 +468,19 @@ test('discovery: graph-mode explorer inputs are pinned — Step 0 resolved conte
   const skill = readFileSync(skillPath, 'utf8');
   const step2 = sectionBetween(skill, '### Step 2', '### Step 3');
   const flat = step2.replace(/\s+/g, ' ');
-  assert.match(flat, /\[HUB_MODE\]/, 'the dispatch must pass the declared hub mode as [HUB_MODE]');
-  assert.match(flat, /\[HUB_CONTEXT\]/, "the dispatch must pass the mode's hub inputs as [HUB_CONTEXT]");
+  assert.doesNotMatch(flat, /\[HUB_MODE\]/, 'the dispatch passes no hub-mode parameter');
   assert.match(
     flat,
-    /in `graph` mode: the Step 0 resolved context \(`context\.json` \+ `context\.md`\)[\s\S]{0,140}and nothing else/,
-    'the graph fill must be the Step 0 resolved context and nothing else'
+    /the Step 0 resolved context \(`context\.json` \+ `context\.md`\) as `\[HUB_CONTEXT\]`[\s\S]{0,140}and nothing else/,
+    'the hub input must be the Step 0 resolved context and nothing else'
   );
   assert.match(
     flat,
-    /no Markdown hub doc exists on this channel/,
-    'the graph fill must state that no Markdown hub doc exists on the graph channel'
+    /no Markdown hub doc exists/,
+    'the dispatch must state that no Markdown hub doc exists'
   );
   const prompt = readFileSync(promptPath, 'utf8');
-  assert.match(prompt, /\[HUB_MODE\]/, 'the prompt must accept the [HUB_MODE] dispatch parameter');
+  assert.doesNotMatch(prompt, /\[HUB_MODE\]/, 'the prompt carries no [HUB_MODE] dispatch parameter');
   assert.match(prompt, /\[HUB_CONTEXT\]/, 'the prompt must accept the [HUB_CONTEXT] dispatch parameter');
   assert.match(
     prompt,
@@ -563,20 +489,11 @@ test('discovery: graph-mode explorer inputs are pinned — Step 0 resolved conte
   );
 });
 
-test('discovery: explorer prompt dispatched in graph mode requires no Markdown-hub file', () => {
+test('discovery: explorer prompt requires no Markdown-hub file and carries no split proposal', () => {
   const text = readFileSync(promptPath, 'utf8');
-  assert.doesNotMatch(text, /_INDEX\.md/, 'the routing-table line must be gone — the mode fill carries it in legacy mode');
-  assert.doesNotMatch(text, /conventions\.md|glossary\.md/, 'no cross-cutting doc may be hardcoded in the prompt');
-  // The only standards/ references sit inside the split-proposal card, which is legacy-gated.
-  const splitSection = sectionBetween(text, '### Split proposal', '## Invent Nothing');
-  assert.match(splitSection, /\[HUB_MODE\] is `legacy`/, 'the split proposal must be gated on [HUB_MODE] being legacy');
-  assert.match(splitSection, /never emitted/i, 'the split proposal must state graph mode never emits one');
-  const withoutSplit = text.replace(splitSection, '').replace(/\*\*Split proposal \(optional[\s\S]{0,160}\)/, '');
-  assert.doesNotMatch(
-    withoutSplit,
-    LEGACY_HUB_FILE,
-    'outside the legacy-gated split proposal, the prompt must reference no Markdown-hub file'
-  );
+  assert.doesNotMatch(text, MARKDOWN_HUB_FILE, 'the prompt must reference no Markdown-hub file');
+  assert.doesNotMatch(text, /split proposal|legacy|HUB_MODE|standard filename/i, 'the prompt carries no second-channel or split-proposal text');
+  assert.match(flat(text), /\(canonical Stable Knowledge Graph\)/, 'the prompt names the canonical Stable Knowledge Graph');
 });
 
 test('discovery: SKILL.md Step 2.4 graph routing targets the typed candidate kinds, never a doc section', () => {
@@ -585,7 +502,7 @@ test('discovery: SKILL.md Step 2.4 graph routing targets the typed candidate kin
   const flat = step24.replace(/\s+/g, ' ');
   assert.match(
     flat,
-    /In `graph` mode, one of the typed candidate kinds Step 2\.5 promotes — never a doc section/,
+    /One of the typed candidate kinds Step 2\.5 promotes — never a doc section/,
     'graph-mode routing must target the typed candidate kinds, never a doc section'
   );
   assert.match(flat, /glossary term → `term`/, 'a glossary term must route to the term kind');
@@ -614,7 +531,7 @@ test('discovery: SKILL.md Step 2.4 graph routing targets the typed candidate kin
   assert.match(flat, /out-of-graph note → `readme`/, 'an out-of-graph note must route to the readme kind');
   assert.match(
     flat,
-    /in `graph` mode the `readme` note it would become/,
+    /the `readme` note it would become/,
     'a discovered doc in graph mode must preview as the readme note it becomes'
   );
 });
@@ -642,7 +559,7 @@ function assertNamedHeadingReference({ sourcePath, targetPath, targetLabel, head
 // Formula: the source runs on the graph channel only — accepted decisions land as typed candidates
 // through one promotion scenario, and its one-time window is the initialization revision.
 const inceptionPromptPath = join(skillsDir, 'discovery', 'explore-inception-prompt.md');
-const STEP_2A = '### Step 2a — Inception source (graph mode, complete run only)';
+const STEP_2A = '### Step 2a — Inception source (complete run only)';
 
 // Flatten hard-wrapped prose so a lock pins the wording, not the wrap points.
 function flat(text) {
@@ -651,7 +568,7 @@ function flat(text) {
 
 test('discovery inception source (SC11): Step 1 offers only a v2 complete candidate without body reads', () => {
   const step1 = flat(sectionBetween(readFileSync(skillPath, 'utf8'), '### Step 1', '### Step 2'));
-  assert.match(step1, /In `graph` mode only: if `\.apex\/inception\/run\.json` exists, its `schema` is `steepy-inception-run\/v2`.*`status` is `complete`/);
+  assert.match(step1, /If `\.apex\/inception\/run\.json` exists, its `schema` is `steepy-inception-run\/v2`.*`status` is `complete`/);
   assert.match(step1, /offer the \*\*inception source\*\*/);
   assert.match(step1, /Read only that one file.*never list `\.apex\/inception\/`/);
   assert.match(step1, /candidate.*not.*verified/i);
@@ -661,7 +578,7 @@ test('discovery inception source (SC11): Step 1 offers only a v2 complete candid
   assert.match(step1, /chooses the inception source, run Step 2a right after this step, before Step 2/);
   assert.match(step1, /window is the certified initialization revision/);
   assert.match(step1, /any promotion before the gate ends the source/);
-  assert.match(step1, /In `legacy` mode the inception source is never offered/);
+  assert.doesNotMatch(step1, /legacy|Markdown hub/i);
 });
 
 test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 and runs only on the user\'s choice', () => {

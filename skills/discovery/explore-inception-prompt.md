@@ -6,9 +6,7 @@ over the same inputs, and state the inline degradation in the run's report. It r
 documents and the verified summary/report of one completed inception run, writes one item card per
 decision-register entry to a report file, and returns a terse status the `discovery` skill drives
 the interview from. It does not interview the user and never writes to the hub or the codebase —
-the report file is its only write; everything else is read-only. The inception source runs on the
-`graph` channel only (formula's `init` certifies graph-mode scaffolds), so the explorer's hub
-baseline is the discovery Step 0 resolved context, never a Markdown hub doc.
+the report file is its only write; everything else is read-only.
 
 ```
 Subagent (explorer):
