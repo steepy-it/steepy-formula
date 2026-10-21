@@ -3008,3 +3008,66 @@ test('autopilot sections carry no four-field example and mixed files label manua
     for (const i of threeField) assert.ok(i > fourField[0], `${file}:${i + 1} autopilot example must follow the first manual block`);
   }
 });
+
+// Global graph-only lock (Task 20): no skill outside graph-migrate carries a Markdown-hub reference,
+// every workflow skill stops in migrate state with the one canonical sentence, and the mode list is exact.
+function skillFilesExceptMigrate(dir = skillsDir) {
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (dir === skillsDir && entry.name === 'graph-migrate') continue;
+      out.push(...skillFilesExceptMigrate(full));
+    } else if (/\.(md|json|mjs|txt|ya?ml)$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+test('global skills lock (a): no skill file outside graph-migrate references the Markdown hub, its linter, or legacy', () => {
+  const files = skillFilesExceptMigrate();
+  assert.ok(files.length > 20, 'the lock must actually walk the skills tree');
+  const forbidden = /validate-hub|stop-hook|\.apex\/_INDEX\.md|\.apex\/standards|\.apex\/glossary\.md|\.apex\/conventions\.md|testing-and-checklist|\blegacy\b/i;
+  for (const file of files) {
+    assert.doesNotMatch(readFileSync(file, 'utf8'), forbidden, `${file.slice(root.length + 1)} is graph-only`);
+  }
+});
+
+test('global skills lock (b): every workflow skill and both entry skills carry the exact migrate stop sentence', () => {
+  const sentence = 'Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow.';
+  for (const name of ['init', 'discovery', 'brainstorm', 'plan', 'implement', 'review', 'loop-engineer', 'new-surface', 'check', 'inception']) {
+    const flat = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+    assert.ok(flat.includes(sentence), `${name} carries the G8 migrate stop sentence`);
+  }
+});
+
+test('global skills lock (c): every skill that declares the hub mode uses the exact mode list', () => {
+  const list = '`graph`, `migrate`, or `none`';
+  let declaring = 0;
+  for (const name of readdirSync(skillsDir)) {
+    if (name === 'graph-migrate') continue;
+    const path = join(skillsDir, name, 'SKILL.md');
+    if (!existsSync(path)) continue;
+    const flat = readFileSync(path, 'utf8').replace(/\s+/g, ' ');
+    if (!flat.includes('hub-mode')) continue;
+    declaring++;
+    assert.ok(flat.includes(list), `${name} declares the mode with the G8 list`);
+    assert.doesNotMatch(flat, /`graph`,? or `legacy`|`legacy`/i, `${name} has no other mode list`);
+  }
+  assert.ok(declaring >= 10, 'init, inception and the workflow skills all declare the mode');
+});
+
+test('init and inception: migrate state stops before any scaffolding or run', () => {
+  const init = readFileSync(join(skillsDir, 'init', 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(init, /steepy-formula hub-mode/);
+  assert.match(init, /\| `hub-mode` reports `migrate` \|/);
+  assert.doesNotMatch(init, /No legacy fallback/i);
+  assert.match(init, /No fallback is offered\./);
+  assert.match(init, /init never creates hub documents; `\.apex\/` holds only `work\/`, `inception\/` and the init provenance receipts/);
+  assert.match(init, /no `documents` step exists/);
+  const inception = readFileSync(join(skillsDir, 'inception', 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(inception, /neither a graph binding `\.formula\/config\.json` nor an unmigrated steepy-apex hub/);
+  const step0 = inception.slice(inception.indexOf('Step 0'));
+  assert.ok(step0.indexOf('steepy-formula hub-mode') !== -1 && step0.indexOf('steepy-formula hub-mode') < step0.indexOf('Stop and tell the user'),
+    'inception runs hub-mode before its migrate stop');
+  assert.match(inception, /exit 25/);
+});

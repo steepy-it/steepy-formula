@@ -9,8 +9,9 @@ const workflowRoot = join(here, '..', '.github', 'workflows');
 
 test('graph-first init never renders the gitPolicyDirective placeholder or the numbered markdown directive', () => {
   const skill = readFileSync(join(here, '..', 'skills', 'init', 'SKILL.md'), 'utf8');
-  assert.doesNotMatch(skill, /\{\{gitPolicyDirective\}\}/, 'graph-first init never renders the markdown hub template');
-  assert.doesNotMatch(skill, /4\. \*\*Git policy:\*\*/, 'the numbered markdown directive belongs to the legacy hub, not the graph-first flow');
+  assert.doesNotMatch(skill, /\{\{gitPolicyDirective\}\}/, 'graph-first init never renders a Markdown hub template');
+  assert.doesNotMatch(skill, /4\. \*\*Git policy:\*\*/, 'the numbered Markdown directive does not belong to the graph-first flow');
+  assert.doesNotMatch(skill, /_INDEX\.md|\blegacy\b/i, 'graph-first init names no Markdown hub index and no legacy flow');
   assert.match(skill, /git policy/i, 'init still interviews the git policy');
   assert.match(skill, /APPLIES_TO`? every confirmed Surface/,
     'the git policy is offered as a Rule candidate applying to every confirmed Surface');

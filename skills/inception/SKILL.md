@@ -1,6 +1,6 @@
 ---
 name: inception
-description: Turn an idea and its starting materials into a minimal, verified, runnable application before the hub exists — reconnaissance, architecture decisions, verified versions, one human approval, bootstrap of one representative path, and final verification — then hand off to init and discovery.
+description: Turn an idea and its starting materials into a minimal, verified, runnable application before the graph binding exists — reconnaissance, architecture decisions, verified versions, one human approval, bootstrap of one representative path, and final verification — then hand off to init and discovery.
 user-invocable: true
 ---
 
@@ -10,9 +10,9 @@ Turn an idea and its starting materials into a minimal, verified, runnable appli
 starts before the hub exists and ends with a hand-off to the `init` skill, then the `discovery`
 skill.
 
-`inception` is a **pre-hub skill**: it runs while the project has no hub yet — neither a legacy
-`.apex/_INDEX.md` nor the graph binding `.formula/config.json` that `steepy-formula graph init`
-writes. It is not a gear, and it is outside the brainstorm → plan → implement → review chain. It has no headless or
+`inception` is a **pre-hub skill**: it runs while the project has no hub yet — neither a graph binding
+`.formula/config.json` nor an unmigrated steepy-apex hub; `steepy-formula graph init` writes the
+binding. It is not a gear, and it is outside the brainstorm → plan → implement → review chain. It has no headless or
 autopilot mode: a human answers its questions and approves the project.
 
 > **Engine root:** this skill's base directory is `<engine-root>/skills/inception/`; engine
@@ -22,7 +22,7 @@ autopilot mode: a human answers its questions and approves the project.
 ## Boundaries
 
 - Work only inside `.apex/inception/` and the application's own files. Never create
-  `.apex/_INDEX.md`, routing, standards, specialist adapters, a project bootstrap, or a graph
+  hub documents, specialist adapters, a project bootstrap, or a graph
   binding (`steepy-formula graph init`, `.formula/`): those belong to the `init` skill after
   completion. `.formula/` is a reserved area, like `.apex/work/`: never an application path.
 - One run per repository, at `.apex/inception/run.json`. Only the helper mutates the descriptor,
@@ -164,7 +164,11 @@ that pending publication. It is not an execution retry.
 
 ### Step 0 — Classify the starting state
 
-Run `classify` without `--maturity` first:
+First declare the hub mode: run `steepy-formula hub-mode` and quote its `mode:` line — `graph`,
+`migrate`, or `none`, each printed with one `evidence:` line. If it reports `migrate`, Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow. The `inception-state.mjs` helper also refuses
+every command in the migrate state (exit 25), so nothing is classified or started there.
+
+Then run `classify` without `--maturity` first:
 
 ```bash
 node <engine-root>/scripts/inception-state.mjs classify --repo-root .
@@ -190,12 +194,12 @@ Act on the `row` field:
 | `maturity-decision-required` | No hub and no run. Propose a maturity reading, let the user decide, then classify again with `--maturity`. |
 | `start-new-run` | Go to Step 1 and start a new run. |
 | `propose-init-discovery` | The application is mature. Propose the `init` skill, then the `discovery` skill. Start nothing. |
-| `ordinary-workflow` | The hub exists and there is no run. Use the ordinary workflow, for example the `brainstorm` skill. Start nothing. |
+| `ordinary-workflow` | The graph binding exists and there is no run. Use the ordinary workflow, for example the `brainstorm` skill. Start nothing. |
 | `resume-run` | Resume the active or blocked run in Step 1. |
 | `resume-abandon` | An interrupted abandon left a prepared intent. Run `abandon --resume` to finish it; every other `inception-state.mjs` writer refuses until then. Start nothing. |
-| `report-next-steps` | The run is complete and the hub does not exist yet. Report the next steps: the `init` skill, then the `discovery` skill. |
+| `report-next-steps` | The run is complete and the graph binding does not exist yet. Report the next steps: the `init` skill, then the `discovery` skill. |
 | `run-complete-ordinary-workflow` | Report "run complete, use the ordinary workflow". |
-| `conflict-run-beside-hub` | Report the conflict: an unfinished run sits beside a hub, for example because `init` ran too early. There is no automatic resume; the user decides. |
+| `conflict-run-beside-hub` | Report the conflict: an unfinished run sits beside the graph binding, for example because `init` ran too early. There is no automatic resume; the user decides. |
 | `invalid-state` | Preserve every file, explain the invalid state from the `error` field, and stop. |
 
 ### Step 1 — Start or resume the run

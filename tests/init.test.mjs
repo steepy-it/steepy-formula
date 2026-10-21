@@ -20,7 +20,7 @@ function sectionBetween(text, startHeading, endHeading) {
 // init is a Markdown procedure executed by the harness; these lock the graph-first
 // flow: the engine gate runs before anything is written to the repo, Step 1 routes
 // IMMEDIATELY from the status decision table (a virgin graph continues, an initialized
-// one re-runs as repair, a legacy hub hands off to graph-migrate), detection only
+// one re-runs as repair, a migrate state hands off to graph-migrate), detection only
 // proposes, Rules enter only through human approval, and no markdown hub is ever
 // scaffolded on a virgin repo (the graph IS the hub).
 
@@ -60,18 +60,21 @@ test('init Step 1 decides IMMEDIATELY from the status decision table', () => {
   assert.match(rerunRow, /Jump to Step 8/, 'an already-initialized project routes to Step 8 repair semantics');
   assert.match(rerunRow, /\*\*STOP\*\*/, 'the re-run row stops before any scaffolding or graph mutation');
 
-  // legacy .apex/_INDEX.md present -> route to graph-migrate before scaffolding or mutation
-  const legacyRow = step1.split('\n').find((line) => line.startsWith('|') && line.includes('_INDEX.md'));
-  assert.ok(legacyRow, 'the decision table carries the legacy-hub row');
-  assert.match(legacyRow, /graph-migrate/, 'a legacy markdown hub routes to the graph-migrate skill');
-  assert.match(legacyRow, /\*\*STOP\*\*/, 'the legacy row stops before any scaffolding or graph mutation');
+  // hub-mode reports migrate -> the G8 stop, above `initialized: yes`, before scaffolding or mutation
+  const migrateRow = step1.split('\n').find((line) => line.startsWith('|') && line.includes('`hub-mode` reports `migrate`'));
+  assert.ok(migrateRow, 'the decision table carries the migrate row');
+  assert.match(migrateRow, /graph-migrate/, 'a migrate state routes to the graph-migrate skill');
+  assert.match(migrateRow, /\*\*STOP\*\*/, 'the migrate row stops before any scaffolding or graph mutation');
+  assert.ok(step1.indexOf('`hub-mode` reports `migrate`') < step1.indexOf('`initialized: yes`'), 'the migrate row precedes the re-run row');
+  assert.match(step1, /steepy-formula hub-mode/, 'Step 1 reads the mode with hub-mode');
+  assert.doesNotMatch(step1, /_INDEX\.md|markdown hub|legacy/i);
 });
 
-test('init resolves credentials only through the F1 secret-provider chain, with no legacy fallback', () => {
+test('init resolves credentials only through the F1 secret-provider chain, with no fallback', () => {
   const text = skill();
   assert.match(text, /F1 secret-provider chain/, 'credentials come only from the F1 chain');
   assert.doesNotMatch(text, /--password/, 'the skill must never invent a --password flag');
-  assert.match(text, /no legacy fallback/i, 'no legacy credential fallback is offered');
+  assert.match(text, /No fallback is offered\./, 'no credential fallback is offered');
 });
 
 test('init pins the .formula/config.json binding contract', () => {
@@ -249,31 +252,24 @@ test('init creates a gitignored .apex/work area and never registers specs/plans 
 
 test('init never scaffolds a markdown hub', () => {
   const text = skill();
-  // _INDEX.md is absent from the flow except the Step 1 routing observation (which detects a
-  // legacy hub to hand off), the Step 4 never-create guard, and the Step 8 legacy pointer
-  // (which hands off to graph-migrate instead of migrating).
-  const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   const step4 = sectionBetween(text, '### Step 4', '### Step 5');
-  const step8 = sectionBetween(text, '### Step 8', '### Step 9');
-  const outside = text.replace(step1, '').replace(step4, '').replace(step8, '');
-  assert.doesNotMatch(outside, /_INDEX\.md/,
-    '_INDEX.md may appear only as the Step 1 routing observation, the Step 4 never-create guard, and the Step 8 legacy pointer');
-  assert.match(step4, /never create\s+`\.apex\/_INDEX\.md`/, 'the scaffolding step must guard against creating the legacy index');
-  assert.match(step8, /_INDEX\.md/, 'the Step 8 legacy pointer names the legacy hub index');
-  assert.match(step8, /graph-migrate/, 'the legacy pointer hands off to the graph-migrate skill');
-  assert.doesNotMatch(text, /templates\/_INDEX\.md/, 'init never reads the _INDEX template');
+  assert.doesNotMatch(text, /_INDEX\.md/, 'init never names the Markdown index');
+  assert.match(step4.replace(/\s+/g, ' '), /init never creates hub documents; `\.apex\/` holds only `work\/`, `inception\/` and the init provenance receipts/,
+    'the scaffolding step states what .apex/ may hold');
   assert.doesNotMatch(text, /new-surface\.mjs/, 'the planner generates the scaffold, not the new-surface scaffolder');
   assert.doesNotMatch(text, /\{\{gitPolicyDirective\}\}/, 'git policy is a graph Rule candidate, not a markdown placeholder');
 });
 
-test('init repair semantics — initialized graph reports only; a legacy hub hands off to graph-migrate', () => {
+test('init repair semantics — initialized graph reports only; a migrate state hands off to graph-migrate', () => {
   const text = skill();
   const step8 = sectionBetween(text, '### Step 8', '### Step 9');
   assert.match(step8, /Step 1's decision table routes here/, 'Step 8 is reached only through the Step 1 routing');
   assert.match(step8, /report only/i, 'an already-initialized graph gets a status/validate report only');
   assert.match(step8, /no re-scaffold/i, 'an already-initialized graph must not be re-scaffolded');
-  assert.match(step8, /do not repair or migrate/i, 'a legacy markdown hub is neither repaired nor migrated by init');
-  assert.match(step8, /stop/i, 'the legacy branch stops after the pointer');
+  assert.match(step8, /`hub-mode` reports `migrate`/, 'the migrate branch is keyed on hub-mode');
+  assert.match(step8, /do not repair or migrate/i, 'init neither repairs nor migrates a Markdown hub');
+  assert.match(step8, /graph-migrate/, 'the migrate branch hands off to the graph-migrate skill');
+  assert.match(step8, /stop/i, 'the migrate branch stops after the pointer');
 });
 
 function jsonBlockAfter(text, heading) {
@@ -300,7 +296,7 @@ test('init prepares the graph-mode governance after zero-conflict preview and be
   assert.ok(text.indexOf(apply) < text.indexOf(finish));
   assert.ok(text.indexOf(finish) < text.indexOf('### Step 5'), 'the certificate closes before the promotion is built');
   assert.ok(text.indexOf(finish) < text.lastIndexOf('steepy-formula graph validate'));
-  assert.ok(!text.includes('inception-governance.mjs documents --repo-root'), 'graph mode never runs the documents writer');
+  assert.ok(!text.includes('inception-governance.mjs documents'), 'there is no documents step');
   const input = jsonBlockAfter(text, '#### Governance input shape');
   assert.deepEqual(Object.keys(input), ['schema', 'runId', 'completion', 'projectModel', 'documents']);
   assert.equal(input.schema, 'steepy-inception-governance-input/v1');

@@ -248,9 +248,9 @@ test('native protocol requires every recovery and verification case without clai
 test('pre-merge rules agree across skills and guides', () => {
   // Formula: init is graph-first and certifies no Markdown document, so it never runs `documents`.
   const init = norm(read('skills', 'init', 'SKILL.md'));
-  assert.ok(!init.includes('inception-governance.mjs documents --repo-root'));
+  assert.ok(!init.includes('inception-governance.mjs documents'));
   assert.match(init, /Graph mode certifies no Markdown hub document/);
-  assert.match(init, /`inception-governance\.mjs documents` command has nothing to write and is not run/);
+  assert.match(init, /no `documents` step exists/);
   const inception = norm(read('skills', 'inception', 'SKILL.md'));
   assert.match(inception, /Git status leaves out the same reserved areas, recognized scaffold leases and approved exclusions/i);
   assert.match(inception, /recognized scaffold lease is not divergence/i);

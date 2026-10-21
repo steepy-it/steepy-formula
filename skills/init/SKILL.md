@@ -50,7 +50,7 @@ steepy-formula graph init [--project <project-id>]
 
 - Credentials resolve ONLY through the F1 secret-provider chain (`db-password` in the engine).
   The CLI exposes no password flag and this skill never invents one — never pass a credential
-  on the command line. No legacy fallback is offered.
+  on the command line. No fallback is offered.
 - Init persists the project binding: the project id lives in `.formula/config.json`, a
   **committed** repository artifact. When `.formula/` is gitignored, ignore it as `.formula/*`
   (replacing a bare `.formula/` directory pattern) and add the `!.formula/config.json` exception
@@ -66,13 +66,18 @@ Then read the project state:
 steepy-formula graph status
 ```
 
-Also check whether `.apex/_INDEX.md` exists in the repo. Decide IMMEDIATELY from the first
-matching row of this table, top to bottom:
+Also declare the hub mode — `graph`, `migrate`, or `none`, each printed with one `evidence:` line:
+
+```bash
+steepy-formula hub-mode
+```
+
+Decide IMMEDIATELY from the first matching row of this table, top to bottom:
 
 | Observation | Meaning | Action |
 |---|---|---|
-| **exit 3**, engine unreachable, or any credential/engine failure | The pre-flight failed | Report the diagnostic and **STOP** — no repo file is written before this gate passes (no work area, no agents, no bootstrap skill, no `CLAUDE.md`). Do not fall back to scaffolding a markdown hub; a failed gate is a failed init. |
-| Legacy `.apex/_INDEX.md` present in the repo | The repo carries a legacy markdown hub | Route to the `graph-migrate` skill per Step 8 and **STOP** — no scaffolding, no graph mutation. |
+| **exit 3**, engine unreachable, or any credential/engine failure | The pre-flight failed | Report the diagnostic and **STOP** — no repo file is written before this gate passes (no work area, no agents, no bootstrap skill, no `CLAUDE.md`). Do not fall back to scaffolding anything else; a failed gate is a failed init. |
+| `hub-mode` reports `migrate` | The repo carries an unmigrated steepy-apex hub | Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow. **STOP** — no scaffolding, no graph mutation. |
 | `initialized: yes` | This is an init re-run on an already-initialized project | Jump to Step 8 repair semantics (validate + report) and **STOP** — no scaffolding, no graph mutation. |
 | Engine reachable + `initialized: no` (exit 4) | **EXPECTED virgin state** — the Step 1 success outcome for a fresh init | Continue to Step 2 (detection → interview → scaffolding → scenario). |
 
@@ -228,8 +233,8 @@ Require exit 0 and `ok: true`, retaining the returned `runId` and exact `complet
 writes; do not silently turn a failed certified init into ordinary init. Ordinary init without
 this first-post-complete case keeps the interview, preview and conflict procedure above.
 
-Graph mode certifies no Markdown hub document: the stable knowledge lands in Step 6 through the
-initialization promotion, whose Revision is its own provenance. The governance input therefore
+Graph mode certifies no Markdown hub document and no `documents` step exists: the stable
+knowledge lands in Step 6 through the initialization promotion, whose Revision is its own provenance. The governance input therefore
 carries an empty `documents` array, and the planner model is the exact retained zero-conflict
 model with `hubMode: 'graph'`, including its selected `resolutions`.
 
@@ -344,7 +349,7 @@ node <engine-root>/scripts/inception-governance.mjs finish --repo-root <repo-roo
 Require exit 0 and `ok: true`; finish checks the exact prepared outputs and the whole application
 difference, then publishes `.apex/init-provenance.json`. An explicit replay of an already-final
 certificate uses this same idempotent command without new writes. Graph mode has no certified
-document, so the `inception-governance.mjs documents` command has nothing to write and is not run.
+document, so no `documents` step exists.
 Never edit the completed descriptor or any inception evidence. Run the full
 `node <engine-root>/scripts/inception-state.mjs verify-complete --repo-root <repo-root>` gate again
 after finish; require exit 0 and `ok: true` before Step 5. A failed prepare/finish/gate is not
@@ -353,10 +358,9 @@ are projected out; new app files, lockfiles, configs and unrelated provider file
 observable. Never revisit detection or the interview while a receipt is pending; continue with
 Step 5 from the retained structural input.
 
-**NO markdown hub:** never create `.apex/_INDEX.md`, `.apex/conventions.md`,
-`.apex/glossary.md`, `.apex/testing-and-checklist.md`, or `.apex/standards/` — the graph is
-the hub. Do not create `.apex/specs/`, `.apex/plans/`, or any specs/plans sub-index files;
-those paths belonged to an older hub model.
+**No hub documents:** init never creates hub documents; `.apex/` holds only `work/`,
+`inception/` and the init provenance receipts — the graph is the hub. Do not create
+`.apex/specs/`, `.apex/plans/`, or any specs/plans sub-index files.
 
 ### Step 5 — Build the initialization promotion scenario (nothing applied)
 
@@ -469,8 +473,9 @@ Step 1's decision table routes here; nothing in this step scaffolds or mutates t
   provisioned project): `graph status` and `graph validate` report only — no re-scaffold, no
   new scenario, no interview re-run. Report the head revision and the confirmed mappings, then
   stop.
-- **Existing legacy markdown hub** (`.apex/_INDEX.md` present): do not repair or migrate it
-  here — point the user to the `graph-migrate` skill and stop.
+- **`hub-mode` reports `migrate`**: do not repair or migrate it here. Stop and tell the user to
+  run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other
+  workflow.
 - **Init provenance receipts:** an existing final `.apex/init-provenance.json` is retained
   unchanged; ordinary repair is not certified by it and never prepares a replacement receipt or
   re-runs source verification as a prerequisite. A pending receipt routes to **Pending
