@@ -159,7 +159,12 @@ function verifyModeArtifacts(root, model) {
   );
   if (!bootstrap.includes('steepy-formula hub-mode')) problems.push('bootstrap-graph-orientation');
   if (bootstrap.includes('_INDEX.md')) problems.push('bootstrap-references-markdown-hub');
-  const enumerated = [...bootstrap.matchAll(/`([a-z][a-z-]*)`/gu)]
+  // The allowlist is the one sentence that enumerates the canonical skills; the
+  // orientation step names `graph-migrate` and `init` on its own (the migrate and
+  // none stops), so only that sentence is enumerated. A missing sentence enumerates
+  // nothing and fails the check.
+  const allowlist = bootstrap.match(/one of the eleven canonical skills: ([^\r\n]*)/u)?.[1] ?? '';
+  const enumerated = [...allowlist.matchAll(/`([a-z][a-z-]*)`/gu)]
     .map((match) => match[1])
     .filter((name) => ELEVEN_SKILLS.includes(name));
   if (enumerated.length !== ELEVEN_SKILLS.length

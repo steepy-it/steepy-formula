@@ -1,25 +1,24 @@
 ---
 name: {{projectName}}-bootstrap
-description: Per-task entry point for {{projectName}} in graph mode. Declares the hub mode, resolves task context from the Stable Knowledge Graph, and names the owning surface and specialist agent.
+description: Per-task entry point for {{projectName}}. Declares the hub mode, resolves task context from the Stable Knowledge Graph, and names the owning surface and specialist agent.
 user-invocable: true
 ---
 
 # {{projectName}}-bootstrap
 
 Entry point for every AI task on this project. Run this first to orient before touching code.
-This is the graph-mode variant: the Stable Knowledge Graph is the canonical hub, so orientation
-comes from `steepy-formula hub-mode` and `steepy-formula context resolve`, not from a markdown index.
+Orientation comes from `steepy-formula hub-mode` and `steepy-formula context resolve`.
 
 ## Procedure
 
 ### Step 1 — Read the project map
 
 1. Read `CLAUDE.md` (repo root) in full — project overview, dev commands, constraints.
-2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line. This bootstrap
-   applies when it reports `graph`; any other mode means the graph is not operational — surface
-   that to the user instead of proceeding on stale assumptions. If the `steepy-formula` command is
-   not found, stop and tell the user to put the CLI on PATH (steepy-formula's installation guide,
-   "Requirements"); never guess another path to it.
+2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line.
+   If it reports `migrate`, stop and tell the user to run the `graph-migrate` skill;
+   if it reports `none`, stop and tell the user to run the `init` skill. If the `steepy-formula`
+   command is not found, stop and tell the user to put the CLI on PATH (steepy-formula's
+   installation guide, "Requirements"); never guess another path to it.
 3. Resolve the navigation map: run `steepy-formula context resolve --path <task-path>` for the
    path(s) the task will touch. Exit 0 emits `context.json` + `context.md` — that resolved
    context (surfaces, agents, rules, checks, terms) is the project map this procedure walks.
@@ -120,9 +119,8 @@ what it returned, no more:
 Do not load graph nodes the resolve did not return, and do not re-resolve speculatively. When
 the resolved context scopes a Surface that carries several Components, treat the Surface as the
 core and load only the Components whose paths match the task — zero matches means the Surface
-core only. Never walk the whole Surface as a fallback: the resolve already did the mini-routing
-scoping that a legacy hub does by reading a subfolder of `standards/` — beyond the layers there
-is nothing to read.
+core only. Never walk the whole Surface as a fallback: the resolve already did the sub-area
+scoping — beyond the layers there is nothing to read.
 
 ### Step 4 — Name the owning surface and specialist agent
 

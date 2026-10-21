@@ -1,6 +1,6 @@
 ---
 name: {{projectName}}-bootstrap
-description: Project entry point for {{projectName}}. Loads the root instructions and routes work through the governed hub.
+description: Project entry point for {{projectName}}. Loads the root instructions and routes work through the Stable Knowledge Graph.
 user-invocable: true
 ---
 <!-- steepy:generated:{{projectName}}-bootstrap:v1 -->
@@ -15,7 +15,7 @@ Use this skill before working on the project.
 {{orientation}}
 4. State the owning surface and specialist agent before changing files.
 5. When a steepy-formula workflow is needed, invoke it by its semantic skill name — one of the eleven canonical skills: `inception`, `init`, `check`, `new-surface`, `discovery`, `brainstorm`, `plan`, `implement`, `review`, `loop-engineer`, `graph-migrate`.
-6. Run the owning surface's test command and the hub coherence gate before reporting completion.
+6. Run the owning surface's test command and `steepy-formula graph validate` before reporting completion.
 
 ## Work-artifact boundary
 

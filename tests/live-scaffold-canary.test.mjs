@@ -97,7 +97,8 @@ if (expectMode !== null) {
   if (!bootstrapOk) problems.push('bootstrap');
   const adapterOk = inputs[2].includes('context resolve --target apex:live-canary:surface:canary') && !inputs[2].includes('.apex/standards/');
   if (!adapterOk) problems.push('adapter');
-  const enumerated = [...inputs[1].matchAll(/\`([a-z][a-z-]*)\`/gu)].map((match) => match[1]).filter((name) => ELEVEN_SKILLS.includes(name));
+  const allowlist = inputs[1].match(/one of the eleven canonical skills: ([^\\r\\n]*)/u)?.[1] ?? '';
+  const enumerated = [...allowlist.matchAll(/\`([a-z][a-z-]*)\`/gu)].map((match) => match[1]).filter((name) => ELEVEN_SKILLS.includes(name));
   if (JSON.stringify(enumerated) !== JSON.stringify(ELEVEN_SKILLS)) problems.push('allowlist');
   if (problems.length > 0) {
     process.stderr.write('mode-artifact-mismatch: ' + problems.join(',') + '\\n');

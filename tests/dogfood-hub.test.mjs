@@ -483,6 +483,11 @@ test('the portable scaffold self-apply: AGENTS.md spine, CLAUDE.md import channe
   assert.match(agents, /## Confirmed surfaces/);
   assert.match(agents, /## Project navigation/);
   assert.match(agents, /steepy-formula hub-mode` and quote the `mode:` line/, 'the spine navigation is graph-mode');
+  assert.match(
+    agents,
+    /quote the `mode:` line\. If it reports `migrate`, stop and tell the user to run the `graph-migrate` skill; if it reports `none`, stop and tell the user to run the `init` skill\. Otherwise, resolve the task context/,
+    'the spine navigation stops on migrate and none right after the hub-mode declaration',
+  );
   assert.match(agents, /steepy-formula context resolve --path <task-path>/);
   assert.doesNotMatch(agents, /_INDEX\.md/, 'the spine never routes through the legacy hub index');
   for (const s of ['adapters', 'scripts', 'skills', 'templates', 'tests']) {
@@ -531,8 +536,17 @@ test('the canonical per-mode bootstrap orients through the graph resolver', () =
   assert.match(skill, /^name: steepy-formula-bootstrap$/m);
   assert.match(skill, /steepy:generated:steepy-formula-bootstrap:v1/);
   assert.match(skill, /Read `AGENTS\.md` in full for the project overview/);
+  assert.match(
+    skill,
+    /^description: Project entry point for steepy-formula\. Loads the root instructions and routes work through the Stable Knowledge Graph\.$/m,
+  );
   assert.match(skill, /steepy-formula hub-mode` and quote the `mode:` line/, 'graph orientation declares the hub mode');
-  assert.match(skill, /this bootstrap applies when it reports `graph`/);
+  assert.match(
+    skill,
+    /quote the `mode:` line\. If it reports `migrate`, stop and tell the user to run the `graph-migrate` skill; if it reports `none`, stop and tell the user to run the `init` skill\.$/m,
+    'graph orientation stops on migrate and none',
+  );
+  assert.doesNotMatch(skill, /this bootstrap applies when it reports/);
   assert.match(skill, /steepy-formula context resolve --path <task-path>/, 'graph orientation resolves task context');
   assert.match(skill, /State the owning surface and specialist agent before changing files\./);
   assert.match(
@@ -540,7 +554,7 @@ test('the canonical per-mode bootstrap orients through the graph resolver', () =
     /one of the eleven canonical skills: `inception`, `init`, `check`, `new-surface`, `discovery`, `brainstorm`, `plan`, `implement`, `review`, `loop-engineer`, `graph-migrate`/,
     'the workflow invocation list names all eleven skills',
   );
-  assert.match(skill, /Run the owning surface's test command and the hub coherence gate before reporting completion\./);
+  assert.match(skill, /Run the owning surface's test command and `steepy-formula graph validate` before reporting completion\./);
   assert.doesNotMatch(skill, /_INDEX\.md/, 'the graph-mode bootstrap never routes through the legacy hub index');
   assert.doesNotMatch(skill, /steepy-apex/, 'identity hygiene: the regenerated bootstrap carries the fork identity only');
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { normalizeProjectModel, renderProjectArtifact } from '../scripts/project-scaffold.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const skillsDir = join(here, '..', 'skills');
@@ -775,16 +776,39 @@ test('bootstrap template includes the coverage-verdict and gear-selection steps'
   }
 });
 
-test('bootstrap template Step 3 describes core+leaf load semantics for modular surface standards', () => {
+test('bootstrap template Step 3 loads the Surface core plus only the Components matching the task', () => {
   for (const file of bootstrapTemplates) {
     const tpl = readFileSync(join(here, '..', 'templates', file), 'utf8');
-    assert.match(tpl, /mini-routing/, `${file}: Step 3 must have the task match against the core's mini-routing table`);
     assert.match(tpl, /zero match|core only/i, `${file}: Step 3 must state that zero matches falls back to the core only`);
     assert.match(
-      tpl,
-      /subfolder of `?standards\/`?/i,
-      `${file}: Step 3 must give the recognition cue: a Min-docs link pointing inside a standards/ subfolder`
+      tpl.replace(/\s+/g, ' '),
+      /the resolve already did the sub-area scoping/,
+      `${file}: Step 3 must credit the resolve with the sub-area scoping`
     );
+  }
+});
+
+// Both bootstraps (the planner-rendered router and graph-migrate's graph template)
+// carry the migrate and none stops, so the migration hint reaches users at the start
+// of a task.
+test('both bootstraps stop on migrate and none with the graph-migrate and init skills', () => {
+  const router = renderProjectArtifact('project-bootstrap', normalizeProjectModel({
+    projectName: 'demo-project',
+    description: 'A portable demo project.',
+    devCommands: ['npm test'],
+    surfaces: [{ name: 'web', path: 'apps/web', agent: 'web-agent', testCmd: 'npm test' }],
+    resolutions: {},
+    hubMode: 'graph',
+  }));
+  const graphTemplate = readFileSync(join(here, '..', 'templates', 'bootstrap-skill-graph.md'), 'utf8');
+  for (const [label, text] of [['project-bootstrap', router], ['bootstrap-skill-graph.md', graphTemplate]]) {
+    const flat = text.replace(/\s+/g, ' ');
+    assert.ok(flat.includes('run the `graph-migrate` skill'), `${label}: the migrate stop names the graph-migrate skill`);
+    assert.ok(flat.includes('run the `init` skill'), `${label}: the none stop names the init skill`);
+    assert.match(flat, /If it reports `migrate`, stop and tell the user to run the `graph-migrate` skill;/,
+      `${label}: migrate stops the task`);
+    assert.match(flat, /if it reports `none`, stop and tell the user to run the `init` skill\./,
+      `${label}: none stops the task`);
   }
 });
 
@@ -798,7 +822,7 @@ test('canonical bootstrap routes root and orientation context to ownership and s
   assert.match(tpl, /\{\{orientation\}\}/, 'the mode-aware orientation placeholder carries the per-mode navigation');
   assert.match(tpl, /owning surface and specialist agent/, 'router should name ownership before changes');
   assert.match(tpl, /semantic skill name/i, 'router should invoke workflow skills by their semantic names');
-  assert.match(tpl, /test command and the hub coherence gate/, 'router should run validation before completion');
+  assert.match(tpl, /test command and `steepy-formula graph validate`/, 'router should run validation before completion');
   assertNoBareWorkflowInvocations(tpl, 'templates/project-bootstrap-skill.md');
 });
 

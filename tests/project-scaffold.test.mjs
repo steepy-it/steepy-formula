@@ -53,15 +53,18 @@ const ELEVEN_SKILLS = [
 // The graph vocabulary pinned by tests/template.test.mjs: the renderer supplies
 // {{navigation}}, {{orientation}}, and {{standardOrientation}} with the graph
 // rendering (a scaffold renders graph-mode artifacts only). These are the
-// portable-demo instantiations.
+// portable-demo instantiations. Both carry the migrate and none stops right after
+// the hub-mode declaration, so the migration hint reaches users at the start of a task.
 const GRAPH_NAVIGATION =
   'For every task, use the `portable-demo-bootstrap` skill first. If that skill is unavailable, ' +
-  'run `steepy-formula hub-mode` and quote the `mode:` line, then resolve the task context with ' +
+  'run `steepy-formula hub-mode` and quote the `mode:` line. If it reports `migrate`, stop and tell ' +
+  'the user to run the `graph-migrate` skill; if it reports `none`, stop and tell the user to run ' +
+  'the `init` skill. Otherwise, resolve the task context with ' +
   '`steepy-formula context resolve --path <task-path>` (fallback ' +
   '`--target apex:<projectId>:surface:<slug>`) and load exactly what it returns.';
 
 const GRAPH_ORIENTATION = [
-  '2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line — this bootstrap applies when it reports `graph`.',
+  '2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line. If it reports `migrate`, stop and tell the user to run the `graph-migrate` skill; if it reports `none`, stop and tell the user to run the `init` skill.',
   '3. Resolve the task context: run `steepy-formula context resolve --path <task-path>` for the paths the task will touch (fallback `--target apex:<projectId>:surface:<slug>`) and load exactly the layers the resolve returns (context.json + context.md).',
 ].join('\n');
 
@@ -1521,6 +1524,16 @@ test('graph-mode plan renders the graph spine, bootstrap orientation, and adapte
   assert.ok(bootstrap.content.includes(GRAPH_ORIENTATION), 'the bootstrap skill carries the graph orientation');
   assert.match(bootstrap.content, /steepy-formula hub-mode/);
   assert.doesNotMatch(bootstrap.content, /_INDEX\.md/);
+  assert.match(
+    bootstrap.content,
+    /^description: Project entry point for portable-demo\. Loads the root instructions and routes work through the Stable Knowledge Graph\.$/m,
+    'the bootstrap description routes through the graph',
+  );
+  assert.match(
+    bootstrap.content,
+    /^6\. Run the owning surface's test command and `steepy-formula graph validate` before reporting completion\.$/m,
+    'the bootstrap names the graph coherence gate',
+  );
 
   for (const artifactId of ['web-agent-claude', 'web-agent-codex', 'web-agent-opencode']) {
     const operation = plan.operations.find((candidate) => candidate.artifactId === artifactId);
@@ -1539,11 +1552,14 @@ test('graph-mode plan renders the graph spine, bootstrap orientation, and adapte
 
 test('the generated bootstrap skill enumerates exactly the eleven canonical skills', () => {
   const rendered = renderProjectArtifact('project-bootstrap', normalizeProjectModel(model()));
-  const enumerated = [...rendered.matchAll(/`([a-z][a-z-]*)`/g)]
+  // The orientation step names `graph-migrate` and `init` on its own (the migrate and
+  // none stops), so only the allowlist sentence is enumerated.
+  const allowlist = rendered.match(/one of the eleven canonical skills: ([^\n]*)/)?.[1] ?? '';
+  const enumerated = [...allowlist.matchAll(/`([a-z][a-z-]*)`/g)]
     .map((match) => match[1])
     .filter((name) => ELEVEN_SKILLS.includes(name));
   assert.deepEqual(
-    [...new Set(enumerated)],
+    enumerated,
     ELEVEN_SKILLS,
     'the bootstrap skill must enumerate exactly the eleven canonical skills in order',
   );
@@ -1563,6 +1579,14 @@ test('parseProjectInstructions recognizes only the graph spine navigation', () =
     + 'If that skill is unavailable, read `.apex/_INDEX.md` before making changes.';
   assert.ok(agents.includes(GRAPH_NAVIGATION));
   assert.equal(parseProjectInstructions(agents.replace(GRAPH_NAVIGATION, markdownHubNavigation)), null);
+
+  // The v1.0.0 graph navigation (no migrate/none stops) is an earlier rendering: it no
+  // longer parses either, so a repair classifies it `customized` (P11).
+  const priorGraphNavigation = 'For every task, use the `portable-demo-bootstrap` skill first. '
+    + 'If that skill is unavailable, run `steepy-formula hub-mode` and quote the `mode:` line, '
+    + 'then resolve the task context with `steepy-formula context resolve --path <task-path>` '
+    + '(fallback `--target apex:<projectId>:surface:<slug>`) and load exactly what it returns.';
+  assert.equal(parseProjectInstructions(agents.replace(GRAPH_NAVIGATION, priorGraphNavigation)), null);
 });
 
 test('graph-mode apply writes the complete artifact set and stays idempotent with preserved timestamps', () => {

@@ -55,15 +55,21 @@ const PROJECT_MARKERS = {
 
 // The orientation block of the generated bootstrap skill (Task 13's template
 // vocabulary — the one canonical graph rendering per placeholder is pinned by
-// tests/template.test.mjs).
+// tests/template.test.mjs). The hub-mode declaration carries the migrate and none
+// stops, so the migration hint reaches users at the start of a task; the AGENTS.md
+// navigation repeats them for harnesses without the bootstrap skill.
+const MODE_STOPS = 'If it reports `migrate`, stop and tell the user to run the `graph-migrate` skill; '
+  + 'if it reports `none`, stop and tell the user to run the `init` skill.';
+
 const GRAPH_ORIENTATION = [
-  '2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line — this bootstrap applies when it reports `graph`.',
+  `2. Declare the hub mode: run \`steepy-formula hub-mode\` and quote the \`mode:\` line. ${MODE_STOPS}`,
   '3. Resolve the task context: run `steepy-formula context resolve --path <task-path>` for the paths the task will touch (fallback `--target apex:<projectId>:surface:<slug>`) and load exactly the layers the resolve returns (context.json + context.md).',
 ].join('\n');
 
 function navigationText(projectName) {
   return `For every task, use the \`${projectName}-bootstrap\` skill first. If that skill is unavailable, `
-    + 'run `steepy-formula hub-mode` and quote the `mode:` line, then resolve the task context with '
+    + `run \`steepy-formula hub-mode\` and quote the \`mode:\` line. ${MODE_STOPS} `
+    + 'Otherwise, resolve the task context with '
     + '`steepy-formula context resolve --path <task-path>` (fallback '
     + '`--target apex:<projectId>:surface:<slug>`) and load exactly what it returns.';
 }

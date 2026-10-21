@@ -47,16 +47,23 @@ const renderVars = {
 // artifacts only, so each of these placeholders is supplied by the renderer with the
 // one canonical graph rendering pinned below. Graph renderings navigate via
 // `steepy-formula hub-mode` + `steepy-formula context resolve` and never mention
-// `.apex/_INDEX.md`.
+// `.apex/_INDEX.md`. The navigation and the orientation carry the migrate and none
+// stops right after the hub-mode declaration.
+
+const MODE_STOPS =
+  'If it reports `migrate`, stop and tell the user to run the `graph-migrate` skill; ' +
+  'if it reports `none`, stop and tell the user to run the `init` skill.';
 
 const graphNavigation =
   'For every task, use the `demo-project-bootstrap` skill first. If that skill is unavailable, ' +
-  'run `steepy-formula hub-mode` and quote the `mode:` line, then resolve the task context with ' +
+  'run `steepy-formula hub-mode` and quote the `mode:` line. If it reports `migrate`, stop and tell ' +
+  'the user to run the `graph-migrate` skill; if it reports `none`, stop and tell the user to run ' +
+  'the `init` skill. Otherwise, resolve the task context with ' +
   '`steepy-formula context resolve --path <task-path>` (fallback ' +
   '`--target apex:<projectId>:surface:<slug>`) and load exactly what it returns.';
 
 const graphOrientation = [
-  '2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line — this bootstrap applies when it reports `graph`.',
+  '2. Declare the hub mode: run `steepy-formula hub-mode` and quote the `mode:` line. If it reports `migrate`, stop and tell the user to run the `graph-migrate` skill; if it reports `none`, stop and tell the user to run the `init` skill.',
   '3. Resolve the task context: run `steepy-formula context resolve --path <task-path>` for the paths the task will touch (fallback `--target apex:<projectId>:surface:<slug>`) and load exactly the layers the resolve returns (context.json + context.md).',
 ].join('\n');
 
@@ -126,6 +133,10 @@ test('v1 root instruction templates contain only their managed blocks, with grap
   assert.match(agents, /steepy-formula hub-mode/, 'graph navigation must declare the hub mode');
   assert.match(agents, /steepy-formula context resolve/, 'graph navigation must resolve from the graph');
   assert.doesNotMatch(agents, /_INDEX\.md/, 'graph navigation must never reference the markdown hub');
+  assert.ok(
+    agents.includes(`quote the \`mode:\` line. ${MODE_STOPS} Otherwise, resolve the task context`),
+    'graph navigation must stop on migrate and none right after the hub-mode declaration',
+  );
 
   assert.equal(
     template('claude-import.md'),
@@ -152,6 +163,19 @@ test('v1 generated templates render complete provenance and native thin graph ad
   assert.match(skill, /steepy-formula hub-mode/);
   assert.match(skill, /steepy-formula context resolve/);
   assert.doesNotMatch(skill, /_INDEX\.md/, 'graph bootstrap skill must not read the markdown hub');
+  assert.ok(
+    skill.includes(`quote the \`mode:\` line. ${MODE_STOPS}\n`),
+    'graph bootstrap skill must stop on migrate and none right after the hub-mode declaration',
+  );
+  assert.match(
+    skill,
+    /^description: Project entry point for demo-project\. Loads the root instructions and routes work through the Stable Knowledge Graph\.$/m,
+  );
+  assert.match(
+    skill,
+    /^6\. Run the owning surface's test command and `steepy-formula graph validate` before reporting completion\.$/m,
+  );
+  assert.doesNotMatch(skill, /governed hub|hub coherence gate|\blegacy\b/i);
   assert.match(
     skill,
     /Do not ordinarily enumerate, search, or read under `\.apex\/work\/\*\*`/,
@@ -276,11 +300,14 @@ test('graph-mode Codex adapter resolves its standard from the graph and remains 
 
 test('the generated bootstrap skill allowlists exactly the eleven canonical skills including graph-migrate and inception', () => {
   const rendered = renderTemplate(template('project-bootstrap-skill.md'), graphVars);
-  const enumerated = [...rendered.matchAll(/`([a-z][a-z-]*)`/g)]
+  // The orientation step names `graph-migrate` and `init` on its own (the migrate and
+  // none stops), so only the allowlist sentence is enumerated.
+  const allowlist = rendered.match(/one of the eleven canonical skills: ([^\n]*)/)?.[1] ?? '';
+  const enumerated = [...allowlist.matchAll(/`([a-z][a-z-]*)`/g)]
     .map((match) => match[1])
     .filter((name) => ELEVEN_SKILLS.includes(name));
   assert.deepEqual(
-    [...new Set(enumerated)],
+    enumerated,
     ELEVEN_SKILLS,
     'the bootstrap skill must enumerate exactly the eleven canonical skills in order',
   );
@@ -308,6 +335,26 @@ test('the graph channel stays wired: graph variants carry the graph orientation;
   assert.match(graphBootstrap, /steepy-formula hub-mode/);
   assert.match(graphBootstrap, /steepy-formula context resolve/);
   assert.doesNotMatch(graphBootstrap, /_INDEX\.md/, 'the graph bootstrap channel must not reference the markdown hub');
+  const flatGraphBootstrap = graphBootstrap.replace(/\s+/g, ' ');
+  assert.ok(
+    flatGraphBootstrap.includes(`quote the \`mode:\` line. ${MODE_STOPS} If the \`steepy-formula\` command is not found`),
+    'the graph bootstrap channel stops on migrate and none, then keeps the CLI-not-found stop',
+  );
+  assert.match(
+    graphBootstrap,
+    /^description: Per-task entry point for \{\{projectName\}\}\. Declares the hub mode, /m,
+    'the graph bootstrap description is mode-neutral',
+  );
+  assert.match(
+    graphBootstrap,
+    /^Orientation comes from `steepy-formula hub-mode` and `steepy-formula context resolve`\.$/m,
+  );
+  assert.match(flatGraphBootstrap, /the resolve already did the sub-area scoping — beyond the layers there is nothing to read\./);
+  assert.doesNotMatch(
+    graphBootstrap,
+    /\blegacy\b|markdown index|this bootstrap applies when it reports|in graph mode/i,
+    'the graph bootstrap channel carries no mode-variant or retired-hub wording',
+  );
   const graphAgent = template('surface-agent-graph.md');
   assert.match(graphAgent, /steepy-formula context resolve --target/);
   assert.doesNotMatch(graphAgent, /\.apex\/standards\//, 'the graph agent channel must not point at the legacy standards tree');
