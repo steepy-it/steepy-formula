@@ -610,12 +610,8 @@ test('chain skill sources lock the context protocol and canonical review handoff
   assert.doesNotMatch(autopilotProtocol, /mini-routing|zero matches/i, 'autopilot protocol carries no modular routing');
   assert.match(autopilotProtocol, /conductor-resolved `context\.md`/);
   assert.match(autopilotProtocol, /Repeat `--criterion` and every role's `--standard` once per value/);
-  // plan is graph-only (no modular leaves); review keeps the leaf-matching locks until its own task.
-  for (const [phase, skillText] of [['review', reviewSkill]]) {
-    assert.match(skillText, /[Zz]ero matches\s+(?:means|meaning) core only/i, `${phase} must lock zero-match core-only semantics`);
-    assert.match(skillText, /[Nn]ever read\s+all leaves[^.]*fallback/i, `${phase} must prohibit a read-all fallback`);
-  }
-  assert.doesNotMatch(planSkill, /[Zz]ero matches|[Nn]ever read\s+all leaves/, 'plan carries no modular-leaf matching');
+  // plan and review are graph-only (no modular leaves).
+  assert.doesNotMatch(`${planSkill}\n${reviewSkill}`, /[Zz]ero matches|[Nn]ever read\s+all leaves/, 'plan and review carry no modular-leaf matching');
   const planValidation = planSkill.match(/### Step 5 — Validate[\s\S]*?(?=### Step 6)/)?.[0];
   assert.ok(planValidation, 'plan must keep a local deterministic validation contract');
   assert.match(planValidation, /--verify-plan/);

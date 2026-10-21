@@ -635,17 +635,17 @@ test('implement: multi-task parent state contains envelopes only while durable a
 });
 
 test('review: valid user-invocable skill, verifies bounded work artifacts and stable docs', () => {
-  checkSkill('review', ['task-results', 'branch-diff', 'validate-hub.mjs', 'testing-and-checklist.md']);
+  checkSkill('review', ['task-results', 'branch-diff', 'steepy-formula graph validate']);
 });
 
 test('review: verifies bounded local work artifacts and promotion of durable knowledge', () => {
   const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   assert.match(text, /manual[^]*criteria[^]*task-result[^]*diff/i);
   assert.match(text, /Eagerly read exactly the accepted `criteria`, `task-results`, and\n`branch-diff` artifacts/);
-  assert.match(text, /stable routing inputs for the mode declared at Step 0[^]*`\.apex\/_INDEX\.md`[^]*`\.apex\/testing-and-checklist\.md`/);
+  assert.doesNotMatch(text, /_INDEX\.md|testing-and-checklist\.md/, 'review orients from the graph alone');
   assert.match(text, /If the work changed a durable convention, standard, domain term, architecture decision, user-facing workflow, or README behavior, verify that the durable knowledge was promoted into stable versioned docs/);
   assert.match(text, /Specs and plans themselves are not sufficient evidence of durable documentation\./);
-  assert.match(text, /If it reports violations in stable docs \(orphan stable doc, broken stable link, routing mismatch, or a stable link into `\.apex\/work\/\*\*`\), the change is incomplete\./);
+  assert.match(text, /any invariant violation or broken replay is incomplete work/);
 });
 
 test('review: Step 2 sweeps only bounded criteria and compact index insights', () => {
@@ -1114,26 +1114,13 @@ test('review: autopilot manifest and manual capability inventories are authorita
     'review must exclude per-task transcripts and conversations');
   assert.match(step1, /Manual drive/i, 'Step 1 must explicitly define manual review loading');
   assert.match(step1, /Eagerly read exactly[^]*criteria[^]*task-results[^]*branch-diff/i);
-  assert.match(step1, /each required modular core[^.]*mini-routing table/i,
-    'manifest-backed review must inspect every required modular core mini-routing table');
-  assert.match(step1, /required\s+criteria[^.]*task(?:\/result|-result) index[^.]*branch diff/i,
-    'review modular matching must use only declared criteria/index/diff evidence');
-  assert.match(step1, /read every matching\s+leaf[^.]*`onDemand`/i,
-    'review must read every matching declared onDemand leaf');
-  assert.match(step1, /record[^.]*concrete reason[^.]*matching leaf/i,
-    'review must record a concrete reason for every matching leaf read');
-  assert.match(step1, /zero\s+(?:leaves\s+)?match(?:es)?[^.]*core only/i,
-    'review must retain core-only loading for zero matches');
-  assert.match(step1, /never read\s+all leaves[^.]*fallback/i,
-    'review must prohibit a read-all modular fallback');
-  const reviewModularRule = step1.match(/For each required modular core[^]*?(?=\n\n|\n\*\*Gear 4)/)?.[0] ?? '';
-  assert.match(reviewModularRule, /never consult[^.]*spec[^.]*plan[^.]*ledger/i,
-    'manifest-backed review modular matching must explicitly prohibit spec, plan, and ledger');
+  assert.doesNotMatch(step1, /modular core|mini-routing|matching\s+leaf|zero\s+(?:leaves\s+)?match/i,
+    'review carries no modular-leaf matching');
 
   const checklist = sectionBetween(text, '## Checklist', '## Procedure');
   const regularChecklist = checklist.replace(/\(gear 4:[^)]*\)/giu, '');
   assert.match(checklist,
-    /manual[^\n]*criteria[^\n]*task-result index[^\n]*branch diff[^\n]*stable routed inputs/i,
+    /manual[^\n]*criteria[^\n]*task-result index[^\n]*branch diff[^\n]*graph orientation/i,
     'regular manual review must name its exact bounded inventory');
   assert.match(checklist, /gear 4[^\n]*goal contract[^\n]*loop ledger/i,
     'the mutually exclusive Gear-4 inventory must remain explicit');
@@ -1180,7 +1167,8 @@ test('review: self-verifies evidence — no evidence-reviewer subagent and no co
   const text = readFileSync(join(dir, 'SKILL.md'), 'utf8');
   assert.doesNotMatch(text, /evidence-reviewer-prompt\.md/, 'review must not dispatch an evidence-reviewer subagent');
   assert.doesNotMatch(text, /evidence-prompt\.md/, 'review must not dispatch an evidence-collector subagent');
-  assert.ok(text.includes('validate-hub.mjs'), 'review SKILL must keep the validate-hub gate');
+  assert.ok(text.includes('steepy-formula graph validate'), 'review SKILL must keep the graph validate gate');
+  assert.doesNotMatch(text, /validate-hub/, 'review SKILL carries no validate-hub gate');
   assert.match(text, /self-verif/i, 'review must state it self-verifies the criteria');
   assert.match(text, /real command output/i, 'review must verify criteria from real command output');
   assert.match(text, /dispatches \*\*no\s+subagent reviewer or evidence collector\*\*/i,
@@ -1203,20 +1191,16 @@ test('review: deterministic capture keeps verbatim evidence on disk behind a bou
   assert.equal(existsSync(join(skillsDir, 'review', 'evidence-prompt.md')), false);
 });
 
-test('review: the capture gate wiring branches on the declared hub mode', () => {
+test('review: the capture gate wiring is the built-in graph validate gate — one form, no override, no skip', () => {
   const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
-  const wiring = sectionBetween(step2, 'Wire the coherence gate to the mode declared at Step 0', 'For Gear 4 append');
-  assert.match(wiring, /\*\*`legacy` mode:\*\* no extra flag[^]*labeled `validate-hub`/i,
-    'legacy mode must ride the built-in validate-hub final command');
-  assert.match(wiring, /\*\*`graph` mode:\*\* append `--gate-command '<resolved graph gate command>'`/i,
-    'graph mode must pass the resolved graph gate through --gate-command');
-  assert.match(wiring, /labeled\s+`coherence-gate`/i,
-    'the gate-command receipt slot must be labeled coherence-gate');
-  assert.match(wiring, /\*\*Mode `none`:\*\* append `--no-gate`/i,
-    'mode none must skip the gate command entirely');
-  assert.match(step2, /the gate label\s+the declared mode picked — `validate-hub` in legacy mode, `coherence-gate` in graph mode; mode\s+`none` has no gate entry/i,
-    'the receipt label validation must branch on the declared mode');
+  const wiring = sectionBetween(step2, 'The coherence gate is the capture', 'For Gear 4 append');
+  assert.match(wiring, /built-in gate[^.]*`steepy-formula graph validate`/i,
+    'the capture script\'s built-in gate is graph validate');
+  assert.match(wiring, /labeled\s+`coherence-gate`/i, 'the gate receipt slot is labeled coherence-gate');
+  assert.doesNotMatch(text, /--gate-command|--no-gate/, 'review passes neither --gate-command nor --no-gate');
+  assert.match(step2, /then `coherence-gate`\)/i, 'the receipt label validation ends with coherence-gate');
+  assert.doesNotMatch(text, /validate-hub|`legacy`|\blegacy\b/i, 'review carries no validate-hub or legacy wording');
 });
 
 test('implement: ships an implementer prompt that dispatches the surface agent under TDD', () => {
@@ -1967,7 +1951,7 @@ test('review: Steps 1-2 wire Gear 4 through exact goal + ledger capabilities and
     'review must consume exact controller facts from a bounded receipt');
   assert.doesNotMatch(step1, /canonical SHA-256 syntax is required/i,
     'syntax-only digest checks are not evidence');
-  assert.match(step2, /surface test[^]*goal verifier[^]*validate-hub/i,
+  assert.match(step2, /surface test[^]*goal verifier[^]*coherence-gate/i,
     'Gear-4 evidence capture must retain the bounded surface-test → verifier → hub-gate order');
 });
 
@@ -2281,27 +2265,27 @@ test('review: inline evidence capture and in-session judgement are locked across
 // Promotion-in-chain pins (Tasks 4-5 prose, task 6): the hub-mode declaration and the Promotion
 // Scenario contracts. SC1/SC2/SC7 (review), SC3/SC5/SC8 (brainstorm), SC4 (both skills).
 
-test('review: Step 2 graph mode assembles the Promotion Scenario — typed candidates file, promotion create + preview, typed diff in the report', () => {
+test('review: Step 2 assembles the Promotion Scenario — typed candidates file, promotion create + preview, typed diff in the report', () => {
   const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
-  assert.match(step2, /\*\*Graph mode — the sweep assembles the Promotion Scenario\.\*\*/,
-    'Step 2 must carry the graph-mode scenario-assembly branch');
+  assert.match(step2, /\*\*The sweep assembles the Promotion Scenario\.\*\*/,
+    'Step 2 must carry the scenario-assembly branch');
   assert.ok(step2.includes('.apex/work/tasks/<plan-basename>/promotion-candidates.json'),
     'the sweep must write the typed candidates file at the canonical plan-directory path');
   assert.ok(step2.includes('steepy-formula promotion create --project <id> --candidates <file.json> [--proposer <name>] <scenario-id>'),
-    'graph-mode assembly must create the scenario via promotion create');
+    'assembly must create the scenario via promotion create');
   assert.ok(step2.includes('steepy-formula promotion preview <scenario-id>'),
-    'graph-mode assembly must preview via the binding-resolved promotion preview — no --project flag, matching the other skills');
+    'assembly must preview via the binding-resolved promotion preview — no --project flag, matching the other skills');
   assert.doesNotMatch(step2, /promotion preview --project/,
     'the preview must resolve the project from the persisted binding, never a --project flag');
   assert.match(step2, /Quote the preview's typed diff verbatim into the\s+Step 4 report/,
     'the preview typed diff must be quoted verbatim into the Step 4 report');
   assert.match(step2, /apply nothing here: Step 5 owns the apply/,
     'Step 2 must apply nothing — Step 5 owns the apply');
-  assert.match(step2, /In graph mode the promotion channel is the Promotion Scenario/,
-    'the durable-knowledge check must name the scenario as the graph-mode promotion channel');
-  assert.match(step2, /That triage is the\s+whole promotion story in legacy mode \(and in mode `none`\): the Markdown-hub\s+sweep → propose flow,\s+unchanged/,
-    'the legacy Markdown-hub sweep → propose triage story must stay unchanged');
+  assert.match(step2, /Durable knowledge rides the Promotion Scenario/,
+    'the durable-knowledge check must name the scenario as the promotion channel');
+  assert.match(step2, /\(term, rule, decision, readme\)/,
+    'the sweep triage lists the graph kinds');
   const step4 = sectionBetween(text, '### Step 4', '### Step 5');
   assert.match(step4, /quotes the Step 2 `promotion preview` typed diff verbatim/,
     'the Step 4 report must quote the Step 2 promotion preview typed diff verbatim');
@@ -2312,8 +2296,8 @@ test('review: Step 2 graph mode assembles the Promotion Scenario — typed candi
 test('review: autopilot review creates NO scenario — typed candidates listed for the Step 5 human', () => {
   const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
-  assert.match(step2, /In graph mode, autopilot review creates NO scenario/,
-    'graph-mode autopilot review must create no Promotion Scenario');
+  assert.match(step2, /Autopilot review creates NO scenario/,
+    'autopilot review must create no Promotion Scenario');
   assert.match(step2, /PROMOTION_STALE/,
     'the no-scenario ruling must be justified by the PROMOTION_STALE draft state');
   assert.match(step2, /List the typed candidates — same schema, as report entries — and nothing more/,
@@ -2322,28 +2306,23 @@ test('review: autopilot review creates NO scenario — typed candidates listed f
     'create/preview/apply belongs to the interactive Step 5 session');
   assert.doesNotMatch(text, /gate[- ]8/i, 'the undefined gate-8 name must not return');
   const step4 = sectionBetween(text, '### Step 4', '### Step 5');
-  assert.match(step4, /In graph mode no scenario was created at Step 2/,
+  assert.match(step4, /No scenario was created at Step 2/,
     'the Step 4 autopilot report must reaffirm that no scenario was created');
 });
 
-test('review: Step 3 coherence gate branches on the declared mode — receipt-gated graph validate + sanity context resolve, or validate-hub', () => {
+test('review: Step 3 coherence gate is the receipt-gated graph validate + sanity context resolve', () => {
   const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   const step3 = sectionBetween(text, '### Step 3', '### Step 4');
   assert.match(step3, /The Step 2 capture runs the coherence gate as its final command/i,
     'the gate must ride the Step 2 capture receipt, not a separate collection');
-  assert.match(step3, /\*\*Graph mode:\*\* require the current receipt's final command to have `label: coherence-gate`/,
-    'graph mode must gate on the receipt coherence-gate command');
+  assert.match(step3, /require the current receipt's final command to have `label: coherence-gate`/,
+    'review must gate on the receipt coherence-gate command');
   assert.match(step3, /its bounded excerpt showing `violations: 0` and a clean revision-chain replay/,
     'the graph gate excerpt must bind violations: 0 and a clean chain');
   assert.match(step3, /plus one sanity\s+`steepy-formula context resolve` of a representative path or target/i,
-    'graph mode must add a sanity context resolve of a representative path or target');
-  assert.match(step3, /\*\*Legacy mode:\*\* require the current receipt's final command to have `label: validate-hub`/,
-    'legacy mode must gate on the receipt validate-hub command');
-  assert.match(step3, /its bounded excerpt must show `steepy validate-hub: OK`/,
-    'legacy mode must still bind the linter OK line through the receipt excerpt');
-  const step2 = sectionBetween(text, '### Step 2', '### Step 3');
-  assert.ok(step2.includes('node <engine-root>/scripts/validate-hub.mjs .'),
-    'legacy mode must keep the validate-hub.mjs invocation wired at Step 2');
+    'review must add a sanity context resolve of a representative path or target');
+  assert.doesNotMatch(step3, /\*\*(?:Legacy|Graph) mode:\*\*|validate-hub|Mode `none`/,
+    'Step 3 carries no mode branches');
 });
 
 test('review: Step 0 declares the hub mode via steepy-formula hub-mode — the prose never re-implements detection', () => {
@@ -2355,8 +2334,16 @@ test('review: Step 0 declares the hub mode via steepy-formula hub-mode — the p
     'the declaration must state the command always exits 0 — a declaration, not a gate');
   assert.match(step0, /this prose never\s+re-implements its detection — the command is the single authority/,
     'the prose must never re-implement the mode detection');
-  assert.match(step0, /`legacy` → the Markdown-hub flow\s+of this skill runs exactly as today \(sweep → propose → `validate-hub`\)/,
-    'the legacy branch of the mode declaration must keep the Markdown-hub flow exactly as today');
+  assert.match(step0, /`graph`, `migrate`, or `none`/, 'Step 0 declaration lists exactly graph, migrate, none');
+  const migrateBullet = step0.match(/- \*\*`migrate` mode:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)?.[0];
+  assert.ok(migrateBullet, 'Step 0 must carry the migrate stop bullet');
+  assert.match(migrateBullet,
+    /Stop and tell the user to run the `graph-migrate` skill \(invoke it the way your harness invokes skills\) before any other workflow\./,
+    'the migrate bullet carries the exact stop sentence');
+  const noneBullet = step0.match(/- \*\*Mode `none`:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)?.[0];
+  assert.ok(noneBullet, 'Step 0 must carry the mode none stop bullet');
+  assert.match(noneBullet, /`init` skill/, 'mode none names the init skill');
+  assert.doesNotMatch(step0, /`legacy`|\blegacy\b|validate-hub/i, 'Step 0 carries no legacy branch');
   const declaration = step0.match(/\*\*Hub-mode declaration \(once per run\)\.\*\*[\s\S]*?(?=\n\n)/)?.[0] ?? '';
   assert.ok(declaration, 'Step 0 must carry the hub-mode declaration paragraph');
   assert.doesNotMatch(declaration, /initialized:/,
@@ -2420,15 +2407,14 @@ test('brainstorm: Step 1.5 declares the hub mode via steepy-formula hub-mode —
 // .apex/_INDEX.md, no standards/, no testing-and-checklist.md to read, so the graph branch must
 // require none of them.
 test('workflow chain: Step 1 orientation is mode-aware — the graph branch requires no markdown-hub read', () => {
-  // graphOnly skills carry the migrate stop and no legacy bullet; the rest keep the old expectation
-  // until their own task (review) moves them.
+  // Every chain skill is graph-only: it carries the migrate stop and no legacy bullet.
   const step1Bounds = {
-    brainstorm: { bounds: ['### Step 1 — Orient against the hub', '### Step 1.5'], graphOnly: true },
-    plan: { bounds: ['### Step 1 — Load the spec and the hub', '### Step 2'], graphOnly: true },
-    implement: { bounds: ['### Step 1 — Load the accepted input and derive current-run artifacts', '### Step 2'], graphOnly: true },
-    review: { bounds: ['### Step 1 — Load bounded review inputs and the hub', '### Step 2'], graphOnly: false },
+    brainstorm: { bounds: ['### Step 1 — Orient against the hub', '### Step 1.5'] },
+    plan: { bounds: ['### Step 1 — Load the spec and the hub', '### Step 2'] },
+    implement: { bounds: ['### Step 1 — Load the accepted input and derive current-run artifacts', '### Step 2'] },
+    review: { bounds: ['### Step 1 — Load bounded review inputs and the hub', '### Step 2'] },
   };
-  for (const [s, { bounds: [start, end], graphOnly }] of Object.entries(step1Bounds)) {
+  for (const [s, { bounds: [start, end] }] of Object.entries(step1Bounds)) {
     const text = readFileSync(join(skillsDir, s, 'SKILL.md'), 'utf8');
     const step1 = sectionBetween(text, start, end);
     if (s === 'review') {
@@ -2450,32 +2436,21 @@ test('workflow chain: Step 1 orientation is mode-aware — the graph branch requ
     assert.doesNotMatch(graphBullet, /_INDEX\.md|testing-and-checklist|\.apex\/standards\//,
       `${s} graph orientation must require no _INDEX.md, standards/, or testing-and-checklist read`);
 
-    if (graphOnly) {
-      assert.match(step1, /`graph`, `migrate`, or `none`/, `${s} Step 1 mode list is exactly graph, migrate, none`);
-      const migrateBullet = step1.match(/- \*\*`migrate` mode:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)?.[0];
-      assert.ok(migrateBullet, `${s} Step 1 must carry the migrate stop bullet`);
-      assert.match(migrateBullet,
-        /Stop and tell the user to run the `graph-migrate` skill \(invoke it the way your harness invokes skills\) before any other workflow\./,
-        `${s} migrate bullet carries the exact stop sentence`);
-      assert.doesNotMatch(step1, /`legacy`|\blegacy\b/i, `${s} Step 1 carries no legacy branch`);
-      assert.doesNotMatch(text, /testing-and-checklist\.md/, `${s} never names testing-and-checklist.md`);
-      assert.doesNotMatch(step1, /_INDEX\.md/, `${s} Step 1 never names .apex/_INDEX.md`);
-    } else {
-      const legacyBullet = step1.match(/- \*\*`legacy` mode:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)?.[0];
-      assert.ok(legacyBullet, `${s} Step 1 must keep the legacy orientation branch`);
-      assert.match(legacyBullet, /_INDEX\.md/, `${s} legacy orientation must keep the routing-table read`);
-    }
+    assert.match(step1, /`graph`, `migrate`, or `none`/, `${s} Step 1 mode list is exactly graph, migrate, none`);
+    const migrateBullet = step1.match(/- \*\*`migrate` mode:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)?.[0];
+    assert.ok(migrateBullet, `${s} Step 1 must carry the migrate stop bullet`);
+    assert.match(migrateBullet,
+      /Stop and tell the user to run the `graph-migrate` skill \(invoke it the way your harness invokes skills\) before any other workflow\./,
+      `${s} migrate bullet carries the exact stop sentence`);
+    assert.doesNotMatch(step1, /`legacy`|\blegacy\b/i, `${s} Step 1 carries no legacy branch`);
+    assert.doesNotMatch(text, /testing-and-checklist\.md/, `${s} never names testing-and-checklist.md`);
+    assert.doesNotMatch(step1, /_INDEX\.md/, `${s} Step 1 never names .apex/_INDEX.md`);
 
     if (s !== 'brainstorm') {
       assert.match(graphBullet, /ext_v1_command/,
         `${s} graph orientation must source the surface test command from the Check's ext_v1_command`);
       assert.match(graphBullet, /verification Rule's statement/,
         `${s} graph test-command sourcing must fall back to the verification Rule's statement prose`);
-      if (!graphOnly) {
-        const legacyBullet = step1.match(/- \*\*`legacy` mode:\*\*[\s\S]*?(?=\n- \*\*|\n\n)/)[0];
-        assert.match(legacyBullet, /testing-and-checklist\.md/,
-          `${s} legacy orientation must keep the test-command source`);
-      }
     }
 
     assert.match(step1, /- \*\*Mode `none`:\*\*/, `${s} Step 1 must handle mode none explicitly`);
@@ -2768,7 +2743,7 @@ test('on-demand linter skills invoke validate-hub with an explicit `.` cwd argum
   // init uses a <repo-root> placeholder (it can run before cwd is the repo),
   // but every on-demand linter skill should pass an explicit `.` — consistent with
   // its siblings and not silently dependent on whatever process.cwd() happens to be.
-  const linterSkills = ['new-surface', 'review'];
+  const linterSkills = ['new-surface'];
   for (const name of linterSkills) {
     const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
     assert.match(
@@ -2786,7 +2761,8 @@ test('terminal review, not the loop controller, owns the mandatory hub coherence
   const reviewEvidence = sectionBetween(review, '### Step 2', '### Step 3');
   assert.doesNotMatch(controllerBoundary, /loop-engineer\.mjs[^]*validate-hub/u);
   assert.match(controllerBoundary, /terminal review owns[^]*validate-hub\.mjs/u);
-  assert.match(reviewEvidence, /capture-review-evidence\.mjs[^]*validate-hub\.mjs/u);
+  assert.match(reviewEvidence, /capture-review-evidence\.mjs[^]*steepy-formula graph validate/u);
+  assert.doesNotMatch(reviewEvidence, /validate-hub/u);
   // Formula adaptation (apex v1.2.0 port): apex also locks the sole-owner rule in
   // `.apex/standards/skills.md`; that archived hub's half rides the canonical graph promotion.
 });
@@ -3006,13 +2982,6 @@ test('receipt protocol selects semantic transport and records exact restart capa
   assert.match(protocol, /outputs[^]*not[^]*read permission/i);
 });
 
-// Formula adaptation (apex v1.2.0 port): `legacy` is also the name of a declared hub mode
-// (`steepy-formula hub-mode` → graph | legacy | none). Strip only that mode vocabulary before
-// apex's no-compatibility-path locks, so any legacy protocol, format, or reader path still fails.
-function withoutLegacyHubMode(text) {
-  return text.replace(/`legacy`(?: mode)?|\blegacy(?= mode\b|:)/giu, '');
-}
-
 test('autopilot prompts specify only status, artifact, signals; manual drive keeps four fields', () => {
   for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
     const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
@@ -3041,7 +3010,7 @@ test('autopilot sections carry no four-field example and mixed files label manua
     assert.doesNotMatch(text, /legacy|protocol 1/i, file);
   }
   const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
-  assert.doesNotMatch(withoutLegacyHubMode(sectionBetween(review, '**Autopilot preflight:**', '**Manual/no-manifest:**')), /legacy|protocol 1/i);
+  assert.doesNotMatch(sectionBetween(review, '**Autopilot preflight:**', '**Manual/no-manifest:**'), /legacy|protocol 1/i);
   const field = /^\s*(?:status|artifact|changed-paths|signals): /;
   for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
     const lines = readFileSync(join(skillsDir, 'implement', file), 'utf8').split('\n');

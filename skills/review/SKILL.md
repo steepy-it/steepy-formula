@@ -1,6 +1,6 @@
 ---
 name: review
-description: Verify implemented work against its spec with real evidence before any "done" claim. Checks the spec's success criteria, runs the surface test command, and runs the coherence gate declared by `steepy-formula hub-mode` — `graph validate` in graph mode, `validate-hub.mjs` in legacy mode — through the deterministic inline evidence capture.
+description: Verify implemented work against its spec with real evidence before any "done" claim. Checks the spec's success criteria, runs the surface test command, and runs `steepy-formula graph validate` through the deterministic inline evidence capture.
 user-invocable: true
 ---
 <!-- steepy:manual-handoff:v1:start -->
@@ -129,19 +129,19 @@ Verify completed work with evidence. Never assert "done" without command output 
 
 ## Checklist
 
-- [ ] Declare the hub mode once per run — `steepy-formula hub-mode` (always exit 0) — and carry the declared mode into the Step 1 orientation reads, the capture's gate wiring, the sweep, the gate, and the report (Step 0)
+- [ ] Declare the hub mode once per run — `steepy-formula hub-mode` (always exit 0) — and stop in `migrate` and `none`, and carry the declared mode into the report (Step 0)
 - [ ] In autopilot, read the supplied phase manifest first; then read the gear and scale ceremony to it (Step 0)
-- [ ] Manifest-backed autopilot: load criteria-only source + task index + diff + standards, then match and record every relevant modular leaf; regular manual review: load accepted criteria + task-result index + branch diff + stable routed inputs; Gear 4: load the exact goal contract + loop ledger instead (Step 1)
+- [ ] Manifest-backed autopilot: load criteria-only source + task index + diff + standards, regular manual review: load accepted criteria + task-result index + branch diff + graph orientation; Gear 4: load the exact goal contract + loop ledger instead (Step 1)
 - [ ] Run `capture-review-evidence.mjs` once: keep verbatim command output in the current run's
       `evidence-report.md`, consume only its compact JSON receipt, and judge every criterion in
       session (Step 2)
 - [ ] For Gear 4, validate goal/ledger provenance and the ledger event commitment, then prove the
       exact claimed terminal outcome without confusing negative completion with goal success (Steps 1–2)
-- [ ] Sweep unpromoted insights from the active inventory: manifest criteria + task-result index in autopilot; manual insight sweep uses only accepted criteria + task-result index compact status and `signals`; graph mode — the manual sweep also assembles the Promotion Scenario from the typed candidates file (Step 2)
-- [ ] Confirm the receipt contains a green gate command result for the declared mode — `validate-hub` in legacy mode, `coherence-gate` in graph mode; mode `none` has no gate entry (Step 3)
-- [ ] Report: the declared hub-mode, which gate ran and whether it is green, the typed candidate list (graph mode: the quoted typed diff), AND every regular criterion or Gear-4 terminal claim verified
+- [ ] Sweep unpromoted insights from the active inventory: manifest criteria + task-result index in autopilot; manual insight sweep uses only accepted criteria + task-result index compact status and `signals`; the manual sweep also assembles the Promotion Scenario from the typed candidates file (Step 2)
+- [ ] Confirm the receipt contains a green `coherence-gate` command result (Step 3)
+- [ ] Report: the declared hub-mode, whether the `coherence-gate` is green, the typed candidate list and the quoted typed diff, AND every regular criterion or Gear-4 terminal claim verified
       from real command output (Step 4)
-- [ ] Graph mode, manual drive: apply the assembled Promotion Scenario here — `promotion apply` WITHOUT `--yes`; a refusal (exit 21) is a valid outcome, not an error (Step 5)
+- [ ] Manual drive: apply the assembled Promotion Scenario here — `promotion apply` WITHOUT `--yes`; a refusal (exit 21) is a valid outcome, not an error (Step 5)
 - [ ] Resolve the version bump (or apply `no-release`) and offer a PR to `main` only for regular
       review or Gear-4 `GOAL_REACHED`, when the work landed on a separate branch with commits ahead;
       suppress release/PR for negative terminal outcomes (Step 5)
@@ -151,15 +151,18 @@ Verify completed work with evidence. Never assert "done" without command output 
 ### Step 0 — Read the gear
 
 **Hub-mode declaration (once per run).** Run `steepy-formula hub-mode` before anything else and
-carry its declared mode — `graph`, `legacy`, or `none`, each printed with one `evidence:` line —
+carry its declared mode — `graph`, `migrate`, or `none`, each printed with one `evidence:` line —
 through the whole run. The command always exits 0: it is a declaration for the report, not a
 gate, and this prose never re-implements its detection — the command is the single authority.
-The declared mode branches the run: `graph` → the Step 1 orientation reads, the Promotion
-Scenario assembly at Step 2, the graph coherence gate wired into the Step 2 capture and checked
-at Step 3, and the human apply at Step 5; `legacy` → the Markdown-hub flow
-of this skill runs exactly as today (sweep → propose → `validate-hub`); `none` → no hub exists
-on either channel: no scenario to assemble and no hub gate to run — record the declared mode in
-the Step 4 report and let the surface-test verification carry the review.
+The declared mode branches the run:
+
+- **`graph` mode:** proceed — the Step 1 orientation reads, the Promotion Scenario assembly at
+  Step 2, the graph coherence gate wired into the Step 2 capture and checked at Step 3, and the
+  human apply at Step 5.
+- **`migrate` mode:** the repo still carries a pre-graph Markdown hub.
+  Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow.
+- **Mode `none`:** no graph — the repo is not initialized: tell the user to run the `init` skill
+  first and stop.
 
 **Autopilot preflight:** When the conductor-supplied phase manifest is present, read that
 manifest before any other task input. Validate its role and scope against the review phase and the
@@ -175,8 +178,7 @@ Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM
 honor the recorded verdict. Do not read or locate the spec: it is deliberately absent from the review
 inventory, and the criteria-only required artifact supplies the review criteria. Apply the Step 4/5
 Autopilot paragraph below and never ask the user anything. A manifest/output failure, success criteria
-unmet, the declared-mode coherence gate red (`validate-hub` in legacy mode, `graph validate` in
-graph mode), or a CONFLICT discovered mid-run → append
+unmet, the `graph validate` gate red, or a CONFLICT discovered mid-run → append
 `<ISO timestamp> — review — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>`
 to `.apex/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. A CONFLICT discovered
 mid-run is ALWAYS a halt — doc-wins needs a human, never auto-override.
@@ -223,8 +225,8 @@ selection and then a new exact envelope. Never select by recency.
 Scale this skill's ceremony to the gear (see "Ceremony by gear" below). This skill dispatches **no
 subagent reviewer or evidence collector**: `capture-review-evidence.mjs` collects command output
 inline and deterministically, while this session self-verifies every success criterion plus the
-declared-mode coherence gate, per the "Review architecture (gear 3)" governance rule — recorded in
-`conventions.md` in legacy mode, and as a Rule in the canonical graph in graph mode. Judgement is never delegated.
+`graph validate` coherence gate, per the "Review architecture (gear 3)" governance rule — recorded as a
+Rule in the canonical graph. Judgement is never delegated.
 
 **Autopilot correlation.** Before appending any current-protocol status marker, use the `run-id` and
 positive `attempt` supplied by the conductor's `phasePrompt`; that correlated identity is authoritative.
@@ -242,8 +244,7 @@ here is already enforced by that mechanism, not by this prose.
 
 ### Ceremony by gear
 
-- **All gears**: run the surface test command and the declared-mode coherence gate
-  (`validate-hub` in legacy mode, `graph validate` in graph mode, no gate in mode `none`) through
+- **All gears**: run the surface test command and the `graph validate` coherence gate through
   the deterministic inline capture in Step 2, and verify each success criterion yourself. There is
   no subagent evidence reviewer or collector. The complete command bytes are durable on disk; only the bounded receipt
   enters model context. Verification and judgement are never delegated, at any gear.
@@ -257,7 +258,7 @@ here is already enforced by that mechanism, not by this prose.
 `branch-diff` artifacts. Never locate or read the spec, plan, progress ledger, task briefs, task
 reports, task reviews, sibling work files, transcripts, or conversations. Treat `task-results` as
 the primary and validate the criteria and diff paths plus explicit source metadata against it. Then
-read the stable routing inputs for the mode declared at Step 0 — this prose never re-detects it:
+read the orientation for the mode declared at Step 0 — `graph`, `migrate`, or `none`; this prose never re-detects it:
 
 - **`graph` mode:** resolve orientation from the canonical graph — run
   `steepy-formula context resolve --path <p>...` over the reviewed paths (exit 0 emits
@@ -265,9 +266,7 @@ read the stable routing inputs for the mode declared at Step 0 — this prose ne
   Rules — the standards-equivalent — its Terms, and the surface test command from its Check
   item's `ext_v1_command` extension property (fall back to the verification Rule's statement
   prose when the Check carries no command). The bound specialist agent is
-  `.claude/agents/<surface>-agent.md` by naming convention (there is no routing table in graph
-  mode). Read no Markdown hub file: graph-first init never creates one, and none is required
-  here. On exit 10 UNRESOLVED — normal in a freshly graph-first-initialized repo, where no
+  `.claude/agents/<surface>-agent.md` by naming convention. On exit 10 UNRESOLVED — normal in a freshly graph-first-initialized repo, where no
   topology bridge links the detected Packages to the curated Components yet — fall back to
   the deterministic surface targets:
   `steepy-formula context resolve --target apex:<projectId>:surface:<slug(name)>` for each
@@ -279,27 +278,16 @@ read the stable routing inputs for the mode declared at Step 0 — this prose ne
   `steepy-formula graph status` — exit 3,
   `initialized: no`, or an engine failure means the graph binding is missing or failed: tell the
   user to run the `init` skill first and stop.
-- **`legacy` mode:** read `.apex/_INDEX.md`, the routed stable standard(s), and
-  `.apex/testing-and-checklist.md` for the surface test command. This is the unchanged manual review
-  navigation/discovery path.
-- **Mode `none`:** no hub context to read on either channel — the surface test command comes
-  from the plan (or ask the user), and the Step 0 declaration already recorded the mode for the
-  Step 4 report.
+- **`migrate` mode:** the repo still carries a pre-graph Markdown hub.
+  Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow.
+- **Mode `none`:** no graph — the repo is not initialized: tell the user to run the `init` skill
+  first and stop.
 
 **Autopilot:** use the validated phase manifest loaded in Step 0 as the authoritative input
 inventory. Its `required` inventory must provide the success-criteria source, task/result index,
 aggregate diff, relevant standards, and test commands. Exclude per-task transcripts and
 conversations: they are not review inputs. Do not independently preload them. Use `onDemand` only
 under Step 0's concrete-missing-fact protocol, recording any such read in the report.
-
-For each required modular core, inspect its mini-routing table. Match every row using only the
-required criteria-only artifact, task-result index, and branch diff evidence. Read every matching
-leaf already declared in `onDemand`; for each read, record the concrete reason as the matching leaf
-plus the exact criteria, changed path, or indexed task signal that matched. This matching step makes
-a relevant leaf a concrete named fact needed for review. Zero matches means core only. Never read
-all leaves as a fallback. Never read an unrelated leaf. Never consult the spec, plan, ledger, or
-transcripts to perform modular matching. A single-file standard remains fully
-loaded from `required` with no leaf-selection step.
 
 **Gear 4 has no spec and no plan.** Eagerly read exactly the accepted goal and loop-ledger paths;
 the loop ledger is primary. The public capability remains exactly `goal` + `loop-ledger`: do not
@@ -330,8 +318,7 @@ supplies the authenticated diff digest plus current branch, HEAD, clean, and sna
 metric-best, and strict-improvement facts. Require `outcome` to be exactly `GOAL_REACHED |
 BUDGET_EXHAUSTED | NO_IMPROVEMENT | REVIEW_REJECTED`, and `goal-succeeded: true` only for
 `GOAL_REACHED`. Take these provenance facts from the receipt, never ledger assertions. The goal's
-`verifier` is the active Gear-4 criterion. Read the stable routing inputs for the mode declared at
-Step 0 as above; never select a loop by recency.
+`verifier` is the active Gear-4 criterion. Read the graph orientation above; never select a loop by recency.
 
 ### Step 2 — Verify against the active criteria source
 
@@ -352,22 +339,13 @@ Then run this once, passing each command as one safely quoted argument:
 node <engine-root>/scripts/capture-review-evidence.mjs --repo-root . --evidence '<evidence-path>' --test-command '<exact surface test command>'
 ```
 
-Wire the coherence gate to the mode declared at Step 0 — the gate is the capture's final command:
-
-- **`legacy` mode:** no extra flag. The script runs the built-in hub linter
-  (`node <engine-root>/scripts/validate-hub.mjs .`) as its final command, labeled `validate-hub`.
-- **`graph` mode:** append `--gate-command '<resolved graph gate command>'` — the
-  `steepy-formula graph validate` invocation exactly as the `check` skill spells it, resolved the
-  way this harness resolves the CLI (a repo without `steepy-formula` on PATH runs
-  `node <engine-root>/scripts/formula/cli.mjs graph validate` with the same real
-  `--project <id>` when the hub-mode declaration echoed one). It runs as the final command,
-  labeled `coherence-gate`.
-- **Mode `none`:** append `--no-gate` — there is no hub on either channel, so the capture runs the
-  surface test (and the Gear-4 verifier below) and nothing else; the Step 0 declaration already
-  records why.
+The coherence gate is the capture's final command: the script's built-in gate runs
+`steepy-formula graph validate` (a repo without `steepy-formula` on PATH runs
+`node <engine-root>/scripts/formula/cli.mjs graph validate` with the same real `--project <id>`
+when the hub-mode declaration echoed one), labeled `coherence-gate`. Pass no gate flag.
 
 For Gear 4 append `--verifier-command '<exact verifier command>'`. The script always runs the
-surface test, then the optional goal verifier, then the mode's coherence gate; it atomically replaces stale
+surface test, then the optional goal verifier, then the coherence gate; it atomically replaces stale
 evidence at the fixed path and streams combined stdout/stderr into the new report. It returns one
 bounded JSON receipt on stdout with the artifact path, collection timestamps, aggregate pass state,
 and, for every command, exit/signal/error state, output byte and line counts, SHA-256, and a bounded
@@ -375,9 +353,7 @@ tail excerpt. A tested command may be red while collection itself exits successf
 `allPassed` and each command's `passed`/`exitCode` fields to determine the review result.
 
 Validate receipt schema version 1, the exact expected artifact path, timestamps from this review
-round, and the ordered command labels (`surface-test`, optional `goal-verifier`, then the gate label
-the declared mode picked — `validate-hub` in legacy mode, `coherence-gate` in graph mode; mode
-`none` has no gate entry). Do
+round, and the ordered command labels (`surface-test`, optional `goal-verifier`, then `coherence-gate`). Do
 not open or preload the complete `evidence-report.md`: the report is durable verbatim proof, while
 the receipt is the context boundary. If a named criterion genuinely requires a fact absent from the
 bounded excerpt, read only the smallest exact line or byte range needed from that report, record the
@@ -391,8 +367,8 @@ get promoted, and the final verdict are never delegated. No success criterion is
 want of evidence.
 
 **Gear 4:** the criterion is the goal contract and the authenticated terminal outcome, not a spec.
-The same bounded capture runs the surface test, goal verifier, and the declared mode's coherence
-gate (`validate-hub` in legacy mode, `coherence-gate` in graph mode) in that order. Require the
+The same bounded capture runs the surface test, goal verifier, and the `coherence-gate`
+(`graph validate`) in that order. Require the
 current capture receipt's surface test and that gate to be green. Interpret the fresh
 verifier result against the terminal-validator receipt; a red verifier is expected evidence for
 `BUDGET_EXHAUSTED`, not by itself invalid execution. For metric mode, parse the verifier's final
@@ -457,13 +433,11 @@ is by the exact comma-delimited ID, never substring or a similar-looking spellin
 or per-task file read is authorized by a concern. Absence of the signal is no discovery evidence,
 not proof that no discovery happened.
 
-For each candidate: already promoted → cite the stable doc `file:line` (graph mode: the node in
-the applied scenario); still valuable → propose the promotion to the user (glossary, conventions,
-surface standard, README); no longer holds → drop it with a one-line reason. That triage is the
-whole promotion story in legacy mode (and in mode `none`): the Markdown-hub sweep → propose flow,
-unchanged.
+For each candidate: already promoted → cite the node in the applied scenario; still valuable →
+propose the promotion to the user as a typed candidate (term, rule, decision, readme); no longer holds → drop it
+with a one-line reason.
 
-**Graph mode — the sweep assembles the Promotion Scenario.** In manual drive, beyond listing the
+**The sweep assembles the Promotion Scenario.** In manual drive, beyond listing the
 candidates, the sweep writes the still-valuable ones to the typed candidates file at
 `.apex/work/tasks/<plan-basename>/promotion-candidates.json` (gitignored work area; a gear-4
 review writes `.apex/work/loops/<slug>/promotion-candidates.json` — the loop directory stands in
@@ -485,43 +459,36 @@ violation exits 2 (fix the file, not the command); an already-used scenario id e
 (`promotion discard` it, or pick a fresh id). Quote the preview's typed diff verbatim into the
 Step 4 report — and apply nothing here: Step 5 owns the apply.
 
-**Autopilot:** a promotion candidate is never a blocker on its own — Step 0's "never ask; unresolvable → BLOCKED" governs things the run cannot finish without a human, not documentation opportunities. Carry every candidate into the Step 4 report instead, for the human to act on at the Step 5 version-bump/PR decision. In graph mode, autopilot review creates NO scenario: a draft assembled now would sit `PROMOTION_STALE` by the time a human reaches Step 5, when the head has moved past this phase. List the typed candidates — same schema, as report entries — and nothing more; the interactive Step 5 session creates, previews, and applies when the human acts.
+**Autopilot:** a promotion candidate is never a blocker on its own — Step 0's "never ask; unresolvable → BLOCKED" governs things the run cannot finish without a human, not documentation opportunities. Carry every candidate into the Step 4 report instead, for the human to act on at the Step 5 version-bump/PR decision. Autopilot review creates NO scenario: a draft assembled now would sit `PROMOTION_STALE` by the time a human reaches Step 5, when the head has moved past this phase. List the typed candidates — same schema, as report entries — and nothing more; the interactive Step 5 session creates, previews, and applies when the human acts.
 
-If the work changed a durable convention, standard, domain term, architecture decision, user-facing workflow, or README behavior, verify that the durable knowledge was promoted into stable versioned docs (`.apex/standards/`, `.apex/conventions.md`, `.apex/glossary.md`, README, or another stable doc).
+If the work changed a durable convention, standard, domain term, architecture decision, user-facing workflow, or README behavior, verify that the durable knowledge was promoted into stable versioned docs.
 Specs and plans themselves are not sufficient evidence of durable documentation.
-In graph mode the promotion channel is the Promotion Scenario: the typed diff is the proposal
+Durable knowledge rides the Promotion Scenario: the typed diff is the proposal
 and the Step 5 human-approved `promotion apply` is the promotion — verify the durable knowledge
 rides the scenario, or its out-of-graph `readme` notes.
 
 ### Step 3 — Run the coherence gate (mandatory)
 
-The Step 2 capture runs the coherence gate as its final command — this is required, not optional,
-in every mode that has a hub. Terminal review is the sole Gear-4 owner of this gate; the loop
-controller does not claim it:
-
-- **Legacy mode:** require the current receipt's final command to have `label: validate-hub`,
-  `passed: true`, and `exitCode: 0`; its bounded excerpt must show `steepy validate-hub: OK`.
-- **Graph mode:** require the current receipt's final command to have `label: coherence-gate`,
-  `passed: true`, and `exitCode: 0` — the `graph validate` invocation wired in at Step 2 — with
-  its bounded excerpt showing `violations: 0` and a clean revision-chain replay. Plus one sanity
-  `steepy-formula context resolve` of a representative path or target from the work just
-  reviewed, run in session, confirming the resolver still answers.
-- **Mode `none`:** the receipt has no gate entry — the Step 0 declaration already recorded that
-  no hub exists on either channel; say so in the Step 4 report.
+The Step 2 capture runs the coherence gate as its final command — this is required, not optional.
+Terminal review is the sole Gear-4 owner of this gate; the loop controller does not claim it:
+require the current receipt's final command to have `label: coherence-gate`,
+`passed: true`, and `exitCode: 0` — the `graph validate` invocation wired in at Step 2 — with
+its bounded excerpt showing `violations: 0` and a clean revision-chain replay. Plus one sanity
+`steepy-formula context resolve` of a representative path or target from the work just
+reviewed, run in session, confirming the resolver still answers.
 
 The report path, current-run
 timestamps, output SHA-256, byte count, and line count bind that receipt to the verbatim transcript
 on disk. Do not copy or read the complete transcript merely to satisfy this gate.
 
-The work is **not done** until the declared mode's gate is green. In legacy mode the linter is that gate, exactly as today. If it reports violations in stable docs (orphan stable doc, broken stable link, routing mismatch, or a stable link into `.apex/work/**`), the change is incomplete. In graph mode the same strictness binds `graph validate`: any invariant violation or broken replay is incomplete work, and the sanity `context resolve` must answer. Fix the stable docs (legacy) or the graph (graph) before claiming completion.
+The work is **not done** until the gate is green: any invariant violation or broken replay is incomplete work, and the sanity `context resolve` must answer. Fix the graph before claiming completion.
 
 ### Step 4 — Report
 
 Report, with evidence: tests pass/fail (with output), every active criterion or Gear-4 terminal
-condition met or not, the gate outcome, and the declared hub-mode naming which gate ran. In graph
-mode the report also carries the typed candidate list and quotes the Step 2 `promotion preview` typed diff verbatim.
-Regular review is reviewable as complete only when the declared gate is green — `validate-hub` in
-legacy mode, `graph validate` in graph mode — AND your own criterion-by-criterion verification
+condition met or not, the gate outcome, and the declared hub-mode. The report also carries
+the typed candidate list and quotes the Step 2 `promotion preview` typed diff verbatim.
+Regular review is reviewable as complete only when the declared gate is green (`graph validate`) AND your own criterion-by-criterion verification
 from Step 2 backs every success criterion with real command output. Gear-4 review is
 reviewable as complete when the surface test and the declared gate are green and every condition
 for its claimed terminal outcome is proven from the bounded receipt plus accepted provenance.
@@ -587,7 +554,7 @@ mutation budget.
 
 **Autopilot:** If `drive: autopilot` is present in the verdict contract (Step 0), stop here — this is
 the last unattended phase of the run, and the version-bump/PR decision below (Step 5) stays human.
-In graph mode no scenario was created at Step 2: the typed candidates listed above are what the
+No scenario was created at Step 2: the typed candidates listed above are what the
 interactive Step 5 session creates, previews, and applies when the human acts. After the report
 above, append
 `<ISO timestamp> — review — READY_FOR_PR — run-id=<conductor-supplied> attempt=<positive supplied> <one-line verdict>` to
@@ -601,14 +568,14 @@ This step applies to regular review and a successfully proven Gear-4 `GOAL_REACH
 negative outcome has already stopped at Step 4 with no release/PR offer and a requirement for a new
 goal contract before another run.
 
-**Graph mode — the human apply gate.** Before any PR: if Step 2 assembled a Promotion Scenario,
+**The human apply gate.** Before any PR: if Step 2 assembled a Promotion Scenario,
 it is applied here and only here, in manual drive: run `steepy-formula promotion apply
 <scenario-id>` WITHOUT `--yes` — the command prompts on stdin, and a refusal
 (exit 21) is a valid
 outcome, not an error. A refused scenario stays a draft for a later interactive session;
 `promotion discard` cleans it up if it is abandoned. Never apply inline at Step 2, and never a
 `--yes` supplied by an agent or a conductor — the confirmation at the prompt is the human's, and
-nothing else substitutes for it. In legacy mode, autopilot, and mode `none` there is no scenario
+nothing else substitutes for it. In autopilot there is no scenario
 in this review's hands: skip straight to the PR flow below.
 
 Check the current branch. If it is `main`/`master`, or has no commits ahead of `main`, stop here — there is nothing to propose.
