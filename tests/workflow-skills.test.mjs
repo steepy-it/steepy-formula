@@ -2915,7 +2915,7 @@ test('on-demand linter skills invoke validate-hub with an explicit `.` cwd argum
   // init uses a <repo-root> placeholder (it can run before cwd is the repo),
   // but every on-demand linter skill should pass an explicit `.` — consistent with
   // its siblings and not silently dependent on whatever process.cwd() happens to be.
-  const linterSkills = ['new-surface', 'check', 'plan', 'review', 'brainstorm'];
+  const linterSkills = ['new-surface', 'plan', 'review', 'brainstorm'];
   for (const name of linterSkills) {
     const text = readFileSync(join(skillsDir, name, 'SKILL.md'), 'utf8');
     assert.match(
@@ -2938,26 +2938,17 @@ test('terminal review, not the loop controller, owns the mandatory hub coherence
   // `.apex/standards/skills.md`; that archived hub's half rides the canonical graph promotion.
 });
 
-test('check: reports model-mapping freshness verdicts before the coherence gate in both modes, never blocking on UNKNOWN', () => {
+test('check: reports model-mapping freshness verdicts before the graph gate, never blocking on UNKNOWN', () => {
   const text = readFileSync(join(skillsDir, 'check', 'SKILL.md'), 'utf8');
   assert.ok(
     text.includes('node <engine-root>/scripts/verify-model-mappings.mjs'),
     'check must run the freshness verifier through the engine-root path'
   );
-  // Formula's check is mode-aware (apex v0.9.0 wired the verifier after validate-hub,
-  // predating the graph/legacy split): the freshness report joins the check report in
-  // BOTH mode branches, and runs before that branch's coherence gate.
-  const branches = [
-    ['graph', sectionBetween(text, '2. **Graph mode**', '3. **Legacy mode**'), 'steepy-formula graph validate'],
-    ['legacy', sectionBetween(text, '3. **Legacy mode**', '4. **Report**'), 'validate-hub.mjs'],
-  ];
-  for (const [name, branch, gate] of branches) {
-    const vIdx = branch.indexOf('verify-model-mappings.mjs');
-    const gIdx = branch.indexOf(gate);
-    assert.ok(vIdx !== -1, `the ${name} branch must run the freshness verifier`);
-    assert.ok(gIdx !== -1 && vIdx < gIdx,
-      `the ${name} branch must run the verifier before its coherence gate`);
-  }
+  const branch = sectionBetween(text, '2. **Validate the graph**', '3. **Report**');
+  const vIdx = branch.indexOf('verify-model-mappings.mjs');
+  const gIdx = branch.indexOf('steepy-formula graph validate');
+  assert.ok(vIdx !== -1, 'the graph flow must run the freshness verifier');
+  assert.ok(gIdx !== -1 && vIdx < gIdx, 'the verifier must run before the coherence gate');
   assert.ok(text.includes('`OK | STALE | UNKNOWN`'),
     'the step must carry the per-row verdict vocabulary');
   assert.match(text, /`STALE`[^\n]*human-ratified table patch/,
