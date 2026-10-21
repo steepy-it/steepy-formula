@@ -137,9 +137,10 @@ while required-increment release comparisons remain strict. File/directory fsync
 support are required; an incomplete journal always makes the release check fail.
 
 The reusable GitHub validation workflow installs the pinned dependency from the lockfile, then runs
-Node 24 tests, hub coherence, package composition, and product metadata checks with read-only
-permissions; the docker-gated engine suites skip when no Docker daemon is available. Release makes the sole
-write-capable publishing job depend on that validation workflow. Full audit evidence validation
+Node 24 tests, package composition, and product metadata checks with read-only permissions; the
+docker-gated engine suites skip when no Docker daemon is available, and the graph coherence gate
+(`steepy-formula graph validate`) needs a local engine, so it stays a release-time preflight.
+Release makes the sole write-capable publishing job depend on that validation workflow. Full audit evidence validation
 is optional and is not a release job. Payload identity
 frames sorted canonical npm-package paths, modes, and bytes; excluding exactly
 `docs/native-test-evidence.json`, `docs/native-test-evidence.md`, and
@@ -201,7 +202,7 @@ The `adapters` surface: thin, dependency-free wiring that serves the canonical `
 |---|---|
 | Claude Code | `.claude-plugin/` manifest + marketplace — the pre-existing plugin, unchanged behavior. |
 | Codex | `.codex-plugin/plugin.json` (points at `skills/`) + `.agents/plugins/marketplace.json`, which makes the repo itself a marketplace root. |
-| OpenCode | `adapters/opencode/steepy-formula.js` — a config hook pushes `skills/` into `config.skills.paths`, registers eleven `steepy-formula-<skill>` commands where supported, and injects a marker-guarded bootstrap block into the first message. Project hub agents are read only from `.opencode/agents/*.md`; missing or invalid native directories register no project specialists, and Claude descriptors are never read. It also registers D2 dispatch agents: the tier trio (`steepy-cheap`/`steepy-standard`/`steepy-most-capable`) when `config.model` is a mapped provider pin — that trio is the per-dispatch tier choice — and without a mapped pin dispatch degrades to the declared session model. |
+| OpenCode | `adapters/opencode/steepy-formula.js` — a config hook pushes `skills/` into `config.skills.paths`, registers eleven `steepy-formula-<skill>` commands where supported, and injects a marker-guarded bootstrap block into the first message. Project hub agents are read only from `.opencode/agents/*.md` and only when the project carries the `.formula/config.json` graph binding; missing or invalid native directories register no project specialists, and Claude descriptors are never read. It also registers D2 dispatch agents: the tier trio (`steepy-cheap`/`steepy-standard`/`steepy-most-capable`) when `config.model` is a mapped provider pin — that trio is the per-dispatch tier choice — and without a mapped pin dispatch degrades to the declared session model. |
 | Pi | the `"pi"` manifest in `package.json` (`skills`, `extensions`) + `adapters/pi/steepy-formula.js` — `session_start` bootstrap injection and eleven optional `/steepy-<skill>` command wrappers. |
 | DeepSeek Harness | `adapters/dsh/steepy-formula.js`, wired via the root `cordis.patch.yml` bundle-patch file and `package.json`'s `dsh.bundle.patch` key. Registers three capabilities, each on its own dependency-gated child fiber: a `ctx.systemPrompt` section for bootstrap, eleven `steepy-formula-<skill>` commands, and the model-invocable `steepy_skill` tool. A command's output is rendered to the human and never enters model history, so a command can only name the tool call to make — that is why `steepy_skill` exists as the model-facing channel that actually loads a skill's exact prose (F3). |
 | MCP | `adapters/mcp/formula-mcp.mjs` — the MCP server over the domain core (see above). |

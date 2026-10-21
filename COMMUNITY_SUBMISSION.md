@@ -22,7 +22,7 @@ steepy-formula governs a repository's stable knowledge in the canonical Stable K
 ## What the plugin includes
 
 - Eleven canonical skills: `/steepy-formula:inception`, `/steepy-formula:init`, `/steepy-formula:graph-migrate`, `/steepy-formula:new-surface`, `/steepy-formula:check`, `/steepy-formula:brainstorm`, `/steepy-formula:plan`, `/steepy-formula:implement`, `/steepy-formula:review`, `/steepy-formula:discovery`, and `/steepy-formula:loop-engineer`.
-- Node.js 24+ scripts for stack detection, hub validation, project scaffolding, and workflow controllers, plus the `steepy-formula` graph engine CLI (`graph` init/validate/export, `context resolve`, typed `promotion` create/preview/apply) that graph-first init gates on.
+- Node.js 24+ scripts for stack detection, project scaffolding, and workflow controllers, plus the `steepy-formula` graph engine CLI (`graph` init/validate/export, `context resolve`, typed `promotion` create/preview/apply) that graph-first init gates on.
 - Templates for specialist agents, a managed `AGENTS.md` root, a thin `CLAUDE.md` import, and a canonical project bootstrap skill.
 
 ## Runtime behavior and safety

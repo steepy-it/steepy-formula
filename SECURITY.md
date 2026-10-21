@@ -24,6 +24,6 @@ migration, promotion), and native installation/canaries. Reports that matter mos
 
 - a plugin script writing or deleting files **outside** the target repo
 - crafted repo content (hub docs, `package.json`) that makes a plugin script execute unintended commands
-- the Stop hook blocking a session in a way that cannot be recovered
+- a plugin script or workflow refusal leaving a repository in a state that cannot be recovered
 
 Anything that needs no privacy (crashes, wrong output, lint false positives) is a regular bug — use the bug report template instead.

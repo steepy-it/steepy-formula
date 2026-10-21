@@ -801,7 +801,7 @@ test('COMMUNITY_SUBMISSION.md contains marketplace review copy and safety disclo
   ]) {
     assert.ok(submission.includes(required), `COMMUNITY_SUBMISSION.md must mention: ${required}`);
   }
-  assert.doesNotMatch(submission, /Stop hook|stop-hook|validate-hub|routing-table|\blegacy\b/i,
+  assert.doesNotMatch(submission, /Stop hook|stop-hook|validate-hub|hub validation|routing-table|\blegacy\b/i,
     'COMMUNITY_SUBMISSION.md describes a graph-only product: no Stop hook, linter, routing table, or legacy mode');
   const migrateScenario = submission.split('\n').find((line) => line.includes('`.apex/_INDEX.md`'));
   assert.ok(migrateScenario, 'the reviewer scenarios must cover a repository carrying a steepy-apex hub');
@@ -898,6 +898,33 @@ test('manifest descriptions are graph-only and identical across every carrier', 
   }
 });
 
+test('user docs, SECURITY.md and PRIVACY.md describe a graph-only product', () => {
+  const read = (path) => readFileSync(join(root, path), 'utf8');
+
+  // The validation workflow runs no coherence job: the graph gate needs a local engine.
+  for (const path of ['docs/architecture.md', 'docs/release-evidence.md']) {
+    assert.doesNotMatch(read(path), /hub coherence/i, `${path} must not claim a hub-coherence workflow job`);
+  }
+  assert.match(
+    read('docs/architecture.md').replace(/\s+/g, ' '),
+    /the graph coherence gate \(`steepy-formula graph validate`\) needs a local engine, so it stays a release-time preflight/,
+  );
+
+  // Owning and per-task surfaces bind the one graph-resolved context; only cross-cutting entries are ignored.
+  assert.doesNotMatch(read('docs/workflow.md'), /routing row|loads no standard|halts as a binding error/i,
+    'docs/workflow.md must not describe routing rows, standards, or an owning-surface halt');
+
+  const architectureRows = read('docs/architecture.md').split('\n');
+  const openCodeRow = architectureRows.find((line) => line.startsWith('| OpenCode | `adapters/opencode/steepy-formula.js`'));
+  assert.ok(openCodeRow, 'docs/architecture.md must carry the OpenCode adapter row');
+  assert.match(openCodeRow, /only when the project carries the `\.formula\/config\.json` graph binding/);
+
+  assert.doesNotMatch(read('SECURITY.md'), /Stop hook/i, 'SECURITY.md must not name the removed Stop hook');
+  const privacy = read('PRIVACY.md');
+  assert.doesNotMatch(privacy, /\blegacy\b/i, 'PRIVACY.md describes a steepy-apex hub only as a migration source');
+  assert.match(privacy, /one-time migration source for `graph-migrate`/);
+});
+
 test('RELEASE.md is graph-only: no linter step, no Stop hook, and D4 gates at check/review time', () => {
   const release = readFileSync(join(root, 'RELEASE.md'), 'utf8');
 
@@ -908,6 +935,7 @@ test('RELEASE.md is graph-only: no linter step, no Stop hook, and D4 gates at ch
   assert.doesNotMatch(release, /The Stop hook stays quiet|hooks\/hooks|stop-hook|legacy hubs/,
     'RELEASE.md must not promise the removed Stop hook, its wiring, or legacy-hub canary cells');
   assert.doesNotMatch(release, /--hub-mode/, 'the canary commands carry no --hub-mode flag');
+  assert.doesNotMatch(release, /hook loading/i, 'the OpenAI import checklist names no hook loading: no hooks ship');
   assert.doesNotMatch(release, /can publish only after tests, hub coherence/,
     'the release workflow runs no hub-coherence job');
 
@@ -917,6 +945,8 @@ test('RELEASE.md is graph-only: no linter step, no Stop hook, and D4 gates at ch
   assert.match(d4, /No harness ships an end-of-turn hook/);
   assert.match(d4, /`steepy-formula graph validate`\) runs at `check`\s*\/\s*`review` time/);
   assert.match(d4, /\*\*Resolved 2026-07-15/, 'the dated resolution stays dated');
+  assert.doesNotMatch(d4, /matrix rows 5–6\s+verify the gate/, 'rows 5–6 are unproven expected shape, not evidence');
+  assert.match(d4, /matrix rows 5–6 are where the live canary\s+verifies the gate/);
   assert.doesNotMatch(d4, /hooks\/hooks|stays in the package/, 'D4 claims no shipped hook wiring');
 });
 
@@ -961,7 +991,8 @@ test('CHANGELOG.md records the graph-only break under Unreleased, above v1.0.0, 
     '`scripts/new-surface.mjs`',
     // Split so this suite never reads as a consumer of a retired template source
     // (tests/template.test.mjs scans tests/ for the literal paths).
-    ...[['_IN', 'DEX.md'], ['routing', '-row.md']].map(([prefix, suffix]) => `\`templates/${prefix}${suffix}\``),
+    ...[['_IN', 'DEX.md'], ['routing', '-row.md'], ['surface-standard', '.md'], ['surface-standard', '-core.md']]
+      .map(([prefix, suffix]) => `\`templates/${prefix}${suffix}\``),
     '`render-claude-md.mjs`',
     '`--routing-index`',
     '`--standard`',

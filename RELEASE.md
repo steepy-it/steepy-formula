@@ -365,7 +365,8 @@ trio on the 5.3 ladder before any cell above is refreshed.
 - **D4 — end-of-turn gate approximation.** No harness ships an end-of-turn hook: the
   plugin ships no hooks, and on every harness the coherence gate
   (`steepy-formula graph validate`) runs at `check`/`review` time. The OpenCode, Pi, and
-  DeepSeek Harness bootstrap blocks state the same, and matrix rows 5–6 verify the gate.
+  DeepSeek Harness bootstrap blocks state the same, and matrix rows 5–6 are where the live canary
+  verifies the gate.
   **Resolved 2026-07-15 (dated evidence, on the flow as it stood then):** on Claude Code
   the then-shipped native Stop hook worked end-to-end — on a deliberately broken hub a
   trivial turn was blocked and the model fixed the dangling link before being allowed to
@@ -543,7 +544,7 @@ verifying those capabilities.
    templates, adapters, and assets; do not assume the portal executes npm installation.
 4. The documented Claude archive import can convert `.claude-plugin/plugin.json`; alternatively
    use the supported OpenAI package layout. Inspect the imported manifest and test every referenced
-   helper path in a clean environment. Recheck hook loading, trust, and host compatibility.
+   helper path in a clean environment. Recheck trust and host compatibility.
 5. Resolve scan findings, test the imported candidate, submit for review, then complete the portal's
    publication step after approval. Re-test the installed directory version.
 

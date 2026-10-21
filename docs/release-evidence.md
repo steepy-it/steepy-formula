@@ -7,7 +7,7 @@ This reference describes optional release audit verification. It is not a releas
 ## Optional same-payload audit verification
 
 The release workflow requires Node 24 tests (after installing the pinned `neo4j-driver`
-dependency from the lockfile), hub coherence, version/manifest checks, and package validation
+dependency from the lockfile), version/manifest checks, and package validation
 through `.github/workflows/validate.yml`. Its `--product-only` check does not read audit
 evidence. Only the publishing job has `contents: write`. The graph gate
 (`steepy-formula graph validate`) needs a local engine, so it stays a release-time preflight and
