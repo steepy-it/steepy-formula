@@ -34,6 +34,7 @@ import {
 import { readWorkPath, writeWorkPath } from '../scripts/work-paths.mjs';
 import { parseWorkflowJsonl, reduceWorkflowJsonl } from '../scripts/workflow-state.mjs';
 import { resolveGraphHubContext } from '../scripts/autopilot-context.mjs';
+import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
 import { headlessCommand } from '../adapters/headless.mjs';
 import { DOGFOOD_CHECKPOINT, DOGFOOD_CHECKPOINT_SKIP } from './helpers/dogfood-checkpoint.mjs';
 
@@ -43,36 +44,47 @@ const EVENTS_PATH = '.apex/work/loops/2026-09-03-demo-loop/events.jsonl';
 const RUN_ID = '12345678-1234-4234-8234-123456789abc';
 const LOCK_TOKEN = '87654321-4321-4321-8321-cba987654321';
 const BASELINE = 'a'.repeat(40);
-const ROUTING_PATH = '.apex/_INDEX.md';
-const SCRIPT_STANDARD = '.apex/standards/scripts.md';
+
+// Graph-only routing: the controller resolves the goal surface's exact target through the graph
+// resolver into the loop's own work directory (the Gear-3 conductor's resolveGraphHubContext
+// pattern); that one context.md stands in for both routing slots, and RUN_STARTED records the
+// binding so a resume validates against it. Every fixture defaults to the stub resolver below.
+const GRAPH_TARGET = 'apex:demo-project:surface:scripts';
+const GRAPH_CONTEXT_DIR = '.apex/work/loops/2026-09-03-demo-loop/hub-context';
+const GRAPH_CONTEXT = `${GRAPH_CONTEXT_DIR}/context.md`;
 
 function fixture() {
   return mkdtempSync(join(tmpdir(), 'steepy-loop-controller-'));
 }
 
-function writeSingleRoute(repo, {
-  surface = 'scripts',
-  standardPath = `.apex/standards/${surface}.md`,
-  standardText = `# ${surface} standard\n\n## Paths governed\n\n- \`${surface}/\`\n`,
+function stubGraphResolver(calls, {
+  exit = 0,
+  contextPath,
+  text = '# Context (schema v1)\n\nProject: `demo-project`\n',
+  write,
 } = {}) {
-  const relative = standardPath.replace(/^\.apex\//u, '');
-  mkdirSync(join(repo, '.apex', 'standards'), { recursive: true });
-  writeFileSync(join(repo, ROUTING_PATH), [
-    '# Fixture hub',
-    '',
-    '## Routing table',
-    '',
-    '| Surface | Standard | Agent |',
-    '|---|---|---|',
-    `| \`${surface}\` | [${surface} standard](${relative}) | \`${surface}-agent\` |`,
-    '',
-  ].join('\n'));
-  mkdirSync(dirname(join(repo, standardPath)), { recursive: true });
-  writeFileSync(join(repo, standardPath), standardText);
-  return Object.freeze({
-    routingPath: ROUTING_PATH,
-    standardPaths: Object.freeze([standardPath]),
-  });
+  return (input) => {
+    calls.push({ kind: 'graph-resolve', ...input });
+    if (exit !== 0) {
+      throw new Error(`graph resolver failed (exit ${exit}): steepy-formula: unresolved target '${input.args[1]}'`);
+    }
+    mkdirSync(join(input.repoRoot, input.outputPath), { recursive: true });
+    writeFileSync(join(input.repoRoot, input.outputPath, 'context.json'), '{"schemaVersion":1}\n');
+    if (write) write(input);
+    else writeFileSync(join(input.repoRoot, input.outputPath, 'context.md'), text);
+    return {
+      outputDir: input.outputPath,
+      contextPath: contextPath ?? `${input.outputPath}/context.md`,
+      bytes: Buffer.byteLength(text),
+      projectId: input.projectId,
+    };
+  };
+}
+
+function asGraphMode(options, resolver, graphTarget = GRAPH_TARGET) {
+  options.graphTarget = graphTarget;
+  options.graphResolver = resolver;
+  return options;
 }
 
 function goalText(overrides = {}) {
@@ -103,9 +115,6 @@ ${fields}
 
 function dependencies(overrides = {}) {
   const calls = [];
-  const routing = typeof overrides.repoRoot === 'string'
-    ? writeSingleRoute(overrides.repoRoot)
-    : { routingPath: ROUTING_PATH, standardPaths: [SCRIPT_STANDARD] };
   return {
     calls,
     options: {
@@ -113,7 +122,8 @@ function dependencies(overrides = {}) {
       harness: 'codex',
       commitAuthorized: true,
       expectedBranch: 'feature/loop',
-      ...routing,
+      graphTarget: GRAPH_TARGET,
+      graphResolver: stubGraphResolver([]),
       runner: {
         descriptor(harness, prompt, descriptorInput) {
           calls.push(`runner-descriptor:${harness}:${prompt.length > 0}:${descriptorInput.modelTier}`);
@@ -161,7 +171,6 @@ function executionDependencies({
   reviewStatuses = [],
   runnerStatuses = [],
 } = {}) {
-  const routing = writeSingleRoute(repoRoot);
   const calls = [];
   const commits = [];
   const discards = [];
@@ -177,7 +186,8 @@ function executionDependencies({
     harness: 'codex',
     commitAuthorized: true,
     expectedBranch: 'feature/loop',
-    ...routing,
+    graphTarget: GRAPH_TARGET,
+    graphResolver: stubGraphResolver([]),
     runner: {
       descriptor(_harness, prompt, descriptorInput) {
         calls.push({ kind: 'descriptor', prompt, ...descriptorInput });
@@ -445,6 +455,13 @@ test('goal parsing is closed, versioned, gear-4-only, and mode aware', () => {
 
 test('preflight rejects unsafe paths, unbound routing, branch drift, dirty fresh state, and missing authorization', () => {
   const contract = parseGoalContract(goalText());
+  const routing = {
+    surface: 'scripts',
+    hubMode: 'graph',
+    contextTarget: GRAPH_TARGET,
+    routingPath: GRAPH_CONTEXT,
+    standardPaths: [GRAPH_CONTEXT],
+  };
   const base = {
     goalPath: GOAL_PATH,
     ledgerPath: undefined,
@@ -455,11 +472,7 @@ test('preflight rejects unsafe paths, unbound routing, branch drift, dirty fresh
     branch: 'feature/loop',
     dirty: false,
     expectedBranch: 'feature/loop',
-    routing: {
-      surface: 'scripts',
-      routingPath: ROUTING_PATH,
-      standardPaths: [SCRIPT_STANDARD],
-    },
+    routing,
     runnerDescriptor: {
       cmd: 'codex', requestedModelTier: 'standard', modelSelection: 'applied',
     },
@@ -468,7 +481,9 @@ test('preflight rejects unsafe paths, unbound routing, branch drift, dirty fresh
   for (const overrides of [
     { goalPath: '/tmp/goal.md' },
     { goalPath: '.apex/work/loops/2026-09-03-demo-loop/../goal.md' },
-    { routing: { surface: 'tests', routingPath: ROUTING_PATH, standardPaths: [SCRIPT_STANDARD] } },
+    { routing: { ...routing, surface: 'tests' } },
+    // A routing without a graph binding (the retired Markdown-hub shape) is unbound.
+    { routing: { surface: 'scripts', routingPath: '.apex/_INDEX.md', standardPaths: ['.apex/standards/scripts.md'] } },
     { branch: 'main' },
     { branch: 'master' },
     { branch: 'feature/other' },
@@ -598,8 +613,10 @@ test('an unreliable sanity verifier observes no repository-local preflight lock 
       () => runLoopController(GOAL_PATH, deps.options),
       /simulated verifier-process crash/u,
     );
-    assert.deepEqual(during, before, 'sanity verifier must run before repo-local lock publication');
-    assert.deepEqual(readdirSync(loopDir).sort(), before, 'crashed preflight leaves no repo-local state');
+    // Only the controller-resolved routing input (hub-context/) precedes the sanity run.
+    const resolved = [...before, 'hub-context'].sort();
+    assert.deepEqual(during, resolved, 'sanity verifier must run before repo-local lock publication');
+    assert.deepEqual(readdirSync(loopDir).sort(), resolved, 'crashed preflight leaves no repo-local state');
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -828,7 +845,7 @@ test('strict CLI refuses unsupported runners and malformed resume pairs without 
   const writes = [];
   const status = await main([
     '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
-    '--routing-index', ROUTING_PATH, '--standard', SCRIPT_STANDARD,
+    '--graph-target', GRAPH_TARGET,
   ], {
     stdout: { write: (value) => writes.push(String(value)) },
     stderr: { write: (value) => writes.push(String(value)) },
@@ -838,11 +855,11 @@ test('strict CLI refuses unsupported runners and malformed resume pairs without 
 
   assert.equal(await main([
     '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized', '--resume',
-    '--routing-index', ROUTING_PATH, '--standard', SCRIPT_STANDARD,
+    '--graph-target', GRAPH_TARGET,
   ], { stdout: { write() {} }, stderr: { write() {} } }), 2);
   assert.equal(await main([
     '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized', '--ledger', LEDGER_PATH,
-    '--routing-index', ROUTING_PATH, '--standard', SCRIPT_STANDARD,
+    '--graph-target', GRAPH_TARGET,
   ], { stdout: { write() {} }, stderr: { write() {} } }), 2);
 
   const singletonFlags = [
@@ -852,12 +869,12 @@ test('strict CLI refuses unsupported runners and malformed resume pairs without 
     ['--commit-authorized'],
     ['--resume'],
     ['--ledger', LEDGER_PATH],
-    ['--routing-index', ROUTING_PATH],
+    ['--graph-target', GRAPH_TARGET],
   ];
   const base = [
     '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
     '--resume', '--ledger', LEDGER_PATH,
-    '--routing-index', ROUTING_PATH, '--standard', SCRIPT_STANDARD,
+    '--graph-target', GRAPH_TARGET,
   ];
   for (const duplicate of singletonFlags) {
     assert.equal(
@@ -2266,7 +2283,6 @@ test('real Git ownership snapshot refuses same-path byte drift before destructiv
     mkdirSync(join(repo, 'scripts'), { recursive: true });
     writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
     writeFileSync(join(repo, 'scripts', 'metric.mjs'), 'export const score = 10;\n');
-    writeSingleRoute(repo);
     execFileSync('git', ['add', '.'], { cwd: repo });
     execFileSync('git', ['-c', 'user.name=Steepy', '-c', 'user.email=steepy@example.invalid', 'commit', '-m', 'baseline'], { cwd: repo });
     writeWorkPath(repo, GOAL_PATH, goalText({
@@ -2295,8 +2311,8 @@ test('real Git ownership snapshot refuses same-path byte drift before destructiv
       harness: 'codex',
       commitAuthorized: true,
       expectedBranch: 'feature/loop',
-      routingPath: ROUTING_PATH,
-      standardPaths: [SCRIPT_STANDARD],
+      graphTarget: GRAPH_TARGET,
+      graphResolver: stubGraphResolver([]),
       runner,
       reviewer: { run: () => assert.fail('reviewer must not run') },
       verifier: {
@@ -2485,119 +2501,6 @@ test('hostile implementers cannot change, replace, truncate, delete, or rewrite 
   }
 });
 
-test('target-project routing carries exact custom and modular standards into both child prompts', async () => {
-  const cases = [
-    {
-      surface: 'firmware',
-      standardPaths: ['.apex/standards/firmware.md'],
-      write(repo) {
-        writeSingleRoute(repo, { surface: 'firmware', standardPath: '.apex/standards/firmware.md' });
-      },
-    },
-    {
-      surface: 'mobile',
-      standardPaths: [
-        '.apex/standards/mobile-core.md',
-        '.apex/standards/mobile-ios.md',
-        '.apex/standards/mobile-store.md',
-      ],
-      write(repo) {
-        writeSingleRoute(repo, {
-          surface: 'mobile',
-          standardPath: '.apex/standards/mobile-core.md',
-          standardText: [
-            '# Mobile core standard', '', '## Mini-routing table', '',
-            '| Concern | Standard |', '|---|---|',
-            '| iOS | [iOS](mobile-ios.md) |',
-            '| Store | [Store](mobile-store.md) |',
-            '| Android | [Android](mobile-android.md) |', '',
-          ].join('\n'),
-        });
-        for (const leaf of ['mobile-ios.md', 'mobile-store.md', 'mobile-android.md']) {
-          writeFileSync(join(repo, '.apex', 'standards', leaf), `# ${leaf} standard\n`);
-        }
-      },
-    },
-  ];
-
-  for (const scenario of cases) {
-    const repo = fixture();
-    try {
-      writeWorkPath(repo, GOAL_PATH, goalText({ surface: scenario.surface, budget: '1' }), {
-        expect: 'goal', family: 'goal',
-      });
-      const deps = executionDependencies({
-        repoRoot: repo,
-        verifierResults: [
-          { status: 1, stdout: 'red\n', stderr: '' },
-          { status: 0, stdout: 'green\n', stderr: '' },
-        ],
-      });
-      scenario.write(repo);
-      deps.options.routingPath = ROUTING_PATH;
-      deps.options.standardPaths = scenario.standardPaths;
-      const result = await runLoopController(GOAL_PATH, deps.options);
-      assert.equal(result.outcome, 'GOAL_REACHED', scenario.surface);
-      const implementer = deps.calls.find(({ kind, prompt }) => kind === 'descriptor' && prompt.includes(GOAL_PATH));
-      const reviewer = deps.calls.find(({ kind }) => kind === 'reviewer');
-      for (const call of [implementer, reviewer]) {
-        assert.ok(call, `${scenario.surface}: child prompt exists`);
-        assert.match(call.prompt, new RegExp(ROUTING_PATH.replaceAll('.', '\\.'), 'u'));
-        let prior = -1;
-        for (const path of scenario.standardPaths) {
-          const index = call.prompt.indexOf(path);
-          assert.ok(index > prior, `${scenario.surface}: ${path} preserves inventory order`);
-          prior = index;
-        }
-        assert.doesNotMatch(call.prompt, /\.apex\/standards\/\[SURFACE\]|\.apex\/standards\/<surface>/u);
-      }
-    } finally {
-      rmSync(repo, { recursive: true, force: true });
-    }
-  }
-});
-
-test('unrouted and missing or malformed target standards refuse before runner, verifier, or mutation', async () => {
-  const cases = [
-    {
-      name: 'unrouted built-in surface',
-      surface: 'adapters',
-      mutate() {},
-    },
-    {
-      name: 'missing routed standard',
-      surface: 'scripts',
-      mutate(repo) { unlinkSync(join(repo, SCRIPT_STANDARD)); },
-    },
-    {
-      name: 'malformed routed standard',
-      surface: 'scripts',
-      mutate(repo) { writeFileSync(join(repo, SCRIPT_STANDARD), 'not a governed standard\n'); },
-    },
-  ];
-  for (const scenario of cases) {
-    const repo = fixture();
-    try {
-      writeWorkPath(repo, GOAL_PATH, goalText({ surface: scenario.surface }), {
-        expect: 'goal', family: 'goal',
-      });
-      const deps = executionDependencies({
-        repoRoot: repo,
-        verifierResults: [{ status: 1, stdout: 'red\n', stderr: '' }],
-      });
-      scenario.mutate(repo);
-      await assert.rejects(() => runLoopController(GOAL_PATH, deps.options), LoopControllerError, scenario.name);
-      assert.equal(deps.calls.some(({ kind }) => kind === 'runner'), false, scenario.name);
-      assert.equal(deps.calls.some(({ kind }) => kind === 'verifier'), false, scenario.name);
-      assert.equal(existsSync(join(repo, EVENTS_PATH)), false, scenario.name);
-      assert.equal(deps.commits.length, 0, scenario.name);
-      assert.equal(deps.discards.length, 0, scenario.name);
-    } finally {
-      rmSync(repo, { recursive: true, force: true });
-    }
-  }
-});
-
 test('every Gear-4 child receives a concrete tier matching its descriptor, with deterministic escalation/degradation', async () => {
   for (const harness of ['claude', 'codex', 'opencode']) {
     const repo = fixture();
@@ -2772,7 +2675,6 @@ test('KEEP refuses tracked and untracked verifier drift before any index or ref 
       mkdirSync(join(repo, 'docs'), { recursive: true });
       writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
       writeFileSync(join(repo, 'scripts', 'metric.mjs'), 'export const fixed = false;\n');
-      writeSingleRoute(repo);
       if (kind === 'tracked') writeFileSync(join(repo, 'docs', 'late.md'), 'baseline\n');
       execFileSync('git', ['add', '.'], { cwd: repo });
       execFileSync('git', [
@@ -2805,8 +2707,8 @@ test('KEEP refuses tracked and untracked verifier drift before any index or ref 
         harness: 'codex',
         commitAuthorized: true,
         expectedBranch: 'feature/loop',
-        routingPath: ROUTING_PATH,
-        standardPaths: [SCRIPT_STANDARD],
+        graphTarget: GRAPH_TARGET,
+        graphResolver: stubGraphResolver([]),
         runner,
         reviewer: { run: () => assert.fail('late verifier drift must halt before review') },
         verifier: {
@@ -2983,7 +2885,6 @@ test('the controller resumes real-Git intra-command commit and discard crashes w
       mkdirSync(join(repo, 'scripts'), { recursive: true });
       writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
       writeFileSync(join(repo, 'scripts', 'tracked.mjs'), 'export const value = 0;\n');
-      writeSingleRoute(repo);
       execFileSync('git', ['add', '.'], { cwd: repo });
       execFileSync('git', [
         '-c', 'user.name=Steepy', '-c', 'user.email=steepy@example.invalid',
@@ -3002,8 +2903,8 @@ test('the controller resumes real-Git intra-command commit and discard crashes w
         harness: 'codex',
         commitAuthorized: true,
         expectedBranch: 'feature/loop',
-        routingPath: ROUTING_PATH,
-        standardPaths: [SCRIPT_STANDARD],
+        graphTarget: GRAPH_TARGET,
+        graphResolver: stubGraphResolver([]),
         runner: {
           descriptor(_harness, _prompt, { modelTier }) {
             return {
@@ -3133,7 +3034,6 @@ test('deterministic runtime/real-Git evidence: pre-intent preparation replays th
     mkdirSync(join(repo, 'scripts'), { recursive: true });
     writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
     writeFileSync(join(repo, 'scripts', 'fix.mjs'), 'export const fixed = false;\n');
-    writeSingleRoute(repo);
     execFileSync('git', ['add', '.'], { cwd: repo });
     execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repo });
     const baseline = execFileSync('git', ['rev-parse', 'HEAD'], {
@@ -3161,8 +3061,8 @@ test('deterministic runtime/real-Git evidence: pre-intent preparation replays th
       harness: 'codex',
       commitAuthorized: true,
       expectedBranch: 'feature/loop',
-      routingPath: ROUTING_PATH,
-      standardPaths: [SCRIPT_STANDARD],
+      graphTarget: GRAPH_TARGET,
+      graphResolver: stubGraphResolver([]),
       runner: {
         descriptor: (_harness, _prompt, { modelTier }) => ({
           cmd: 'codex', args: [], protocol: 'jsonl', requestedModelTier: modelTier,
@@ -3247,7 +3147,6 @@ test('deterministic runtime/real-Git evidence: a committed durable intent record
     mkdirSync(join(repo, 'scripts'), { recursive: true });
     writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
     writeFileSync(join(repo, 'scripts', 'fix.mjs'), 'export const fixed = false;\n');
-    writeSingleRoute(repo);
     execFileSync('git', ['add', '.'], { cwd: repo });
     execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repo });
     writeWorkPath(repo, GOAL_PATH, goalText({ budget: '1' }), { expect: 'goal', family: 'goal' });
@@ -3260,8 +3159,8 @@ test('deterministic runtime/real-Git evidence: a committed durable intent record
       harness: 'codex',
       commitAuthorized: true,
       expectedBranch: 'feature/loop',
-      routingPath: ROUTING_PATH,
-      standardPaths: [SCRIPT_STANDARD],
+      graphTarget: GRAPH_TARGET,
+      graphResolver: stubGraphResolver([]),
       runner: {
         descriptor: (_harness, _prompt, { modelTier }) => ({
           cmd: 'codex', args: [], protocol: 'jsonl', requestedModelTier: modelTier,
@@ -3699,53 +3598,11 @@ test('process-group convergence timeout is a blocking result after raw stream fi
   }
 });
 
-// --- Formula adaptation: the declared graph hub mode -------------------------------------------
+// --- Graph-only routing ---------------------------------------------------------------------------
 //
-// A graph-mode repository has no `.apex/_INDEX.md`. The controller resolves the goal surface's
-// exact target through the graph resolver into the loop's own work directory (the Gear-3
-// conductor's resolveGraphHubContext pattern); that one context.md stands in for both routing
-// slots, and RUN_STARTED records the binding so a resume validates against the same mode.
-
-const GRAPH_TARGET = 'apex:demo-project:surface:scripts';
-const GRAPH_CONTEXT_DIR = '.apex/work/loops/2026-09-03-demo-loop/hub-context';
-const GRAPH_CONTEXT = `${GRAPH_CONTEXT_DIR}/context.md`;
-const LEGACY_RUN_STARTED_KEYS = Object.freeze([
-  'schemaVersion', 'sequence', 'runId', 'timestamp', 'event', 'branch', 'baseline', 'mode', 'budget',
-  'controllerCommitAuthorized', 'goalDigest', 'verifier', 'verifierArgv', 'metricDirection',
-  'blastRadius', 'baselineExit', 'baselinePassed', 'baselineMetric',
-]);
-
-function stubGraphResolver(calls, {
-  exit = 0,
-  contextPath,
-  text = '# Context (schema v1)\n\nProject: `demo-project`\n',
-  write,
-} = {}) {
-  return (input) => {
-    calls.push({ kind: 'graph-resolve', ...input });
-    if (exit !== 0) {
-      throw new Error(`graph resolver failed (exit ${exit}): steepy-formula: unresolved target '${input.args[1]}'`);
-    }
-    mkdirSync(join(input.repoRoot, input.outputPath), { recursive: true });
-    writeFileSync(join(input.repoRoot, input.outputPath, 'context.json'), '{"schemaVersion":1}\n');
-    if (write) write(input);
-    else writeFileSync(join(input.repoRoot, input.outputPath, 'context.md'), text);
-    return {
-      outputDir: input.outputPath,
-      contextPath: contextPath ?? `${input.outputPath}/context.md`,
-      bytes: Buffer.byteLength(text),
-      projectId: input.projectId,
-    };
-  };
-}
-
-function asGraphMode(options, resolver, graphTarget = GRAPH_TARGET) {
-  delete options.routingPath;
-  delete options.standardPaths;
-  options.graphTarget = graphTarget;
-  options.graphResolver = resolver;
-  return options;
-}
+// Routing comes only from the graph: no `.apex/_INDEX.md` routing table or standards folder is
+// read, the resolved context.md fills both routing slots, and a resume must match the
+// RUN_STARTED binding. A repository that still carries a Markdown hub is refused by the CLI.
 
 function hasControllerCode(code) {
   return (error) => error instanceof LoopControllerError && error.code === code;
@@ -3769,9 +3626,6 @@ test('graph hub mode resolves the exact surface target into the loop work dir an
         { status: 0, stdout: 'green\n', stderr: '' },
       ],
     });
-    // Graph mode reads no Markdown hub: remove the legacy routing inputs entirely.
-    rmSync(join(repo, '.apex', '_INDEX.md'));
-    rmSync(join(repo, '.apex', 'standards'), { recursive: true });
     const resolverCalls = [];
     asGraphMode(deps.options, stubGraphResolver(resolverCalls));
     const result = await runLoopController(GOAL_PATH, deps.options);
@@ -3817,23 +3671,6 @@ test('graph hub mode resolves the exact surface target into the loop work dir an
   }
 });
 
-test('legacy hub mode records no hub-mode binding, keeping RUN_STARTED and ledger bytes apex-identical', async () => {
-  const repo = fixture();
-  try {
-    writeWorkPath(repo, GOAL_PATH, goalText(), { expect: 'goal', family: 'goal' });
-    await runLoopController(GOAL_PATH, dependencies({ repoRoot: repo }).options);
-    const firstLine = readWorkPath(repo, EVENTS_PATH, { family: 'events', encoding: 'utf8' }).split('\n')[0];
-    assert.deepEqual(Object.keys(JSON.parse(firstLine)), LEGACY_RUN_STARTED_KEYS);
-    assert.equal(reduceWorkflowJsonl(`${firstLine}\n`).hubMode, null);
-    const ledger = readWorkPath(repo, LEDGER_PATH, { family: 'ledger', encoding: 'utf8' });
-    assert.doesNotMatch(ledger, /hub-mode|hub-context/u);
-    assert.match(ledger, /\nverifier: [^\n]+\nsanity-exit: /u);
-    assert.equal(existsSync(join(repo, GRAPH_CONTEXT_DIR)), false);
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
 test('both child prompts render every slot in both hub modes, leaving no placeholder or merge marker', async () => {
   for (const mode of ['legacy', 'graph']) {
     const repo = fixture();
@@ -3870,7 +3707,37 @@ test('graph refusals happen before runner, verifier, or machine state', async ()
     { name: 'non-surface target', code: 'INVALID_ROUTING', resolves: 0, target: 'apex:demo-project:rule:scripts' },
     { name: 'routing index passed as target', code: 'INVALID_ROUTING', resolves: 0, target: '.apex/_INDEX.md' },
     { name: 'missing resolver dependency', code: 'INVALID_DEPENDENCY', resolves: 0, resolver: null },
-    { name: 'mixed graph and legacy inputs', code: 'INVALID_ROUTING', resolves: 0, mixed: true },
+    { name: 'missing graph target', code: 'INVALID_ROUTING', resolves: 0, edit(options) { delete options.graphTarget; } },
+    {
+      name: 'routingPath option beside the graph target',
+      code: 'INVALID_ROUTING',
+      resolves: 0,
+      edit(options) { options.routingPath = '.apex/_INDEX.md'; },
+    },
+    {
+      name: 'standardPaths option beside the graph target',
+      code: 'INVALID_ROUTING',
+      resolves: 0,
+      edit(options) { options.standardPaths = ['.apex/standards/scripts.md']; },
+    },
+    {
+      // Routing comes only from the graph: a complete, readable Markdown-hub routing pair on
+      // disk is never consulted.
+      name: 'Markdown-hub routing pair without a graph target',
+      code: 'INVALID_ROUTING',
+      resolves: 0,
+      edit(options, repo) {
+        mkdirSync(join(repo, '.apex', 'standards'), { recursive: true });
+        writeFileSync(join(repo, '.apex', '_INDEX.md'), [
+          '# Fixture hub', '', '| Surface | Standard | Agent |', '|---|---|---|',
+          '| `scripts` | [scripts standard](standards/scripts.md) | `scripts-agent` |', '',
+        ].join('\n'));
+        writeFileSync(join(repo, '.apex', 'standards', 'scripts.md'), '# scripts standard\n');
+        delete options.graphTarget;
+        options.routingPath = '.apex/_INDEX.md';
+        options.standardPaths = ['.apex/standards/scripts.md'];
+      },
+    },
     {
       name: 'context outside the loop-bound hub-context directory',
       code: 'INVALID_ROUTING',
@@ -3900,12 +3767,8 @@ test('graph refusals happen before runner, verifier, or machine state', async ()
       });
       const resolverCalls = [];
       const resolver = scenario.resolver === null ? undefined : stubGraphResolver(resolverCalls, scenario.stub);
-      if (scenario.mixed) {
-        deps.options.graphTarget = GRAPH_TARGET;
-        deps.options.graphResolver = resolver;
-      } else {
-        asGraphMode(deps.options, resolver, scenario.target);
-      }
+      asGraphMode(deps.options, resolver, scenario.target);
+      scenario.edit?.(deps.options, repo);
       await assert.rejects(
         () => runLoopController(GOAL_PATH, deps.options),
         hasControllerCode(scenario.code),
@@ -3925,16 +3788,25 @@ test('graph refusals happen before runner, verifier, or machine state', async ()
 
 test('resume validates the RUN_STARTED hub-mode binding before lock-token allocation', async () => {
   const scenarios = [
-    { name: 'graph run resumed in legacy mode', start: 'graph', resume() {} },
     {
       name: 'graph run resumed against another project',
-      start: 'graph',
       resume(options) { asGraphMode(options, stubGraphResolver([]), 'apex:other-project:surface:scripts'); },
+      message: "loop controller [HUB_MODE_DRIFT]: resume binding 'graph apex:other-project:surface:scripts' "
+        + "differs from the RUN_STARTED hub-mode binding 'graph apex:demo-project:surface:scripts'",
     },
     {
-      name: 'legacy run resumed in graph mode',
-      start: 'legacy',
-      resume(options) { asGraphMode(options, stubGraphResolver([])); },
+      name: 'resume of a run without a graph binding',
+      // RUN_STARTED recorded with no hubMode/contextTarget: the run was never graph-bound.
+      unbind(repo) {
+        const [first, ...rest] = readWorkPath(repo, EVENTS_PATH, { family: 'events', encoding: 'utf8' }).split('\n');
+        const runStarted = JSON.parse(first);
+        delete runStarted.hubMode;
+        delete runStarted.contextTarget;
+        writeFileSync(join(repo, EVENTS_PATH), [JSON.stringify(runStarted), ...rest].join('\n'));
+      },
+      resume() {},
+      message: 'loop controller [HUB_MODE_DRIFT]: the run was started without a graph binding; '
+        + 'resuming it is not supported — start a fresh run',
     },
   ];
   for (const scenario of scenarios) {
@@ -3942,15 +3814,15 @@ test('resume validates the RUN_STARTED hub-mode binding before lock-token alloca
     try {
       writeWorkPath(repo, GOAL_PATH, goalText(), { expect: 'goal', family: 'goal' });
       const fresh = dependencies({ repoRoot: repo });
-      if (scenario.start === 'graph') asGraphMode(fresh.options, stubGraphResolver([]));
       assert.equal((await runLoopController(GOAL_PATH, fresh.options)).status, 'STARTED', scenario.name);
+      scenario.unbind?.(repo);
       const ledgerBefore = readWorkPath(repo, LEDGER_PATH);
       const eventsBefore = readWorkPath(repo, EVENTS_PATH);
       const resumed = dependencies({ repoRoot: repo, resume: true, ledgerPath: LEDGER_PATH });
       scenario.resume(resumed.options);
       await assert.rejects(
         () => runLoopController(GOAL_PATH, resumed.options),
-        hasControllerCode('HUB_MODE_DRIFT'),
+        (error) => hasControllerCode('HUB_MODE_DRIFT')(error) && error.message === scenario.message,
         scenario.name,
       );
       assert.equal(resumed.calls.includes('uuid'), false, scenario.name);
@@ -3966,7 +3838,7 @@ test('resume validates the RUN_STARTED hub-mode binding before lock-token alloca
   const repo = fixture();
   try {
     writeWorkPath(repo, GOAL_PATH, goalText(), { expect: 'goal', family: 'goal' });
-    await runLoopController(GOAL_PATH, asGraphMode(dependencies({ repoRoot: repo }).options, stubGraphResolver([])));
+    await runLoopController(GOAL_PATH, dependencies({ repoRoot: repo }).options);
     const resumed = dependencies({ repoRoot: repo, resume: true, ledgerPath: LEDGER_PATH });
     const resolverCalls = [];
     asGraphMode(resumed.options, stubGraphResolver(resolverCalls));
@@ -4005,13 +3877,10 @@ test('preflight binds graph routing to the loop-local resolved context and the g
   };
   assert.equal(validateLoopPreflight(base).ledgerPath, LEDGER_PATH);
   for (const overrides of [
-    { routingPath: ROUTING_PATH },
     { routingPath: '.apex/work/loops/2026-09-03-demo-loop/context.md' },
     { standardPaths: [GRAPH_CONTEXT, GRAPH_CONTEXT] },
-    { standardPaths: [SCRIPT_STANDARD] },
     { contextTarget: 'apex:demo-project:surface:tests' },
     { contextTarget: undefined },
-    { hubMode: 'legacy' },
     { surface: 'tests' },
   ]) {
     assert.throws(
@@ -4022,7 +3891,11 @@ test('preflight binds graph routing to the loop-local resolved context and the g
   }
 });
 
-test('strict CLI accepts the graph argument set only whole and never mixed with legacy routing', async () => {
+const USAGE_LINE = 'loop-engineer usage: --repo-root --validate-terminal --goal --ledger'
+  + ' | --repo-root --goal --harness --commit-authorized --graph-target apex:<projectId>:surface:<surface>'
+  + ' [--resume --ledger]\n';
+
+test('strict CLI accepts only the whole graph argument set; the retired routing flags are unknown options', async () => {
   const graphRun = [
     '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
     '--graph-target', GRAPH_TARGET,
@@ -4040,33 +3913,86 @@ test('strict CLI accepts the graph argument set only whole and never mixed with 
   const graphBase = [
     '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized',
   ];
-  const usage = [];
+  for (const [flag, argv] of [
+    ['--routing-index', [...graphBase, '--graph-target', GRAPH_TARGET, '--routing-index', '.apex/_INDEX.md']],
+    ['--standard', [...graphBase, '--graph-target', GRAPH_TARGET, '--standard', '.apex/standards/scripts.md']],
+    // The whole retired Markdown-hub set no longer reaches the runner availability check.
+    ['--routing-index', [
+      '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
+      '--routing-index', '.apex/_INDEX.md', '--standard', '.apex/standards/scripts.md',
+    ]],
+    ['--routing-index', [
+      '--repo-root', '.', '--validate-terminal', '--goal', GOAL_PATH, '--ledger', LEDGER_PATH,
+      '--routing-index', '.apex/_INDEX.md',
+    ]],
+  ]) {
+    const stderr = [];
+    assert.equal(
+      await main(argv, { stdout: { write: () => assert.fail('no stdout') }, stderr: { write: (value) => stderr.push(String(value)) } }),
+      2,
+      argv.join(' '),
+    );
+    assert.deepEqual(stderr, [`loop-engineer usage: Unknown option '${flag}'\n`], argv.join(' '));
+  }
+
   for (const argv of [
-    [...graphBase, '--graph-target', GRAPH_TARGET, '--routing-index', ROUTING_PATH],
-    [...graphBase, '--graph-target', GRAPH_TARGET, '--standard', SCRIPT_STANDARD],
-    [...graphBase, '--graph-target', GRAPH_TARGET, '--routing-index', ROUTING_PATH, '--standard', SCRIPT_STANDARD],
     [...graphBase, '--graph-target', GRAPH_TARGET, '--graph-target', GRAPH_TARGET],
     [...graphBase, '--graph-target', GRAPH_TARGET, '--resume'],
     [...graphBase, '--graph-target', GRAPH_TARGET, '--ledger', LEDGER_PATH],
     [...graphBase, '--graph-target', 'apex:Demo:surface:scripts'],
     [...graphBase, '--graph-target', 'apex:demo-project:rule:scripts'],
-    [...graphBase, '--graph-target', ROUTING_PATH],
+    [...graphBase, '--graph-target', '.apex/_INDEX.md'],
     [...graphBase, '--graph-target', ''],
     [...graphBase],
     ['--repo-root', '.', '--validate-terminal', '--goal', GOAL_PATH, '--ledger', LEDGER_PATH, '--graph-target', GRAPH_TARGET],
   ]) {
+    const stderr = [];
     assert.equal(
-      await main(argv, { stdout: { write() {} }, stderr: { write: (value) => usage.push(String(value)) } }),
+      await main(argv, { stdout: { write: () => assert.fail('no stdout') }, stderr: { write: (value) => stderr.push(String(value)) } }),
       2,
       argv.join(' '),
     );
+    assert.deepEqual(stderr, [USAGE_LINE], argv.join(' '));
   }
-  assert.ok(usage.length > 0);
-  for (const line of usage) {
-    assert.ok(
-      line.includes('| --repo-root --goal --harness --commit-authorized --graph-target apex:<projectId>:surface:<surface> [--resume --ledger]'),
-      line,
-    );
+});
+
+// The migrate state (G5): every CLI mode, including the read-only --validate-terminal, refuses a
+// target repository that still carries a Markdown hub before any stdout line, graph resolution,
+// or loop-state write. `pi` keeps a regression from ever spawning a model runner.
+test('the CLI refuses a repository that still carries a Markdown hub in every mode, before any output or loop state', async () => {
+  const repo = fixture();
+  try {
+    mkdirSync(join(repo, '.apex'), { recursive: true });
+    writeFileSync(join(repo, '.apex', '_INDEX.md'), '# Markdown Hub\n');
+    writeWorkPath(repo, GOAL_PATH, goalText(), { expect: 'goal', family: 'goal' });
+    const snapshot = () => readdirSync(repo, { recursive: true }).sort()
+      .map((path) => [path, statSync(join(repo, path)).isFile() ? readFileSync(join(repo, path), 'utf8') : 'dir']);
+    const before = snapshot();
+    const run = [
+      '--repo-root', repo, '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
+      '--graph-target', GRAPH_TARGET,
+    ];
+    for (const argv of [
+      run,
+      [...run, '--resume', '--ledger', LEDGER_PATH],
+      ['--repo-root', repo, '--validate-terminal', '--goal', GOAL_PATH, '--ledger', LEDGER_PATH],
+    ]) {
+      const stdout = [];
+      const stderr = [];
+      assert.equal(await main(argv, {
+        stdout: { write: (value) => stdout.push(String(value)) },
+        stderr: { write: (value) => stderr.push(String(value)) },
+      }), MIGRATE_REFUSAL_EXIT, argv.join(' '));
+      assert.deepEqual(stdout, [], argv.join(' '));
+      assert.deepEqual(stderr, [`loop controller [MIGRATE_REQUIRED]: ${MIGRATE_REFUSAL_MESSAGE}\n`], argv.join(' '));
+      assert.deepEqual(snapshot(), before, `${argv.join(' ')}: no events, ledger, lock, or hub-context`);
+      assert.equal(existsSync(join(repo, EVENTS_PATH)), false);
+      assert.equal(existsSync(join(repo, LEDGER_PATH)), false);
+      assert.equal(existsSync(join(repo, dirname(GOAL_PATH), '.loop-engineer.lock')), false);
+      assert.equal(existsSync(join(repo, GRAPH_CONTEXT_DIR)), false);
+    }
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 

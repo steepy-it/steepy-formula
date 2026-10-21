@@ -32,6 +32,7 @@ import {
   processEventLine,
 } from './autopilot-observability.mjs';
 import { isValidProjectId, parseQualifiedId } from './formula/core/ids.mjs';
+import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import {
   appendWorkPath,
   openWorkPathFd,
@@ -202,117 +203,10 @@ function derivedPaths(goalPath) {
   });
 }
 
-function safeStablePath(value, label) {
-  if (typeof value !== 'string' || value.length === 0 || value.trim() !== value
-    || value.startsWith('/') || value.includes('\\')
-    || value.split('/').some((part) => part === '' || part === '.' || part === '..')
-    || /[\r\n\0]/u.test(value)
-    || !value.startsWith('.apex/') || value.startsWith('.apex/work/') || !value.endsWith('.md')) {
-    fail('INVALID_ROUTING', `${label} must be a stable confined .apex Markdown path`);
-  }
-  return value;
-}
-
-function readStableRoutingFile(repoRoot, path, label) {
-  safeStablePath(path, label);
-  const absolute = resolve(repoRoot, path);
-  const root = realpathSync(resolve(repoRoot));
-  let fd;
-  try {
-    const entry = lstatSync(absolute, { bigint: true });
-    if (!entry.isFile() || entry.isSymbolicLink()) {
-      fail('INVALID_ROUTING', `${label} is not a physical regular file: ${path}`);
-    }
-    const physical = realpathSync(absolute);
-    if (!physical.startsWith(`${root}${sep}`)) {
-      fail('INVALID_ROUTING', `${label} escapes the target repository: ${path}`);
-    }
-    fd = openSync(absolute, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW);
-    const opened = fstatSync(fd, { bigint: true });
-    if (!opened.isFile() || opened.dev !== entry.dev || opened.ino !== entry.ino) {
-      fail('INVALID_ROUTING', `${label} identity changed while opening: ${path}`);
-    }
-    return readFileSync(fd, 'utf8');
-  } catch (error) {
-    if (error instanceof LoopControllerError) throw error;
-    fail('INVALID_ROUTING', `${label} cannot be read: ${path}`);
-  } finally {
-    if (fd !== undefined) closeSync(fd);
-  }
-}
-
-function routingRows(indexText) {
-  const rows = [];
-  for (const line of indexText.split('\n')) {
-    const match = /^\|\s*`([a-z][a-z0-9-]*)`\s*\|\s*\[[^\]]+\]\(([^)]+\.md)\)\s*\|/u.exec(line);
-    if (match !== null) rows.push(Object.freeze({ surface: match[1], target: match[2] }));
-  }
-  return rows;
-}
-
-function standardLinks(corePath, coreText) {
-  const links = [];
-  for (const line of coreText.split('\n')) {
-    const match = /^\|[^\r\n]*\[[^\]]+\]\(([^)]+\.md)\)[^\r\n]*\|\s*$/u.exec(line);
-    if (match === null) continue;
-    const linked = join(dirname(corePath), match[1]);
-    safeStablePath(linked, 'modular standard link');
-    if (!links.includes(linked)) links.push(linked);
-  }
-  return links;
-}
-
-export function resolveLoopRouting(repoRoot, surface, routingPath, standardPaths) {
-  if (routingPath !== '.apex/_INDEX.md') {
-    fail('INVALID_ROUTING', "routing index must be the exact stable path '.apex/_INDEX.md'");
-  }
-  if (!Array.isArray(standardPaths) || standardPaths.length === 0
-    || new Set(standardPaths).size !== standardPaths.length) {
-    fail('INVALID_ROUTING', 'one ordered, duplicate-free standard inventory is required');
-  }
-  const indexText = readStableRoutingFile(repoRoot, routingPath, 'routing index');
-  const rows = routingRows(indexText).filter((row) => row.surface === surface);
-  if (rows.length !== 1) {
-    fail('UNSUPPORTED_SURFACE', `surface '${surface}' must have exactly one target-project routing row`);
-  }
-  const routedStandard = `.apex/${rows[0].target}`;
-  safeStablePath(routedStandard, 'routed standard');
-  if (standardPaths[0] !== routedStandard) {
-    fail('INVALID_ROUTING', `standard inventory must begin with routed standard '${routedStandard}'`);
-  }
-  const texts = standardPaths.map((path) => readStableRoutingFile(repoRoot, path, 'surface standard'));
-  for (const [index, text] of texts.entries()) {
-    if (!/^# [^\r\n]*standard[^\r\n]*$/imu.test(text)) {
-      fail('INVALID_ROUTING', `surface standard is malformed: ${standardPaths[index]}`);
-    }
-  }
-  const modular = routedStandard.endsWith('-core.md');
-  if (!modular && standardPaths.length !== 1) {
-    fail('INVALID_ROUTING', 'single-file routing accepts only its exact registered standard');
-  }
-  if (modular) {
-    const reachable = standardLinks(routedStandard, texts[0]);
-    let cursor = -1;
-    for (const leaf of standardPaths.slice(1)) {
-      const index = reachable.indexOf(leaf);
-      if (index < 0 || index <= cursor) {
-        fail('INVALID_ROUTING', 'modular leaves must be reachable and preserve core table order');
-      }
-      cursor = index;
-    }
-  }
-  return Object.freeze({
-    surface,
-    routingPath,
-    standardPaths: Object.freeze([...standardPaths]),
-  });
-}
-
-// Formula adaptation (declared hub mode `graph`): the canonical Stable Knowledge Graph has no
-// `.apex/_INDEX.md` routing table or standards folder. Mirroring the Gear-3 conductor's
-// `resolveGraphHubContext` pattern, the controller resolves the goal surface's exact target
-// (`apex:<projectId>:surface:<surface>`) into the loop's own work directory, and that one
-// context.md stands in for both the routing index and the ordered standard inventory.
+// Graph-only routing: the canonical Stable Knowledge Graph is the only hub. The controller resolves
+// the goal surface's exact target (`apex:<projectId>:surface:<surface>`) into the loop's own work
+// directory, mirroring the Gear-3 conductor's `resolveGraphHubContext`, and that one context.md
+// fills both the routing-index and the ordered standard-inventory prompt slots.
 function graphContextPath(loopDir) {
   return `${loopDir}/hub-context/context.md`;
 }
@@ -398,19 +292,17 @@ function graphContextDigest(repoRoot, contextPath, code) {
 // The resolved context sits in the ignored work area, so no Git snapshot observes it: a child
 // that rewrites it would silently re-route the next prompt. Pin its bytes like controller state.
 function verifyGraphContext(repoRoot, routing) {
-  if (routing.hubMode !== 'graph') return;
   if (graphContextDigest(repoRoot, routing.routingPath, 'CONTROLLER_ARTIFACT_DRIFT') !== routing.contextDigest) {
     fail('CONTROLLER_ARTIFACT_DRIFT', `controller-resolved graph context changed: ${routing.routingPath}`);
   }
 }
 
 function assertHubBinding(state, routing) {
-  const recorded = state.hubMode === null
-    ? 'legacy'
-    : `${state.hubMode} ${state.contextTarget}`;
-  const requested = routing.hubMode === undefined
-    ? 'legacy'
-    : `${routing.hubMode} ${routing.contextTarget}`;
+  if (state.hubMode === null) {
+    fail('HUB_MODE_DRIFT', 'the run was started without a graph binding; resuming it is not supported — start a fresh run');
+  }
+  const recorded = `${state.hubMode} ${state.contextTarget}`;
+  const requested = `${routing.hubMode} ${routing.contextTarget}`;
   if (recorded !== requested) {
     fail('HUB_MODE_DRIFT', `resume binding '${requested}' differs from the RUN_STARTED hub-mode binding '${recorded}'`);
   }
@@ -433,11 +325,7 @@ export function validateLoopPreflight(candidate) {
   }
   if (candidate.routing === null || typeof candidate.routing !== 'object'
     || candidate.routing.surface !== candidate.contract?.surface
-    || (candidate.routing.hubMode === undefined
-      ? candidate.routing.routingPath !== '.apex/_INDEX.md'
-      : !graphRoutingBound(candidate.routing, paths.loopDir))
-    || !Array.isArray(candidate.routing.standardPaths)
-    || candidate.routing.standardPaths.length === 0) {
+    || !graphRoutingBound(candidate.routing, paths.loopDir)) {
     fail('UNSUPPORTED_SURFACE', `unbound surface routing '${String(candidate.contract?.surface)}'`);
   }
   nonEmptyLine(candidate.branch, 'branch');
@@ -1607,26 +1495,19 @@ export async function runLoopController(goalPath, options = {}) {
   const canonicalGoalBytes = Buffer.from(goalEntry.canonicalText, 'utf8');
   const contract = parseGoalContract(goalEntry.canonicalText);
   const identity = goalIdentity(contract, canonicalGoalBytes);
-  let routing;
-  if (options.graphTarget !== undefined) {
-    if (options.routingPath !== undefined || options.standardPaths !== undefined) {
-      fail('INVALID_ROUTING', 'graph-mode and legacy routing inputs are mutually exclusive');
-    }
-    routing = resolveLoopGraphContext(
-      repoRoot,
-      goalPath,
-      contract.surface,
-      options.graphTarget,
-      options.graphResolver,
-    );
-  } else {
-    routing = resolveLoopRouting(
-      repoRoot,
-      contract.surface,
-      options.routingPath,
-      options.standardPaths,
-    );
+  if (options.routingPath !== undefined || options.standardPaths !== undefined) {
+    fail('INVALID_ROUTING', 'routingPath and standardPaths are not controller inputs; routing comes only from graphTarget');
   }
+  if (options.graphTarget === undefined) {
+    fail('INVALID_ROUTING', `graphTarget 'apex:<projectId>:surface:${contract.surface}' is required`);
+  }
+  const routing = resolveLoopGraphContext(
+    repoRoot,
+    goalPath,
+    contract.surface,
+    options.graphTarget,
+    options.graphResolver,
+  );
   const availabilityTier = 'standard';
   const runnerDescriptor = options.runner.descriptor(
     options.harness,
@@ -1747,9 +1628,8 @@ export async function runLoopController(goalPath, options = {}) {
         baselineExit: observation.status,
         baselinePassed: contract.mode === 'BOOLEAN' ? observation.status === 0 : true,
         baselineMetric: observation.metric,
-        ...(routing.hubMode === 'graph'
-          ? { hubMode: 'graph', contextTarget: routing.contextTarget }
-          : {}),
+        hubMode: 'graph',
+        contextTarget: routing.contextTarget,
       };
       options.crashHook('before-run-started');
       eventBytes = writeEventStream(
@@ -3166,8 +3046,6 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         'commit-authorized': { type: 'boolean' },
         resume: { type: 'boolean' },
         ledger: { type: 'string' },
-        'routing-index': { type: 'string' },
-        standard: { type: 'string', multiple: true },
         'graph-target': { type: 'string' },
       },
     }));
@@ -3181,7 +3059,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   }
   const singletonNames = [
     'repo-root', 'validate-terminal', 'goal', 'harness', 'commit-authorized', 'resume', 'ledger',
-    'routing-index', 'graph-target',
+    'graph-target',
   ];
   const duplicate = singletonNames.some((name) => (counts.get(name) ?? 0) > 1);
   const terminalValidation = values['validate-terminal'] === true;
@@ -3189,36 +3067,31 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     && counts.get('repo-root') === 1 && counts.get('validate-terminal') === 1
     && counts.get('goal') === 1 && counts.get('ledger') === 1
     && (counts.get('harness') ?? 0) === 0 && (counts.get('commit-authorized') ?? 0) === 0
-    && (counts.get('resume') ?? 0) === 0 && (counts.get('routing-index') ?? 0) === 0
-    && (counts.get('standard') ?? 0) === 0 && (counts.get('graph-target') ?? 0) === 0
+    && (counts.get('resume') ?? 0) === 0 && (counts.get('graph-target') ?? 0) === 0
     && typeof values['repo-root'] === 'string' && values['repo-root'].length > 0
     && typeof values.goal === 'string' && values.goal.length > 0
     && typeof values.ledger === 'string' && values.ledger.length > 0;
+  // A run is routed by one exact graph surface target.
   const validRunShape = !terminalValidation
     && counts.get('repo-root') === 1 && counts.get('goal') === 1
     && counts.get('harness') === 1 && counts.get('commit-authorized') === 1
-    && counts.get('routing-index') === 1 && (counts.get('standard') ?? 0) >= 1
-    && (counts.get('graph-target') ?? 0) === 0
-    && (counts.get('resume') ?? 0) <= 1 && (counts.get('ledger') ?? 0) <= 1
-    && values['repo-root'] && values.goal && values.harness
-    && values['commit-authorized'] === true && values['routing-index'] === '.apex/_INDEX.md'
-    && Array.isArray(values.standard) && values.standard.length > 0
-    && (values.resume === true) === (typeof values.ledger === 'string');
-  // Formula adaptation: the declared graph hub mode replaces the Markdown routing pair with one
-  // exact surface target; the two run shapes are mutually exclusive.
-  const validGraphRunShape = !terminalValidation
-    && counts.get('repo-root') === 1 && counts.get('goal') === 1
-    && counts.get('harness') === 1 && counts.get('commit-authorized') === 1
     && counts.get('graph-target') === 1
-    && (counts.get('routing-index') ?? 0) === 0 && (counts.get('standard') ?? 0) === 0
     && (counts.get('resume') ?? 0) <= 1 && (counts.get('ledger') ?? 0) <= 1
     && values['repo-root'] && values.goal && values.harness
     && values['commit-authorized'] === true
     && /^apex:[a-z][a-z0-9-]*:surface:[a-z][a-z0-9-]*$/u.test(values['graph-target'] ?? '')
     && (values.resume === true) === (typeof values.ledger === 'string');
-  if (duplicate || (!validValidationShape && !validRunShape && !validGraphRunShape)) {
-    stderr.write('loop-engineer usage: --repo-root --validate-terminal --goal --ledger | --repo-root --goal --harness --commit-authorized --routing-index .apex/_INDEX.md --standard <path>... [--resume --ledger] | --repo-root --goal --harness --commit-authorized --graph-target apex:<projectId>:surface:<surface> [--resume --ledger]\n');
+  if (duplicate || (!validValidationShape && !validRunShape)) {
+    stderr.write('loop-engineer usage: --repo-root --validate-terminal --goal --ledger | --repo-root --goal --harness --commit-authorized --graph-target apex:<projectId>:surface:<surface> [--resume --ledger]\n');
     return 2;
+  }
+  // The migrate state (G5, P7): a target repository that still carries a Markdown hub is refused
+  // in every mode, the read-only --validate-terminal included, before any stdout line, runner
+  // probe, graph resolution, or loop-state write.
+  const refusal = migrateRefusal(values['repo-root']);
+  if (refusal) {
+    stderr.write(`loop controller [MIGRATE_REQUIRED]: ${refusal.message}\n`);
+    return refusal.code;
   }
   if (terminalValidation) {
     try {
@@ -3248,9 +3121,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
       commitAuthorized: true,
       resume: values.resume === true,
       ledgerPath: values.ledger,
-      routingPath: values['routing-index'],
-      standardPaths: values.standard,
-      ...(validGraphRunShape ? { graphTarget: values['graph-target'] } : {}),
+      graphTarget: values['graph-target'],
     });
     stdout.write(`${JSON.stringify({
       status: result.status,

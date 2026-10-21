@@ -5,9 +5,9 @@
 //     `migrate` (even over a seeded, initialized graph) while `graph validate`, `context resolve`
 //     and `promotion preview` keep their normal exit codes — none of them prints the refusal.
 //  2. WORKFLOW SCRIPTS REFUSE (G5): every row of REFUSING_SCRIPTS runs from a fresh migrate-state
-//     temp repo and must exit MIGRATE_REFUSAL_EXIT (25) with `<script>: <MIGRATE_REFUSAL_MESSAGE>`
-//     on stderr, an empty stdout, and the temp repo byte-identical — the refusal comes before any
-//     stdout line or filesystem write.
+//     temp repo and must exit MIGRATE_REFUSAL_EXIT (25) with `<prefix>: <MIGRATE_REFUSAL_MESSAGE>`
+//     as an exact stderr line, an empty stdout, and the temp repo byte-identical — the refusal
+//     comes before any stdout line or filesystem write.
 //
 // Hermetic (G7): `.apex/_INDEX.md` is created only inside mkdtemp dirs, never in this repository;
 // the graph is seeded through `buildSeed` (tests/helpers/graph-seed.mjs), never the local-only
@@ -26,14 +26,25 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = join(repoRoot, 'scripts', 'formula', 'cli.mjs');
 
 // The workflow scripts that refuse in the migrate state, one row each (Tasks 4–10 extend it):
-//   { script: 'scripts/<name>.mjs', args: (root) => [...argv after the script path] }
+//   { script: 'scripts/<name>.mjs', args: (root) => [...argv after the script path], prefix? }
 // `root` is the fresh migrate-state temp repo, also the subprocess cwd. The expected stderr prefix
-// is the script's basename without `.mjs` (the scripts' own `<name>: …` diagnostic convention).
+// defaults to the script's basename without `.mjs` (the scripts' own `<name>: …` diagnostic
+// convention); `prefix` overrides it for a script whose diagnostics carry another fixed prefix.
 const REFUSING_SCRIPTS = [
   // Read-only verification still refuses: the refusal fires right after parse for every mode.
   { script: 'scripts/autopilot-context.mjs', args: (root) => ['--verify-plan', '--repo-root', root, '--plan', '.apex/work/plans/topic.md'] },
   // The conductor CLI refuses before its spec checks, so no spec needs to exist.
   { script: 'scripts/autopilot.mjs', args: () => ['.apex/work/specs/topic.md'] },
+  // The loop controller refuses a fresh graph run before runner availability, graph resolution or
+  // any loop state; its diagnostics carry the `loop controller [<CODE>]` prefix.
+  {
+    script: 'scripts/loop-engineer.mjs',
+    prefix: 'loop controller [MIGRATE_REQUIRED]',
+    args: (root) => [
+      '--repo-root', root, '--goal', '.apex/work/loops/2026-10-21-topic/goal.md', '--harness', 'pi',
+      '--commit-authorized', '--graph-target', 'apex:demo-project:surface:scripts',
+    ],
+  },
 ];
 
 // --- temp fixtures -----------------------------------------------------------------------------
@@ -133,8 +144,9 @@ test('migrate state: promotion preview of an unknown scenario keeps its normal n
 
 // --- workflow scripts refuse in the migrate state (G5) ----------------------------------------------
 
-for (const { script, args } of REFUSING_SCRIPTS) {
+for (const { script, args, prefix } of REFUSING_SCRIPTS) {
   const name = basename(script, '.mjs');
+  const line = `${prefix ?? name}: ${MIGRATE_REFUSAL_MESSAGE}`;
   test(`migrate state: ${name} refuses with exit ${MIGRATE_REFUSAL_EXIT} before any stdout line or filesystem write`, () => {
     const root = migrateStateRepo();
     const before = treeSnapshot(root);
@@ -142,8 +154,8 @@ for (const { script, args } of REFUSING_SCRIPTS) {
     assert.equal(result.status, MIGRATE_REFUSAL_EXIT, result.stdout + result.stderr);
     assert.equal(result.stdout, '', 'the refusal precedes any stdout line');
     assert.ok(
-      result.stderr.split('\n').includes(`${name}: ${MIGRATE_REFUSAL_MESSAGE}`),
-      `stderr must carry '${name}: <MIGRATE_REFUSAL_MESSAGE>', got:\n${result.stderr}`,
+      result.stderr.split('\n').includes(line),
+      `stderr must carry '${prefix ?? name}: <MIGRATE_REFUSAL_MESSAGE>', got:\n${result.stderr}`,
     );
     assert.deepEqual(treeSnapshot(root), before, 'the refusal precedes any filesystem write');
   });
