@@ -67,9 +67,9 @@ import {
   resolveGraphHubContext,
   reviewPhaseContext,
   specPhaseContext,
-  standardsBySurfaceFromRouting,
   writeContextManifest,
 } from './autopilot-context.mjs';
+import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
 import {
   classifyWorkflowStart,
@@ -1050,24 +1050,16 @@ function repositoryPath(cwd, absolutePath, label) {
   return assertSafeRelPath(relative(cwd, absolutePath), label);
 }
 
-// Work-path inputs (.apex/work/specs/**, .apex/work/plans/**, run artifacts)
-// ride the typed confined read; hub-doc reads (routing index, testing checklist,
-// conventions, standards) keep their lexical guard — they sit outside the
-// .apex/work/ contract of work-paths.mjs.
+// Every phase input the conductor reads — the source spec, the approved plan, the
+// task-result index — is a work path (.apex/work/specs/**, .apex/work/plans/**, run
+// artifacts), so each rides the typed confined read of work-paths.mjs.
 function readArtifact(cwd, path) {
-  if (path.startsWith('.apex/work/')) {
-    return readWorkPath(cwd, path, { encoding: 'utf8' });
-  }
-  const safePath = assertSafeRelPath(path, 'artifact path');
-  return readFileSync(join(cwd, safePath), 'utf8');
+  return readWorkPath(cwd, path, { encoding: 'utf8' });
 }
 
 function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion, resumeInputs, resolveHubContext = resolveGraphHubContext }) {
   const specPath = repositoryPath(cwd, absSpec, 'spec path');
   const specName = basename(absSpec, '.md');
-  const routingPath = '.apex/_INDEX.md';
-  const testingPath = '.apex/testing-and-checklist.md';
-  const conventionsPath = '.apex/conventions.md';
   const planPath = `.apex/work/plans/${specName}.md`;
   const ledgerPath = `.apex/work/tasks/${specName}/ledger.md`;
   const taskResultIndexPath = `.apex/work/tasks/${specName}/task-result-index.md`;
@@ -1075,41 +1067,31 @@ function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, bas
   const criteriaPath = `.apex/work/tasks/${specName}/success-criteria.md`;
   const evidencePath = `.apex/work/tasks/${specName}/evidence-report.md`;
   const reviewReportPath = `.apex/work/tasks/${specName}/review-report.md`;
-  // Formula criterion-5 adaptation: the archived Markdown hub is absent on formula, so
-  // hub/routing/testing/conventions context resolves through the canonical graph
-  // (`steepy-formula context resolve`), never archived Markdown. When the legacy routing
-  // file is still present (mock/archived hubs), the apex behavior is kept unchanged.
+  // The phase's surface context is the canonical graph's: the injected resolver (by default
+  // `steepy-formula context resolve`) writes the run's own `hub-context/context.md`, and that
+  // one path is what every implicated surface binds in the manifest.
   const hubOutputPath = `.apex/work/tasks/${specName}/context/hub-context`;
-  const graphHub = !existsSync(join(cwd, routingPath))
-    ? resolveHubContext({ repoRoot: cwd, outputPath: hubOutputPath })
-    : null;
+  const contextPath = `${hubOutputPath}/context.md`;
+  const graphHub = resolveHubContext({ repoRoot: cwd, outputPath: hubOutputPath });
   // The resolver is an injection seam: its answer must be the path requested.
-  if (graphHub && graphHub.contextPath !== `${hubOutputPath}/context.md`) {
-    throw new Error(`hub context path must be '${hubOutputPath}/context.md', got '${graphHub.contextPath}'`);
+  if (graphHub?.contextPath !== contextPath) {
+    throw new Error(`hub context path must be '${contextPath}', got '${graphHub?.contextPath}'`);
   }
-  const resolvedRoutingPath = graphHub ? graphHub.contextPath : routingPath;
-  const resolvedTestingPath = graphHub ? graphHub.contextPath : testingPath;
-  const resolvedConventionsPath = graphHub ? graphHub.contextPath : conventionsPath;
-  // The resolver's `context.md` lives under `.apex/work/`, so it rides the typed
-  // `hub-context` family of the work-paths primitive like every other work input.
-  const routingText = graphHub
-    ? readWorkPath(cwd, graphHub.contextPath, { encoding: 'utf8', expect: 'work-output', family: 'hub-context' })
-    : readArtifact(cwd, resolvedRoutingPath);
-  const standardsBySurface = standardsBySurfaceFromRouting(routingText, { repoRoot: cwd });
-  // A cross-cutting entry with no routing row loads no standard. That is a real
-  // loss of eager context (a misspelled surface looks exactly like prose), so it
-  // is collected here and recorded in the status stream rather than dropped.
+  // The resolved `context.md` lives under `.apex/work/`, so it is read once through the typed
+  // `hub-context` family of the work-paths primitive: an unsafe target or ancestor (a symlink
+  // out of the repository) fails closed here, before any manifest names the path.
+  readWorkPath(cwd, contextPath, { encoding: 'utf8', expect: 'work-output', family: 'hub-context' });
+  // A cross-cutting entry that is not also an owning or per-task surface binds no context.
+  // That is a real loss of eager context (a misspelled surface looks exactly like prose), so
+  // it is collected here and recorded in the status stream rather than dropped (P12).
   const unroutedSurfaces = [];
   const common = {
     repoRoot: cwd,
     runId,
     attempt,
     outputs: [],
-    standardsBySurface,
+    contextPath,
     onUnroutedSurface: (surface) => unroutedSurfaces.push(surface),
-    // On the canonical-graph repo every implicated surface routes to the resolver
-    // artifact in place of the missing Markdown routing table (criterion 5).
-    fallbackStandardPath: graphHub ? graphHub.contextPath : undefined,
     contract: {
       verdict: contract.verdict,
       gear: contract.gear,
@@ -1129,11 +1111,8 @@ function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, bas
       ...common,
       modelTier: route.modelTier,
       specPath,
-      routingPath: resolvedRoutingPath,
-      testingPath: resolvedTestingPath,
       owningSurface: route.owningSurface,
       crossCuttingSurfaces: route.crossCuttingSurfaces,
-      otherHubPaths: [resolvedConventionsPath],
       outputs: [planPath],
     });
     return { manifest, route, unroutedSurfaces };
@@ -1148,7 +1127,6 @@ function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, bas
       ...common,
       modelTier: planRoute.modelTier,
       planPath,
-      routingPath: resolvedRoutingPath,
       ledgerPath,
       taskResultIndexPath,
       specPath,
@@ -1922,11 +1900,20 @@ function physicalRelative(cwd, absPath) {
 
 // Drives `plan → implement → review` as fresh headless sessions and resolves to
 // the process exit code (0 = the run reached READY_FOR_PR, 1 = refused or
-// halted). The conductor only ever reads the children's DONE / BLOCKED /
+// halted, 25 = refused in the migrate state: the repository still carries a
+// Markdown hub). The conductor only ever reads the children's DONE / BLOCKED /
 // READY_FOR_PR lines: it never pushes, bumps a version, or opens a PR.
 export async function runConductor(specPath, opts = {}) {
   const cwd = realpathSync(opts.cwd ?? process.cwd());
   let absSpec = resolve(cwd, specPath);
+
+  // The migrate state (G5): a repository that still carries a Markdown hub is refused
+  // before any read of the spec, any spawn, or any write under the work dir.
+  const refusal = migrateRefusal(cwd);
+  if (refusal) {
+    console.error(`autopilot: refusing to drive ${absSpec}: ${refusal.message}`);
+    return refusal.code;
+  }
 
   let specRelPath;
   try {
@@ -2512,6 +2499,14 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
     console.error(`autopilot: ${err.message}`);
     console.error('usage: node scripts/autopilot.mjs <spec-path> [--resume-input <exact-path>]...');
     return 1;
+  }
+  // The migrate state (G5, P7): the CLI refuses right after parse, before its own spec
+  // checks, so the refusal never depends on the spec existing; runConductor repeats the
+  // check for direct callers.
+  const refusal = migrateRefusal(cwd);
+  if (refusal) {
+    console.error(`autopilot: ${refusal.message}`);
+    return refusal.code;
   }
   const [specPath] = parsed.positionals;
   const absSpec = resolve(cwd, specPath);

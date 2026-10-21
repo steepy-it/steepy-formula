@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { assertSafeHubRoot, assertSafeLine, assertSafeRelPath } from './sanitize.mjs';
+import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { readProjectConfig } from './formula/core/project-config.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 import { parseTaskResultProjection } from './task-results.mjs';
@@ -59,8 +60,6 @@ const PURPOSES = Object.freeze({
   spec: 'approved specification',
   criteria: 'success-criteria source',
   plan: 'approved implementation plan',
-  routing: 'surface routing table',
-  testing: 'testing checklist',
   standard: 'implicated surface standard',
   brief: 'task contract',
   report: 'implementer report',
@@ -405,33 +404,6 @@ export function materializeSuccessCriteria({ repoRoot, specPath, outputPath }) {
   };
 }
 
-export function standardsBySurfaceFromRouting(routingText, { repoRoot } = {}) {
-  const result = {};
-  for (const line of String(routingText ?? '').split('\n')) {
-    const match = line.match(/^\s*\|\s*`([^`]+)`\s*\|[^|]*\]\(([^)]+)\)/);
-    if (!match) continue;
-    const surface = assertSafeLine(match[1], 'routing surface');
-    const linked = assertSafeRelPath(match[2], `standard path for ${surface}`);
-    const core = assertSafeRelPath(join('.apex', linked), `standard path for ${surface}`);
-    if (repoRoot === undefined || !core.endsWith('-core.md')) {
-      result[surface] = core;
-      continue;
-    }
-    const root = safeRoot(repoRoot);
-    const coreText = readFileSync(join(root, core), 'utf8');
-    const leaves = [];
-    for (const row of coreText.split('\n')) {
-      const leaf = row.match(/^\s*\|[^|]+\|[^|]+\|[^|]*\]\(([^)]+)\)\s*\|/);
-      if (!leaf) continue;
-      const leafPath = assertSafeRelPath(join(dirname(core), leaf[1]), `leaf standard path for ${surface}`);
-      if (leafPath === core || leaves.includes(leafPath)) continue;
-      leaves.push(leafPath);
-    }
-    result[surface] = leaves.length === 0 ? core : { core, leaves };
-  }
-  return result;
-}
-
 function safePaths(values, label) {
   return safeStringArray(values, label).map((path) => assertSafeRelPath(path, label));
 }
@@ -586,31 +558,33 @@ function inputSurface(task, index) {
   return assertSafeLine(value, `tasks[${index}].owningSurface`);
 }
 
-// Two classes of implicated surface, deliberately not treated alike. An owning or
-// per-task surface is a routing fact the plan and the specialist binding depend on:
-// an unregistered one is a real binding error and halts. Cross-cutting metadata is
-// human prose ("stable hub docs" alongside real surfaces), so an unregistered entry
-// is reported through `onUnroutedSurface` and skipped — halting a run over one word
-// in a list would turn advisory context into a binding requirement.
-// A surface named in both classes keeps the strict treatment.
-export function deriveImplicatedStandardPaths({
-  owningSurface, crossCuttingSurfaces = [], tasks = [], standardsBySurface, onUnroutedSurface,
-  fallbackStandardPath,
-}) {
-  if (!standardsBySurface || typeof standardsBySurface !== 'object' || Array.isArray(standardsBySurface)) {
-    throw new Error('standardsBySurface must be an object');
+// The surface context of a phase is the run's graph-resolved context: the conductor runs
+// `steepy-formula context resolve` once into its own `context.md` (`contextPath`), and that
+// one artifact stands for every implicated surface — there is no per-surface standard, routing
+// table, or testing checklist to select between. Two classes of implicated surface are still
+// deliberately not treated alike (P12). An owning or per-task surface is an ownership fact the
+// plan and the specialist binding depend on: it binds the resolved context. Cross-cutting
+// metadata is human prose ("stable hub docs" alongside real surface names), so each entry is
+// reported through `onUnroutedSurface` and skipped — halting a run over one word in a list
+// would turn advisory context into a binding requirement. A surface named in both classes
+// keeps the strict treatment. The result is `[contextPath]` once, however many surfaces bind
+// it, or `[]` when the ownership names no owning or per-task surface.
+export function deriveImplicatedStandardPaths({ ownership, contextPath, onUnroutedSurface }) {
+  if (!ownership || typeof ownership !== 'object' || Array.isArray(ownership)) {
+    throw new Error('ownership must be an object');
   }
+  const context = assertSafeRelPath(contextPath, 'contextPath');
   if (onUnroutedSurface !== undefined && typeof onUnroutedSurface !== 'function') {
     throw new TypeError('onUnroutedSurface must be a function');
   }
+  const { owningSurface, crossCuttingSurfaces = [], tasks = [] } = ownership;
   if (!Array.isArray(tasks)) throw new Error('tasks must be a list');
-  if (fallbackStandardPath !== undefined) assertSafeRelPath(fallbackStandardPath, 'fallbackStandardPath');
 
   const order = [];
-  const mustRoute = new Set();
-  const record = (surface, required) => {
+  const strict = new Set();
+  const record = (surface, binding) => {
     if (!order.includes(surface)) order.push(surface);
-    if (required) mustRoute.add(surface);
+    if (binding) strict.add(surface);
   };
   if (owningSurface !== undefined) record(assertSafeLine(owningSurface, 'owningSurface'), true);
   for (const surface of safeStringArray(crossCuttingSurfaces, 'crossCuttingSurfaces')) {
@@ -618,48 +592,10 @@ export function deriveImplicatedStandardPaths({
   }
   tasks.forEach((task, index) => record(inputSurface(task, index), true));
 
-  const paths = [];
   for (const surface of order) {
-    if (!Object.hasOwn(standardsBySurface, surface)) {
-      if (mustRoute.has(surface)) {
-        // The archived Markdown hub is absent on formula: an implicated surface routes to
-        // the canonical graph, which the resolver's `context.md` artifact serves in place
-        // of the missing Markdown routing table (criterion 5).
-        if (fallbackStandardPath !== undefined) {
-          paths.push(assertSafeRelPath(fallbackStandardPath, `graph-resolved standard path for ${surface}`));
-          continue;
-        }
-        throw new Error(`no standard path registered for implicated surface '${surface}'`);
-      }
-      onUnroutedSurface?.(surface);
-      continue;
-    }
-    const entry = standardsBySurface[surface];
-    if (typeof entry === 'string') {
-      paths.push(assertSafeRelPath(entry, `standard path for ${surface}`));
-      continue;
-    }
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)
-      || typeof entry.core !== 'string' || !Array.isArray(entry.leaves)) {
-      throw new Error(`invalid modular standard routing for surface '${surface}'`);
-    }
-    paths.push(assertSafeRelPath(entry.core, `core standard path for ${surface}`));
-    paths.push(...safePaths(entry.leaves, `leaf standard path for ${surface}`));
+    if (!strict.has(surface)) onUnroutedSurface?.(surface);
   }
-  return [...new Set(paths)];
-}
-
-function implicatedStandardInventory(input) {
-  const allPaths = deriveImplicatedStandardPaths(input);
-  const conditional = new Set();
-  for (const entry of Object.values(input.standardsBySurface)) {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
-    for (const path of safePaths(entry.leaves, 'leaf standard path')) conditional.add(path);
-  }
-  return {
-    required: allPaths.filter((path) => !conditional.has(path)),
-    conditional: allPaths.filter((path) => conditional.has(path)),
-  };
+  return strict.size > 0 ? [context] : [];
 }
 
 function selectedStandardPaths(input) {
@@ -753,35 +689,30 @@ export function buildTaskManifest(role, input) {
   return builders[role](input);
 }
 
-function implicatedStandards(input) {
-  return implicatedStandardInventory({
-    owningSurface: input.owningSurface,
-    crossCuttingSurfaces: input.crossCuttingSurfaces,
-    tasks: input.tasks,
-    standardsBySurface: input.standardsBySurface,
+// The phase builders' one surface-context input: the resolved `contextPath`, listed once.
+function implicatedContext(input) {
+  return deriveImplicatedStandardPaths({
+    ownership: {
+      owningSurface: input.owningSurface,
+      crossCuttingSurfaces: input.crossCuttingSurfaces,
+      tasks: input.tasks,
+    },
+    contextPath: input.contextPath,
     onUnroutedSurface: input.onUnroutedSurface,
-    fallbackStandardPath: input.fallbackStandardPath,
   });
 }
 
 export function buildPlanManifest(input) {
-  const standards = implicatedStandards(input);
+  const context = implicatedContext(input);
   return commonManifest(input, {
     phase: 'plan',
     role: 'plan',
     objective: 'Produce an implementation plan from the approved specification',
     requiredInputs: (root) => [
       required(root, input.specPath, PURPOSES.spec),
-      required(root, input.routingPath, PURPOSES.routing),
-      required(root, input.testingPath, PURPOSES.testing),
-      ...standards.required.map((path) => required(root, path, PURPOSES.standard)),
+      ...context.map((path) => required(root, path, PURPOSES.standard)),
     ],
-    onDemandInputs: (root) => [
-      ...standards.conditional.map((path) => onDemand(root, path, 'conditional surface standard')),
-      ...safePaths(input.otherHubPaths, 'on-demand hub path')
-        .filter((path) => !standards.required.includes(path) && !standards.conditional.includes(path))
-        .map((path) => onDemand(root, path, PURPOSES.hub)),
-    ],
+    onDemandInputs: () => [],
   });
 }
 
@@ -863,9 +794,9 @@ export function inspectResumeInputs({ repoRoot, specPath, resumeInputs = [] }) {
 }
 
 export function buildImplementManifest(input) {
-  // Preserve deterministic routing validation without making task standards eager
-  // controller context. Task-local child manifests still load their owning standard.
-  const standards = implicatedStandards(input);
+  // Validate every task's ownership without making the resolved context eager controller
+  // context: the phase controller reads it on demand; task-local child manifests load it.
+  const context = implicatedContext(input);
   return commonManifest(input, {
     phase: 'implement',
     role: 'implement',
@@ -874,9 +805,7 @@ export function buildImplementManifest(input) {
       required(root, input.planPath, PURPOSES.plan),
     ],
     onDemandInputs: (root) => [
-      onDemand(root, input.routingPath, PURPOSES.routing),
-      ...standards.required.map((path) => onDemand(root, path, PURPOSES.standard)),
-      ...standards.conditional.map((path) => onDemand(root, path, 'conditional surface standard')),
+      ...context.map((path) => onDemand(root, path, PURPOSES.standard)),
       onDemand(root, input.ledgerPath, PURPOSES.ledger),
       ...optionalOnDemand(root, input.taskResultIndexPath, PURPOSES.resultIndex),
       ...optionalOnDemand(root, input.specPath, PURPOSES.upstream),
@@ -886,7 +815,7 @@ export function buildImplementManifest(input) {
 }
 
 export function buildReviewManifest(input) {
-  const standards = implicatedStandards(input);
+  const context = implicatedContext(input);
   return commonManifest(input, {
     phase: 'review',
     role: 'review',
@@ -895,14 +824,9 @@ export function buildReviewManifest(input) {
       required(root, assertCriteriaOnlyPath(input.criteriaPath), PURPOSES.criteria),
       required(root, input.taskResultIndexPath, PURPOSES.resultIndex),
       required(root, input.branchDiffPath, PURPOSES.branchDiff),
-      ...standards.required.map((path) => required(root, path, PURPOSES.standard)),
+      ...context.map((path) => required(root, path, PURPOSES.standard)),
     ],
-    onDemandInputs: (root) => [
-      ...standards.conditional.map((path) => onDemand(root, path, 'conditional surface standard')),
-      ...safePaths(input.otherHubPaths, 'on-demand hub path')
-        .filter((path) => !standards.required.includes(path) && !standards.conditional.includes(path))
-        .map((path) => onDemand(root, path, PURPOSES.hub)),
-    ],
+    onDemandInputs: () => [],
   });
 }
 
@@ -1092,8 +1016,9 @@ function suppliedOptionsOutside(values, accepted) {
 }
 
 // Work-path inputs (.apex/work/**) ride the typed confined read, mirroring the
-// conductor's readArtifact boundary; any other input keeps the lexical guard,
-// because hub docs sit outside the .apex/work/ contract of work-paths.mjs.
+// conductor's readArtifact boundary. A verifier input named outside .apex/work/ (a
+// caller-supplied plan or index path) has no work-path family, so it keeps the
+// lexical guard of assertSafeRelPath instead.
 function readRepoFile(repoRoot, path, label) {
   const safePath = assertSafeRelPath(path, label);
   if (safePath.startsWith('.apex/work/')) {
@@ -1182,6 +1107,15 @@ export function main(argv = process.argv.slice(2)) {
     console.error(`autopilot-context: ${error.message}`);
     console.error(usage);
     return 2;
+  }
+  // The migrate state (G5): a repository that still carries a Markdown hub refuses every
+  // mode — read-only verification included — before any stdout line or filesystem write.
+  if (values['repo-root']) {
+    const refusal = migrateRefusal(values['repo-root']);
+    if (refusal) {
+      console.error(`autopilot-context: ${refusal.message}`);
+      return refusal.code;
+    }
   }
   if (values['verify-plan'] && values['verify-handoff']) {
     console.error('autopilot-context: choose exactly one verification mode');

@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { headlessCommand } from '../adapters/headless.mjs';
 import { collectHeadlessChannel } from '../scripts/cost-report.mjs';
+import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
 import { fakeResolveHubContext } from './helpers/fake-hub-context.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -1536,12 +1537,10 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         assert.equal(manifest.scope.phase, phase);
         assert.equal(manifest.modelTier, expectedTierByPhase[phase]);
         assert.equal(Object.hasOwn(manifest.contract, 'budget'), false);
-        // The graph resolver artifact stands in for routing, testing and standard alike,
-        // so the builders list it once per role; compare distinct inputs. Follow-up: Task 4
-        // de-duplicates the builders, then restore exact deepEqual on the raw lists.
-        assert.deepEqual([...new Set(manifest.required.map(({ path }) => path))], expectedRequired[phase]);
+        // The graph-resolved context is the one surface-context path, listed exactly once.
+        assert.deepEqual(manifest.required.map(({ path }) => path), expectedRequired[phase]);
         if (phase === 'implement') {
-          assert.deepEqual([...new Map(manifest.onDemand.map(({ path, available }) => [path, available]))], [
+          assert.deepEqual(manifest.onDemand.map(({ path, available }) => [path, available]), [
             ['.apex/work/tasks/topic/context/hub-context/context.md', true],
             ['.apex/work/tasks/topic/ledger.md', false],
             ['.apex/work/tasks/topic/task-result-index.md', false],
@@ -1560,6 +1559,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
             '.apex/work/tasks/topic/review-report.md',
           ]);
         }
+        if (phase !== 'implement') assert.deepEqual(manifest.onDemand, [], `${phase} carries no on-demand hub entries`);
         assert.ok(manifest.required.every(({ path, bytes, available }) => (
           !path.startsWith('/') && Number.isSafeInteger(bytes) && bytes >= 0 && available === true
         )));
@@ -4254,6 +4254,33 @@ if (process.argv[2] === '--version') {
       }
     });
 
+    it('refuses a repository still carrying a Markdown hub (migrate state) with exit 25 before any read or write', async () => {
+      const run = makeRun();
+      let spawnAttempts = 0;
+      try {
+        // The untracked hub file also dirties the tree: exit 25 (not the dirty-tree 1) proves
+        // the refusal comes before every preflight.
+        writeFileSync(join(run.dir, '.apex', '_INDEX.md'), '# Markdown Hub\n');
+        const { code, out, err } = await drive(run, {}, {
+          commandFor: (harness, prompt) => {
+            spawnAttempts += 1;
+            return stubCommandFor(harness, prompt);
+          },
+          resolveHubContext: () => { throw new Error('must not resolve hub context'); },
+        });
+        assert.equal(code, MIGRATE_REFUSAL_EXIT, err);
+        assert.equal(spawnAttempts, 0, 'must refuse before building any command');
+        assert.equal(out, '', 'the refusal precedes any stdout line');
+        assert.ok(err.split('\n').includes(`autopilot: refusing to drive ${run.specPath}: ${MIGRATE_REFUSAL_MESSAGE}`), err);
+        assert.match(err, /graph-migrate/);
+        assert.equal(existsSync(run.statusFile), false, 'a refused run writes no status file');
+        assert.equal(existsSync(run.taskDir), false, 'a refused run creates no run directory');
+        assert.deepEqual(readdirSync(join(run.dir, '.apex', 'work')), ['specs'], 'nothing but the spec under the work dir (no lock)');
+      } finally {
+        rmSync(run.dir, { recursive: true, force: true });
+      }
+    });
+
     refuses('the current branch is not the contract branch', { repoBranch: 'some-other-branch' }, /branch/i);
     refuses('the current branch is main', { repoBranch: 'main', branch: 'main' }, /main/);
     refuses('the contract has no drive: autopilot', { drive: null }, /drive: autopilot/);
@@ -4569,6 +4596,29 @@ describe('autopilot main(argv)', () => {
       assert.equal(code, 1);
       assert.match(err, /drive: autopilot/);
       assert.ok(!/git branch/.test(err), `must not fall over on git, got: ${err}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a repository still carrying a Markdown hub (migrate state) with exit 25 and no spawn or write', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'steepy-autopilot-'));
+    let spawnAttempts = 0;
+    try {
+      mkdirSync(join(dir, '.apex', 'work', 'specs'), { recursive: true });
+      writeFileSync(join(dir, '.apex', '_INDEX.md'), '# Markdown Hub\n');
+      writeFileSync(join(dir, '.apex', 'work', 'specs', 'topic.md'), '<!-- verdict: GAP | gear: 3\ndrive: autopilot\n-->\n\n# Spec\n');
+      const { code, err } = await captured(['.apex/work/specs/topic.md'], {
+        cwd: dir,
+        commandFor: () => { spawnAttempts += 1; throw new Error('must not spawn'); },
+      });
+      assert.equal(code, MIGRATE_REFUSAL_EXIT, err);
+      assert.equal(spawnAttempts, 0, 'a refused run spawns nothing');
+      assert.match(err, /graph-migrate/);
+      assert.ok(err.split('\n').includes(`autopilot: ${MIGRATE_REFUSAL_MESSAGE}`), err);
+      assert.equal(existsSync(join(dir, '.apex', 'work', 'tasks', 'topic', 'autopilot-status.md')), false, 'no status file');
+      assert.equal(existsSync(join(dir, '.apex', 'work', 'tasks')), false, 'no run directory');
+      assert.deepEqual(readdirSync(join(dir, '.apex', 'work')), ['specs'], 'nothing but the spec under the work dir (no lock)');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

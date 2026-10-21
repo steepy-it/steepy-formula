@@ -11,27 +11,24 @@
     ".apex/work/tasks/context-efficient/task-1.diff": "diff --git a/scripts/example.mjs b/scripts/example.mjs\n+export const ready = true;\n",
     ".apex/work/tasks/context-efficient/branch-diff.txt": "diff --git a/scripts/example.mjs b/scripts/example.mjs\n+export const ready = true;\ndiff --git a/adapters/example.mjs b/adapters/example.mjs\n+export const routed = true;\n",
     ".apex/work/tasks/context-efficient/ledger.md": "# Ledger\n\nTask 1 pending. Task 2 pending.\n",
-    ".apex/context-manifests.md": "# Context manifests\n\nRequired inputs are eager; on-demand inputs are read only for a concrete missing fact.\n",
-    ".apex/_INDEX.md": "# Hub index\n\n| scripts | standards/scripts.md | scripts-agent |\n| adapters | standards/adapters.md | adapters-agent |\n| prose | standards/prose.md | prose-agent |\n",
-    ".apex/testing-and-checklist.md": "# Testing\n\nRun npm test and validate-hub.\n",
-    ".apex/standards/scripts.md": "# Scripts standard\n\nNode built-ins only. Pure functions and thin CLIs.\n",
-    ".apex/standards/scripts/scripts-core.md": "# Scripts core standard\n\nModular owning standard selected by the routing table.\n",
-    ".apex/standards/adapters.md": "# Adapters standard\n\nKeep provider details adapter-local.\n",
-    ".apex/standards/prose.md": "# Prose standard\n\nUNRELATED_CONTEXT_SENTINEL_7B1D9E. This complete unrelated artifact must never be eager.\n"
+    ".apex/work/tasks/context-efficient/context/hub-context/context.md": "# Context (schema v1)\n\nProject: `context-efficient`\n\n## Layer 1 — mandatory\n\n- scripts: Node built-ins only. Pure functions and thin CLIs.\n- adapters: Keep provider details adapter-local.\n- testing: Run npm test and steepy-formula graph validate.\n",
+    ".apex/work/tasks/context-efficient/context/scripts/context.md": "# Context (schema v1)\n\nScripts: Node built-ins only. Pure functions and thin CLIs.\n",
+    ".apex/work/tasks/context-efficient/context/adapters/context.md": "# Context (schema v1)\n\nAdapters: Keep provider details adapter-local.\n",
+    ".apex/work/tasks/context-efficient/context/prose/context.md": "# Context (schema v1)\n\nProse: UNRELATED_CONTEXT_SENTINEL_7B1D9E. This complete unrelated artifact must never be eager.\n"
   },
+  "contextPath": ".apex/work/tasks/context-efficient/context/hub-context/context.md",
   "surfaces": {
-    "scripts": ".apex/standards/scripts.md",
-    "adapters": ".apex/standards/adapters.md",
-    "prose": ".apex/standards/prose.md"
+    "scripts": ".apex/work/tasks/context-efficient/context/scripts/context.md",
+    "adapters": ".apex/work/tasks/context-efficient/context/adapters/context.md",
+    "prose": ".apex/work/tasks/context-efficient/context/prose/context.md"
   },
   "baselineEager": [
     ".apex/work/specs/context-efficient.md",
     ".apex/work/plans/context-efficient.md",
-    ".apex/_INDEX.md",
-    ".apex/testing-and-checklist.md",
-    ".apex/standards/scripts.md",
-    ".apex/standards/adapters.md",
-    ".apex/standards/prose.md",
+    ".apex/work/tasks/context-efficient/context/hub-context/context.md",
+    ".apex/work/tasks/context-efficient/context/scripts/context.md",
+    ".apex/work/tasks/context-efficient/context/adapters/context.md",
+    ".apex/work/tasks/context-efficient/context/prose/context.md",
     ".apex/work/tasks/context-efficient/task-1-report.md",
     ".apex/work/tasks/context-efficient/task-2-report.md",
     ".apex/work/tasks/context-efficient/branch-diff.txt"
@@ -40,10 +37,7 @@
     "plan": {
       "eager": [
         ".apex/work/specs/context-efficient.md",
-        ".apex/_INDEX.md",
-        ".apex/testing-and-checklist.md",
-        ".apex/standards/scripts.md",
-        ".apex/standards/adapters.md"
+        ".apex/work/tasks/context-efficient/context/hub-context/context.md"
       ],
       "prompt": "Invoke the steepy-formula 'plan' skill the way this harness invokes skills, on the spec at /repo/.apex/work/specs/context-efficient.md. This is an unattended gear-3 autopilot run: the contract is the extended verdict artifact at the head of that spec — read it and obey it. Follow the plan skill's autopilot branch: never ask a question, never wait for a human, and never push, bump a version, or open a PR. If anything is unresolvable, append a `BLOCKED` line with the reason to the run's `autopilot-status.md` (in .apex/work/tasks/<spec-basename>/) and exit non-zero."
     },
@@ -51,10 +45,7 @@
       "eager": [
         ".apex/work/plans/context-efficient.md",
         ".apex/work/specs/context-efficient.md",
-        ".apex/_INDEX.md",
-        ".apex/testing-and-checklist.md",
-        ".apex/standards/scripts.md",
-        ".apex/standards/adapters.md",
+        ".apex/work/tasks/context-efficient/context/hub-context/context.md",
         ".apex/work/tasks/context-efficient/ledger.md"
       ],
       "prompt": "Invoke the steepy-formula 'implement' skill the way this harness invokes skills, on the spec at /repo/.apex/work/specs/context-efficient.md. This is an unattended gear-3 autopilot run: the contract is the extended verdict artifact at the head of that spec — read it and obey it. Follow the implement skill's autopilot branch: never ask a question, never wait for a human, and never push, bump a version, or open a PR. If anything is unresolvable, append a `BLOCKED` line with the reason to the run's `autopilot-status.md` (in .apex/work/tasks/<spec-basename>/) and exit non-zero."
@@ -63,10 +54,7 @@
       "eager": [
         ".apex/work/specs/context-efficient.md",
         ".apex/work/plans/context-efficient.md",
-        ".apex/_INDEX.md",
-        ".apex/testing-and-checklist.md",
-        ".apex/standards/scripts.md",
-        ".apex/standards/adapters.md",
+        ".apex/work/tasks/context-efficient/context/hub-context/context.md",
         ".apex/work/tasks/context-efficient/task-result-index.md",
         ".apex/work/tasks/context-efficient/branch-diff.txt",
         ".apex/work/tasks/context-efficient/ledger.md"

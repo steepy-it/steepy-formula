@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert/strict';
 import {
-  cpSync, existsSync, linkSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
+  existsSync, linkSync, lstatSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -27,18 +27,24 @@ import {
   reviewPhaseContext,
   resolveGraphHubContext,
   specPhaseContext,
-  standardsBySurfaceFromRouting,
   validateContextManifest,
   writeContextManifest,
 } from '../scripts/autopilot-context.mjs';
 import { phasePrompt } from '../scripts/autopilot.mjs';
+import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
 import { writeProjectConfig } from '../scripts/formula/core/project-config.mjs';
 import { DOGFOOD_CHECKPOINT, DOGFOOD_CHECKPOINT_SKIP } from './helpers/dogfood-checkpoint.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptPath = join(here, '..', 'scripts', 'autopilot-context.mjs');
 const fixture = JSON.parse(readFileSync(join(here, 'fixtures', 'autopilot-context', 'scenario.json'), 'utf8'));
-const modularFixtureRoot = join(here, 'fixtures', 'modular-hub');
+// The run's graph-resolved context (`steepy-formula context resolve` → `context.md`): the one
+// path every implicated surface binds in a phase manifest. Task-role `--standard` /
+// `--hub-index` values are resolved contexts too (P14): one per surface in this scenario.
+const contextPath = fixture.contextPath;
+const scriptsContext = fixture.surfaces.scripts;
+const adaptersContext = fixture.surfaces.adapters;
+const PURPOSE_UPSTREAM = 'upstream context if the task brief is insufficient; missing facts resolve through the graph resolver (steepy-formula context resolve)';
 
 function seedFixture(repoRoot) {
   for (const [path, contents] of Object.entries(fixture.files)) {
@@ -70,26 +76,26 @@ test('implementer manifest records bytes, preserves order, and keeps upstream ar
     repoRoot,
     task: 1,
     briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
-    standardPath: '.apex/standards/scripts.md',
+    standardPath: scriptsContext,
     planPath: '.apex/work/plans/context-efficient.md',
     specPath: '.apex/work/specs/context-efficient.md',
-    hubIndexPath: '.apex/_INDEX.md',
+    hubIndexPath: contextPath,
   });
 
   assert.equal(manifest.schemaVersion, 1);
   assert.equal(manifest.scope.role, 'implementer');
   assert.deepEqual(manifest.required.map(({ path }) => path), [
     '.apex/work/tasks/context-efficient/task-1-brief.md',
-    '.apex/standards/scripts.md',
+    scriptsContext,
   ]);
   assert.deepEqual(manifest.required.map(({ bytes }) => bytes), [
     statSync(join(repoRoot, '.apex/work/tasks/context-efficient/task-1-brief.md')).size,
-    statSync(join(repoRoot, '.apex/standards/scripts.md')).size,
+    statSync(join(repoRoot, scriptsContext)).size,
   ]);
   assert.deepEqual(manifest.onDemand.map(({ path }) => path), [
     '.apex/work/plans/context-efficient.md',
     '.apex/work/specs/context-efficient.md',
-    '.apex/_INDEX.md',
+    contextPath,
   ]);
   assert.ok(!JSON.stringify(manifest).includes('Node built-ins only'));
 });
@@ -99,7 +105,7 @@ test('validator rejects traversal, absolute paths, unknown roles, and missing re
   const valid = buildImplementerManifest({
     ...base, repoRoot, task: 1,
     briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
-    standardPath: '.apex/standards/scripts.md',
+    standardPath: scriptsContext,
   });
 
   assert.throws(
@@ -115,7 +121,7 @@ test('validator rejects traversal, absolute paths, unknown roles, and missing re
     /unknown context role/,
   );
   assert.throws(
-    () => buildImplementerManifest({ ...base, repoRoot, task: 1, briefPath: 'missing.md', standardPath: '.apex/standards/scripts.md' }),
+    () => buildImplementerManifest({ ...base, repoRoot, task: 1, briefPath: 'missing.md', standardPath: scriptsContext }),
     /required input does not exist/,
   );
 });
@@ -125,7 +131,7 @@ test('validator enforces a closed schema and compatible phase, role, and task sc
   const valid = buildImplementerManifest({
     ...base, repoRoot, task: 1,
     briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
-    standardPath: '.apex/standards/scripts.md',
+    standardPath: scriptsContext,
   });
 
   assert.throws(
@@ -165,7 +171,7 @@ test('writer produces byte-identical JSON for identical inputs', (t) => {
   const input = {
     ...base, repoRoot, task: 1,
     briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
-    standardPath: '.apex/standards/scripts.md',
+    standardPath: scriptsContext,
   };
   const first = buildTaskManifest('implementer', input);
   const second = buildTaskManifest('implementer', input);
@@ -183,7 +189,7 @@ test('manifest writes pin the typed manifest family and reject conveniences, ali
   const manifest = buildTaskManifest('implementer', {
     ...base, repoRoot, task: 1,
     briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
-    standardPath: '.apex/standards/scripts.md',
+    standardPath: scriptsContext,
   });
   const ctx = (name) => `.apex/work/tasks/context-efficient/context/${name}`;
   for (const name of [
@@ -235,15 +241,15 @@ test('task role builders expose exactly the approved eager inventories', (t) => 
   const repoRoot = materialize(t);
   const common = { ...base, repoRoot, task: 1 };
   const briefPath = '.apex/work/tasks/context-efficient/task-1-brief.md';
-  const standardPath = '.apex/standards/scripts.md';
+  const standardPath = scriptsContext;
   const reportPath = '.apex/work/tasks/context-efficient/task-1-report.md';
   const taskDiffPath = '.apex/work/tasks/context-efficient/task-1.diff';
   const issuePath = '.apex/work/tasks/context-efficient/task-1-review.md';
-  const standardPaths = [standardPath, '.apex/standards/adapters.md'];
+  const standardPaths = [standardPath, adaptersContext];
 
-  const reviewer = buildTaskReviewerManifest({ ...common, briefPath, reportPath, taskDiffPath, standardPaths, hubIndexPath: '.apex/_INDEX.md' });
+  const reviewer = buildTaskReviewerManifest({ ...common, briefPath, reportPath, taskDiffPath, standardPaths, hubIndexPath: contextPath });
   assert.deepEqual(reviewer.required.map((item) => item.path), [briefPath, reportPath, taskDiffPath, ...standardPaths]);
-  assert.deepEqual(reviewer.onDemand.map((item) => item.path), ['.apex/_INDEX.md']);
+  assert.deepEqual(reviewer.onDemand.map((item) => item.path), [contextPath]);
 
   const fix = buildFixManifest({ ...common, briefPath, issuePath, taskDiffPath, standardPaths });
   assert.deepEqual(fix.required.map((item) => item.path), [briefPath, issuePath, taskDiffPath, ...standardPaths]);
@@ -257,14 +263,14 @@ test('task role builders expose exactly the approved eager inventories', (t) => 
     criteriaPath: '.apex/work/tasks/context-efficient/success-criteria.md',
     taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
     branchDiffPath: '.apex/work/tasks/context-efficient/branch-diff.txt',
-    standardPaths: ['.apex/standards/scripts.md', '.apex/standards/adapters.md'],
+    standardPaths: [scriptsContext, adaptersContext],
   });
   assert.deepEqual(finalReview.required.map((item) => item.path), [
     '.apex/work/tasks/context-efficient/success-criteria.md',
     '.apex/work/tasks/context-efficient/task-result-index.md',
     '.apex/work/tasks/context-efficient/branch-diff.txt',
-    '.apex/standards/scripts.md',
-    '.apex/standards/adapters.md',
+    scriptsContext,
+    adaptersContext,
   ]);
   assert.throws(() => buildFinalReviewManifest({
     ...base, repoRoot,
@@ -278,7 +284,7 @@ test('task role builders expose exactly the approved eager inventories', (t) => 
     criteriaPath: '.apex/work/specs/context-efficient.md',
     taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
     branchDiffPath: '.apex/work/tasks/context-efficient/branch-diff.txt',
-    standardPaths: ['.apex/standards/scripts.md'],
+    standardPaths: [scriptsContext],
   }), /criteria-only artifact.*is a spec path/i);
 
   const validReview = buildFinalReviewManifest({
@@ -286,7 +292,7 @@ test('task role builders expose exactly the approved eager inventories', (t) => 
     criteriaPath: '.apex/work/tasks/context-efficient/success-criteria.md',
     taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
     branchDiffPath: '.apex/work/tasks/context-efficient/branch-diff.txt',
-    standardPaths: ['.apex/standards/scripts.md'],
+    standardPaths: [scriptsContext],
   });
   const specStat = statSync(join(repoRoot, '.apex/work/specs/context-efficient.md'));
   assert.throws(() => validateContextManifest({
@@ -351,7 +357,7 @@ test('criteria paths ride the typed grammar: aliases and wrong-type forms fail c
     criteriaPath,
     taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
     branchDiffPath: '.apex/work/tasks/context-efficient/branch-diff.txt',
-    standardPaths: ['.apex/standards/scripts.md'],
+    standardPaths: [scriptsContext],
   });
   assert.equal(finalReview(canonical).required[0].path, canonical);
   for (const criteriaPath of [
@@ -367,7 +373,7 @@ test('criteria paths ride the typed grammar: aliases and wrong-type forms fail c
     '.apex/work/tasks/context-efficient/task-result-index.md',
     '.apex/work/tasks/context-efficient/context/task-1-implement.json',
     '.apex/work/tasks/context-efficient/ledger.md',
-    '.apex/standards/scripts.md',
+    contextPath,
     'scripts/autopilot-context.mjs',
   ]) {
     assert.throws(() => finalReview(criteriaPath), /criteria-only artifact/u, criteriaPath);
@@ -433,7 +439,7 @@ test('symlinked criteria, manifest, and spec-source targets and ancestors fail c
       write: (repoRoot) => writeContextManifest(buildTaskManifest('implementer', {
         ...base, repoRoot, task: 1,
         briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
-        standardPath: '.apex/standards/scripts.md',
+        standardPath: scriptsContext,
       }), { repoRoot, manifestPath: '.apex/work/tasks/confine-run/context/phase-plan-attempt-1.json' }),
     },
     {
@@ -568,41 +574,34 @@ test('spec metadata rejects combined ownership and missing complexity', () => {
   assert.throws(() => specPhaseContext('- **Owning surface:** scripts'), /missing Feature complexity/);
 });
 
-test('unrouted cross-cutting prose is reported and skipped, while ownership stays strict', () => {
-  const standardsBySurface = fixture.surfaces;
-  const ignored = [];
-  assert.deepEqual(
-    deriveImplicatedStandardPaths({
-      owningSurface: 'scripts',
-      crossCuttingSurfaces: ['adapters', 'stable hub docs'],
-      standardsBySurface,
-      onUnroutedSurface: (surface) => ignored.push(surface),
-    }),
-    ['.apex/standards/scripts.md', '.apex/standards/adapters.md'],
-    'an unregistered cross-cutting entry must not halt a run or drop a routed standard',
-  );
-  assert.deepEqual(ignored, ['stable hub docs'], 'each skipped surface must be reported once');
-
-  assert.deepEqual(
-    deriveImplicatedStandardPaths({ crossCuttingSurfaces: ['stable hub docs'], standardsBySurface }),
-    [],
-    'the reporting callback stays optional',
-  );
-
-  for (const input of [
-    { owningSurface: 'ghost', standardsBySurface },
-    { tasks: [{ owningSurface: 'ghost' }], standardsBySurface },
-    // Cross-cutting is advisory only until the same surface is also a routing fact.
-    { crossCuttingSurfaces: ['ghost'], tasks: [{ surface: 'ghost' }], standardsBySurface },
+test('ownership stays strict: owning and per-task surfaces bind the resolved context and are never reported as unrouted', () => {
+  for (const ownership of [
+    { owningSurface: 'ghost' },
+    { tasks: [{ owningSurface: 'ghost' }] },
+    // Cross-cutting is advisory only until the same surface is also an ownership fact.
+    { crossCuttingSurfaces: ['ghost'], tasks: [{ surface: 'ghost' }] },
   ]) {
-    assert.throws(
-      () => deriveImplicatedStandardPaths(input),
-      /no standard path registered for implicated surface 'ghost'/,
+    const ignored = [];
+    assert.deepEqual(
+      deriveImplicatedStandardPaths({ ownership, contextPath, onUnroutedSurface: (surface) => ignored.push(surface) }),
+      [contextPath],
+      `${JSON.stringify(ownership)} must bind the resolved context`,
     );
+    assert.deepEqual(ignored, [], `${JSON.stringify(ownership)} is an ownership fact, never advisory prose`);
+  }
+
+  for (const [ownership, reason] of [
+    [{ tasks: [{}] }, /tasks\[0\] is missing owningSurface/],
+    [{ tasks: ['scripts'] }, /tasks\[0\] must be an object/],
+    [{ tasks: 'scripts' }, /tasks must be a list/],
+    [{ owningSurface: 'scripts\nsecond line' }, /unsafe owningSurface/],
+    ['scripts', /ownership must be an object/],
+  ]) {
+    assert.throws(() => deriveImplicatedStandardPaths({ ownership, contextPath }), reason, JSON.stringify(ownership));
   }
 
   assert.throws(
-    () => deriveImplicatedStandardPaths({ owningSurface: 'scripts', standardsBySurface, onUnroutedSurface: 'nope' }),
+    () => deriveImplicatedStandardPaths({ ownership: { owningSurface: 'scripts' }, contextPath, onUnroutedSurface: 'nope' }),
     /onUnroutedSurface must be a function/,
   );
 });
@@ -619,19 +618,19 @@ test('a canonical spec with cross-cutting surfaces builds its plan manifest', (t
     ...base, repoRoot,
     modelTier: route.modelTier,
     specPath: '.apex/work/specs/context-efficient.md',
-    routingPath: '.apex/_INDEX.md',
-    testingPath: '.apex/testing-and-checklist.md',
+    contextPath,
     owningSurface: route.owningSurface,
     crossCuttingSurfaces: route.crossCuttingSurfaces,
-    standardsBySurface: fixture.surfaces,
     onUnroutedSurface: (surface) => ignored.push(surface),
   });
   assert.deepEqual(manifest.required.map((item) => item.path), [
-    '.apex/work/specs/context-efficient.md', '.apex/_INDEX.md', '.apex/testing-and-checklist.md',
-    '.apex/standards/scripts.md', '.apex/standards/adapters.md',
+    '.apex/work/specs/context-efficient.md', contextPath,
   ]);
   assert.deepEqual(manifest.onDemand.map((item) => item.path), []);
-  assert.deepEqual(ignored, ['stable hub docs']);
+  // P12: every cross-cutting entry that is not also an ownership fact is reported and skipped —
+  // a registered surface name (`adapters`) and prose alike; the owning surface's resolved
+  // context already carries what the graph knows about it.
+  assert.deepEqual(ignored, ['adapters', 'stable hub docs']);
 });
 
 test('plan routing fails closed when task boundaries or criterion IDs are absent', () => {
@@ -716,7 +715,7 @@ test('discovery signals survive the real review manifest boundary without loadin
       criteriaPath: '.apex/work/tasks/context-efficient/success-criteria.md',
       taskResultIndexPath: indexPath,
       branchDiffPath: '.apex/work/tasks/context-efficient/branch-diff.txt',
-      tasks: reviewPhaseContext(plan, index).tasks, standardsBySurface: fixture.surfaces,
+      tasks: reviewPhaseContext(plan, index).tasks, contextPath,
     });
     const declaredIndex = manifest.required.find(({ path }) => path === indexPath);
     assert.ok(declaredIndex);
@@ -765,27 +764,22 @@ test('SC6: the phase-controller tier is floored and capped at standard, named wi
   assert.match(review.evidence, /distribution=mechanical:1,integration:0,design:1/);
 });
 
-test('phase builders derive only implicated standards and preserve scalar contract metadata', (t) => {
+test('phase builders list the resolved context exactly once and preserve scalar contract metadata', (t) => {
   const repoRoot = materialize(t);
-  const standardsBySurface = fixture.surfaces;
+  const entries = (list) => list.map(({ path, purpose }) => [path, purpose]);
   const plan = buildPlanManifest({
     ...base, repoRoot,
     specPath: '.apex/work/specs/context-efficient.md',
-    routingPath: '.apex/_INDEX.md',
-    testingPath: '.apex/testing-and-checklist.md',
+    contextPath,
     owningSurface: 'scripts',
     crossCuttingSurfaces: ['adapters'],
-    standardsBySurface,
-    otherHubPaths: ['.apex/standards/prose.md'],
     contract: { commitAuth: 'yes', drive: 'autopilot' },
   });
-  assert.deepEqual(plan.required.map((item) => item.path), [
-    '.apex/work/specs/context-efficient.md', '.apex/_INDEX.md', '.apex/testing-and-checklist.md',
-    '.apex/standards/scripts.md', '.apex/standards/adapters.md',
+  assert.deepEqual(entries(plan.required), [
+    ['.apex/work/specs/context-efficient.md', 'approved specification'],
+    [contextPath, 'implicated surface standard'],
   ]);
-  assert.deepEqual(plan.onDemand.map((item) => item.path), [
-    '.apex/standards/prose.md',
-  ]);
+  assert.deepEqual(plan.onDemand, []);
   assert.deepEqual(plan.contract, { commitAuth: 'yes', drive: 'autopilot' });
 
   const implement = buildImplementManifest({
@@ -793,19 +787,16 @@ test('phase builders derive only implicated standards and preserve scalar contra
     planPath: '.apex/work/plans/context-efficient.md',
     ledgerPath: '.apex/work/tasks/context-efficient/ledger.md',
     specPath: '.apex/work/specs/context-efficient.md',
-    routingPath: '.apex/_INDEX.md',
+    contextPath,
     tasks: [{ surface: 'scripts' }, { surface: 'adapters' }],
-    standardsBySurface,
   });
-  assert.deepEqual(implement.required.map((item) => item.path), [
-    '.apex/work/plans/context-efficient.md',
+  assert.deepEqual(entries(implement.required), [
+    ['.apex/work/plans/context-efficient.md', 'approved implementation plan'],
   ]);
-  assert.deepEqual(implement.onDemand.map((item) => item.path), [
-    '.apex/_INDEX.md',
-    '.apex/standards/scripts.md',
-    '.apex/standards/adapters.md',
-    '.apex/work/tasks/context-efficient/ledger.md',
-    '.apex/work/specs/context-efficient.md',
+  assert.deepEqual(entries(implement.onDemand), [
+    [contextPath, 'implicated surface standard'],
+    ['.apex/work/tasks/context-efficient/ledger.md', 'implementation task ledger'],
+    ['.apex/work/specs/context-efficient.md', PURPOSE_UPSTREAM],
   ]);
 
   const review = buildReviewManifest({
@@ -813,24 +804,38 @@ test('phase builders derive only implicated standards and preserve scalar contra
     criteriaPath: '.apex/work/tasks/context-efficient/success-criteria.md',
     taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
     branchDiffPath: '.apex/work/tasks/context-efficient/branch-diff.txt',
+    contextPath,
     tasks: [{ owningSurface: 'scripts' }, { owningSurface: 'adapters' }],
-    standardsBySurface,
   });
-  assert.deepEqual(review.required.slice(-2).map((item) => item.path), [
-    '.apex/standards/scripts.md', '.apex/standards/adapters.md',
+  assert.deepEqual(entries(review.required), [
+    ['.apex/work/tasks/context-efficient/success-criteria.md', 'success-criteria source'],
+    ['.apex/work/tasks/context-efficient/task-result-index.md', 'plan and task-result index'],
+    ['.apex/work/tasks/context-efficient/branch-diff.txt', 'aggregate branch diff'],
+    [contextPath, 'implicated surface standard'],
   ]);
+  assert.deepEqual(review.onDemand, []);
+
+  // The legacy routing purposes are gone: no phase manifest names a routing table, a testing
+  // checklist, or a conditional (leaf) standard — the resolved context stands for all of them.
+  for (const manifest of [plan, implement, review]) {
+    const purposes = [...manifest.required, ...manifest.onDemand].map(({ purpose }) => purpose);
+    for (const legacy of ['surface routing table', 'testing checklist', 'conditional surface standard']) {
+      assert.ok(!purposes.includes(legacy), `${manifest.scope.role} must not carry the '${legacy}' purpose`);
+    }
+  }
+
   assert.deepEqual(buildPhaseManifest('review', {
     ...base, repoRoot,
     criteriaPath: '.apex/work/tasks/context-efficient/success-criteria.md',
     taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
     branchDiffPath: '.apex/work/tasks/context-efficient/branch-diff.txt',
-    tasks: [{ surface: 'scripts' }], standardsBySurface,
+    tasks: [{ surface: 'scripts' }], contextPath,
   }), buildReviewManifest({
     ...base, repoRoot,
     criteriaPath: '.apex/work/tasks/context-efficient/success-criteria.md',
     taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
     branchDiffPath: '.apex/work/tasks/context-efficient/branch-diff.txt',
-    tasks: [{ surface: 'scripts' }], standardsBySurface,
+    tasks: [{ surface: 'scripts' }], contextPath,
   }));
 });
 
@@ -839,7 +844,7 @@ test('comparative fixture retains required facts with lower eager input and prom
   const manifest = buildImplementerManifest({
     ...base, repoRoot, task: 1,
     briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
-    standardPath: '.apex/standards/scripts.md',
+    standardPath: scriptsContext,
     planPath: '.apex/work/plans/context-efficient.md',
   });
   const eagerText = manifest.required.map(({ path }) => readFileSync(join(repoRoot, path), 'utf8')).join('\n');
@@ -881,30 +886,28 @@ test('nested Task prose does not create or split canonical plan tasks', () => {
 
 test('phase prompts shrink independently while required-input bytes obey the workflow-total SC5 contract', (t) => {
   const repoRoot = materialize(t);
-  const standardsBySurface = fixture.surfaces;
   const manifests = {
     plan: buildPlanManifest({
       ...base, repoRoot,
       specPath: '.apex/work/specs/context-efficient.md',
-      routingPath: '.apex/_INDEX.md',
-      testingPath: '.apex/testing-and-checklist.md',
-      owningSurface: 'scripts', crossCuttingSurfaces: ['adapters'], standardsBySurface,
-      otherHubPaths: [],
+      contextPath,
+      owningSurface: 'scripts', crossCuttingSurfaces: ['adapters'],
     }),
     implement: buildImplementManifest({
       ...base, repoRoot,
       planPath: '.apex/work/plans/context-efficient.md',
       ledgerPath: '.apex/work/tasks/context-efficient/ledger.md',
-      routingPath: '.apex/_INDEX.md',
       specPath: '.apex/work/specs/context-efficient.md',
-      tasks: [{ owningSurface: 'scripts' }, { owningSurface: 'adapters' }], standardsBySurface,
+      contextPath,
+      tasks: [{ owningSurface: 'scripts' }, { owningSurface: 'adapters' }],
     }),
     review: buildReviewManifest({
       ...base, repoRoot,
       criteriaPath: '.apex/work/tasks/context-efficient/success-criteria.md',
       taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
       branchDiffPath: '.apex/work/tasks/context-efficient/branch-diff.txt',
-      tasks: [{ owningSurface: 'scripts' }, { owningSurface: 'adapters' }], standardsBySurface,
+      contextPath,
+      tasks: [{ owningSurface: 'scripts' }, { owningSurface: 'adapters' }],
     }),
   };
   const requiredFacts = {
@@ -929,7 +932,7 @@ test('phase prompts shrink independently while required-input bytes obey the wor
       `${phase} generated prompt bytes must strictly shrink independently of required inputs`);
     if (phase === 'plan') {
       assert.equal(currentRequiredBytes, baselineRequiredBytes,
-        'plan required bytes do not grow: approved spec+routing+testing+implicated standards equal baseline');
+        'plan required bytes do not grow: approved spec + the resolved context equal baseline');
     } else {
       assert.ok(currentRequiredBytes < baselineRequiredBytes,
         `${phase} required-input bytes must strictly shrink against its matching honest baseline inventory`);
@@ -944,75 +947,6 @@ test('phase prompts shrink independently while required-input bytes obey the wor
   assert.deepEqual(manifests.implement.required.map(({ path }) => path), [
     '.apex/work/plans/context-efficient.md',
   ]);
-});
-
-test('modular routing preserves core and ordered leaves while plural task manifests materialize only skill-selected matches', (t) => {
-  const repoRoot = mkdtempSync(join(tmpdir(), 'steepy-modular-context-'));
-  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
-  cpSync(modularFixtureRoot, repoRoot, { recursive: true });
-  mkdirSync(join(repoRoot, '.apex/work/plans'), { recursive: true });
-  mkdirSync(join(repoRoot, '.apex/work/tasks/topic'), { recursive: true });
-  writeFileSync(join(repoRoot, '.apex/work/plans/topic.md'), '# Plan\n');
-  writeFileSync(join(repoRoot, '.apex/work/tasks/topic/task-1-brief.md'), '# Task 1\n\nExact paths: web/auth/session.mjs, web/data/store.mjs\nTopics: authentication and session handling; database and persistence paths\n');
-  writeFileSync(join(repoRoot, '.apex/work/tasks/topic/task-2-brief.md'), '# Task 2\n\nExact paths: web/auth/session.mjs\nTopic: authentication and session handling\n');
-  const bothLeafEvidence = readFileSync(join(repoRoot, '.apex/work/tasks/topic/task-1-brief.md'), 'utf8');
-  for (const condition of ['authentication and session handling', 'database and persistence paths']) {
-    assert.ok(bothLeafEvidence.includes(condition), `task evidence must match the real mini-routing condition: ${condition}`);
-  }
-  const routingPath = '.apex/_INDEX.md';
-  const standardsBySurface = standardsBySurfaceFromRouting(
-    readFileSync(join(repoRoot, routingPath), 'utf8'), { repoRoot },
-  );
-  const standardPaths = [
-    '.apex/standards/web/web-core.md',
-    '.apex/standards/web/web-auth.md',
-    '.apex/standards/web/web-data.md',
-  ];
-  const manifest = buildImplementManifest({
-    ...base, repoRoot,
-    planPath: '.apex/work/plans/topic.md', routingPath,
-    ledgerPath: '.apex/work/tasks/topic/ledger.md',
-    tasks: [{ owningSurface: 'web' }], standardsBySurface,
-  });
-  assert.deepEqual(manifest.onDemand.slice(0, 4).map(({ path, purpose }) => [path, purpose]), [
-    [routingPath, 'surface routing table'],
-    [standardPaths[0], 'implicated surface standard'],
-    [standardPaths[1], 'conditional surface standard'],
-    [standardPaths[2], 'conditional surface standard'],
-  ]);
-  assert.deepEqual(standardsBySurface.web, {
-    core: standardPaths[0],
-    leaves: standardPaths.slice(1),
-  }, 'engine preserves exact mini-routing order so the skill can match against evidence');
-  const taskManifest = buildImplementerManifest({
-    ...base, repoRoot, task: 1,
-    briefPath: '.apex/work/tasks/topic/task-1-brief.md', standardPaths,
-  });
-  assert.deepEqual(taskManifest.required.slice(1).map(({ path }) => path), standardPaths);
-
-  const cliOutput = '.apex/work/tasks/topic/context/task-1-implement.json';
-  const cli = spawnSync(process.execPath, [scriptPath,
-    '--repo-root', repoRoot, '--role', 'implementer', '--run-id', base.runId,
-    '--task', '1', '--model-tier', 'standard',
-    '--brief', '.apex/work/tasks/topic/task-1-brief.md',
-    '--standard', standardPaths[0], '--standard', standardPaths[1], '--standard', standardPaths[2],
-    '--output', cliOutput,
-  ], { encoding: 'utf8' });
-  assert.equal(cli.status, 0, cli.stderr);
-  assert.deepEqual(
-    JSON.parse(readFileSync(join(repoRoot, cliOutput), 'utf8')).required.slice(1).map(({ path }) => path),
-    standardPaths,
-    'repeated --standard preserves core plus both matching leaves in mini-routing order',
-  );
-
-  const authOnlyPaths = standardPaths.slice(0, 2);
-  const authOnlyManifest = buildImplementerManifest({
-    ...base, repoRoot, task: 2,
-    briefPath: '.apex/work/tasks/topic/task-2-brief.md', standardPaths: authOnlyPaths,
-  });
-  assert.deepEqual(authOnlyManifest.required.slice(1).map(({ path }) => path), authOnlyPaths);
-  assert.ok(!authOnlyManifest.required.some(({ path }) => path === standardPaths[2]),
-    'skill-selected one-leaf materialization proves there is no eager read-all fallback');
 });
 
 test('the plan verifier runs planPhaseContext and rejects options outside its role', (t) => {
@@ -1143,8 +1077,8 @@ test('task-role CLI uses strict role-specific named paths and writes a valid man
     '--brief', '.apex/work/tasks/context-efficient/task-1-brief.md',
     '--report', '.apex/work/tasks/context-efficient/task-1-report.md',
     '--task-diff', '.apex/work/tasks/context-efficient/task-1.diff',
-    '--standard', '.apex/standards/scripts.md',
-    '--hub-index', '.apex/_INDEX.md',
+    '--standard', scriptsContext,
+    '--hub-index', contextPath,
     '--output', output,
   ], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
@@ -1156,17 +1090,17 @@ test('task-role CLI uses strict role-specific named paths and writes a valid man
   const plural = spawnSync(process.execPath, [scriptPath,
     '--repo-root', repoRoot, '--role', 'implementer', '--run-id', base.runId,
     '--task', '1', '--model-tier', 'standard', '--brief', '.apex/work/tasks/context-efficient/task-1-brief.md',
-    '--standard', '.apex/standards/scripts.md', '--standard', '.apex/standards/adapters.md',
+    '--standard', scriptsContext, '--standard', adaptersContext,
     '--output', pluralOutput,
   ], { encoding: 'utf8' });
   assert.equal(plural.status, 0, plural.stderr);
   assert.deepEqual(JSON.parse(readFileSync(join(repoRoot, pluralOutput), 'utf8')).required.slice(1).map(({ path }) => path), [
-    '.apex/standards/scripts.md', '.apex/standards/adapters.md',
+    scriptsContext, adaptersContext,
   ]);
   const duplicate = spawnSync(process.execPath, [scriptPath,
     '--repo-root', repoRoot, '--role', 'implementer', '--run-id', base.runId,
     '--task', '1', '--model-tier', 'standard', '--brief', '.apex/work/tasks/context-efficient/task-1-brief.md',
-    '--standard', '.apex/standards/scripts.md', '--standard', '.apex/standards/scripts.md',
+    '--standard', scriptsContext, '--standard', scriptsContext,
     '--output', pluralOutput,
   ], { encoding: 'utf8' });
   assert.equal(duplicate.status, 1);
@@ -1196,7 +1130,7 @@ test('task-role CLI accepts only protocol 2', (t) => {
   const run = (protocol) => spawnSync(process.execPath, [scriptPath,
     '--repo-root', repoRoot, '--role', 'implementer', '--run-id', base.runId,
     '--task', '1', '--model-tier', 'standard', '--brief', '.apex/work/tasks/context-efficient/task-1-brief.md',
-    '--standard', '.apex/standards/scripts.md', '--task-result-protocol', protocol,
+    '--standard', scriptsContext, '--task-result-protocol', protocol,
     '--output', output,
   ], { encoding: 'utf8' });
   const refused = run('1');
@@ -1214,16 +1148,16 @@ test('the CLI refuses unclassifiable manifest names and non-canonical criteria p
     '--repo-root', repoRoot, '--role', 'implementer', '--run-id', base.runId,
     '--task', '1', '--model-tier', 'standard',
     '--brief', '.apex/work/tasks/context-efficient/task-1-brief.md',
-    '--standard', '.apex/standards/scripts.md',
-    '--output', '.apex/work/tasks/context-efficient/context/first.json',
+    '--standard', scriptsContext,
+    '--output', '.apex/work/tasks/refused-run/context/first.json',
   ], { encoding: 'utf8' });
   assert.equal(unclassified.status, 1);
   assert.equal(unclassified.stdout, '');
   assert.match(unclassified.stderr, /unrecognized work artifact/u);
   assert.equal(
-    existsSync(join(repoRoot, '.apex/work/tasks/context-efficient/context')),
+    existsSync(join(repoRoot, '.apex/work/tasks/refused-run')),
     false,
-    'a refused manifest name must not create the context directory',
+    'a refused manifest name must not create the run or context directory',
   );
 
   const aliasedCriteria = spawnSync(process.execPath, [scriptPath,
@@ -1232,17 +1166,45 @@ test('the CLI refuses unclassifiable manifest names and non-canonical criteria p
     '--criteria', './.apex/work/tasks/context-efficient/success-criteria.md',
     '--task-result-index', '.apex/work/tasks/context-efficient/task-result-index.md',
     '--branch-diff', '.apex/work/tasks/context-efficient/branch-diff.txt',
-    '--standard', '.apex/standards/scripts.md',
-    '--output', '.apex/work/tasks/context-efficient/context/final-review.json',
+    '--standard', scriptsContext,
+    '--output', '.apex/work/tasks/refused-run/context/final-review.json',
   ], { encoding: 'utf8' });
   assert.equal(aliasedCriteria.status, 1);
   assert.equal(aliasedCriteria.stdout, '');
   assert.match(aliasedCriteria.stderr, /criteria-only artifact/u);
   assert.equal(
-    existsSync(join(repoRoot, '.apex/work/tasks/context-efficient/context')),
+    existsSync(join(repoRoot, '.apex/work/tasks/refused-run')),
     false,
-    'a refused criteria path must not create the context directory',
+    'a refused criteria path must not create the run or context directory',
   );
+});
+
+test('every CLI mode refuses a migrate-state repository with exit 25 before any stdout line or write', (t) => {
+  const repoRoot = materialize(t);
+  writeFileSync(join(repoRoot, '.apex', '_INDEX.md'), '# Markdown Hub\n');
+  const snapshot = () => readdirSync(repoRoot, { recursive: true }).sort().map((entry) => {
+    const absolute = join(repoRoot, entry);
+    return [entry, statSync(absolute).isFile() ? readFileSync(absolute, 'utf8') : 'dir'];
+  });
+  const before = snapshot();
+  const plan = '.apex/work/plans/context-efficient.md';
+  const output = '.apex/work/tasks/context-efficient/context/task-1-implement.json';
+  for (const [mode, args] of [
+    ['--verify-plan', ['--verify-plan', '--repo-root', repoRoot, '--plan', plan]],
+    ['--verify-handoff', ['--verify-handoff', '--repo-root', repoRoot, '--plan', plan,
+      '--task-result-index', '.apex/work/tasks/context-efficient/task-result-index.md']],
+    ['--role', ['--repo-root', repoRoot, '--role', 'implementer', '--run-id', base.runId, '--task', '1',
+      '--model-tier', 'standard', '--brief', '.apex/work/tasks/context-efficient/task-1-brief.md',
+      '--standard', scriptsContext, '--output', output]],
+  ]) {
+    const result = spawnSync(process.execPath, [scriptPath, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, MIGRATE_REFUSAL_EXIT, `${mode}: ${result.stdout}${result.stderr}`);
+    assert.equal(result.stdout, '', `${mode} refuses before any stdout line`);
+    assert.deepEqual(result.stderr.split('\n').filter(Boolean), [`autopilot-context: ${MIGRATE_REFUSAL_MESSAGE}`], mode);
+    assert.match(result.stderr, /graph-migrate/, `${mode} names the graph-migrate skill`);
+  }
+  assert.equal(existsSync(join(repoRoot, output)), false, 'the role mode writes no manifest');
+  assert.deepEqual(snapshot(), before, 'no mode writes anything in the migrate state');
 });
 
 test('fixture repositories are removed after subtest cleanup', async (t) => {
@@ -1321,23 +1283,42 @@ test('resolveGraphHubContext takes the project id from explicit > repo config > 
   );
 });
 
-test('an implicated surface routes to the graph-resolved standard via fallbackStandardPath when the Markdown hub is absent', (t) => {
-  const repoRoot = materialize(t);
-  const standardsBySurface = {};
-  const paths = deriveImplicatedStandardPaths({
-    owningSurface: 'scripts',
-    standardsBySurface,
-    fallbackStandardPath: '.apex/work/tasks/context-efficient/context/hub-context/context.md',
-  });
-  assert.deepEqual(paths, ['.apex/work/tasks/context-efficient/context/hub-context/context.md']);
-  assert.throws(
-    () => deriveImplicatedStandardPaths({ owningSurface: 'scripts', standardsBySurface }),
-    /no standard path registered/,
+test('the resolved context is the only path: every implicated surface binds it once and cross-cutting entries are reported', () => {
+  const ignored = [];
+  assert.deepEqual(
+    deriveImplicatedStandardPaths({
+      ownership: {
+        owningSurface: 'scripts',
+        // `scripts` is also the owner, so it stays strict; `adapters` and the prose are advisory.
+        crossCuttingSurfaces: ['scripts', 'adapters', 'stable hub docs'],
+        tasks: [{ surface: 'scripts' }, { owningSurface: 'templates' }],
+      },
+      contextPath,
+      onUnroutedSurface: (surface) => ignored.push(surface),
+    }),
+    [contextPath],
+    'any number of strict surfaces binds the one resolved context exactly once',
   );
-  assert.throws(
-    () => deriveImplicatedStandardPaths({ owningSurface: 'scripts', standardsBySurface, fallbackStandardPath: '../escape.md' }),
-    /unsafe fallbackStandardPath/,
+  assert.deepEqual(ignored, ['adapters', 'stable hub docs'], 'each skipped cross-cutting entry is reported once, in order');
+
+  assert.deepEqual(
+    deriveImplicatedStandardPaths({ ownership: { crossCuttingSurfaces: ['stable hub docs'] }, contextPath }),
+    [],
+    'advisory-only ownership binds nothing, and the reporting callback stays optional',
   );
+
+  for (const [badPath, reason] of [
+    [undefined, /unsafe contextPath/],
+    ['', /unsafe contextPath/],
+    ['../escape.md', /unsafe contextPath/],
+    ['/abs/context.md', /unsafe contextPath/],
+  ]) {
+    assert.throws(
+      () => deriveImplicatedStandardPaths({ ownership: { owningSurface: 'scripts' }, contextPath: badPath }),
+      reason,
+      String(badPath),
+    );
+  }
 });
 
 test('the hub and upstream purposes name the canonical graph resolver (criterion 5)', (t) => {
@@ -1347,14 +1328,14 @@ test('the hub and upstream purposes name the canonical graph resolver (criterion
     repoRoot,
     task: 1,
     briefPath: '.apex/work/tasks/context-efficient/task-1-brief.md',
-    standardPath: '.apex/standards/scripts.md',
+    standardPath: scriptsContext,
     planPath: '.apex/work/plans/context-efficient.md',
     specPath: '.apex/work/specs/context-efficient.md',
-    hubIndexPath: '.apex/work/tasks/context-efficient/context/hub-context/context.md',
+    hubIndexPath: contextPath,
   });
   const hub = manifest.onDemand.find((entry) => entry.purpose.includes('graph-resolved hub context'));
   assert.ok(hub, 'the hub on-demand input must carry the graph-resolved hub purpose');
-  assert.equal(hub.path, '.apex/work/tasks/context-efficient/context/hub-context/context.md');
+  assert.equal(hub.path, contextPath);
   const upstream = manifest.onDemand.find((entry) => entry.purpose.includes('graph resolver'));
   assert.ok(upstream, 'the upstream purpose must resolve through the graph resolver');
 });
@@ -1366,9 +1347,8 @@ function resumeManifestInput(repoRoot, resumeInputs) {
     specPath: '.apex/work/specs/context-efficient.md',
     ledgerPath: '.apex/work/tasks/context-efficient/ledger.md',
     taskResultIndexPath: '.apex/work/tasks/context-efficient/task-result-index.md',
-    routingPath: '.apex/_INDEX.md',
+    contextPath,
     tasks: [{ surface: 'scripts' }],
-    standardsBySurface: { scripts: '.apex/standards/scripts.md' },
   };
 }
 

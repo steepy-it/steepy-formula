@@ -29,7 +29,12 @@ const cliPath = join(repoRoot, 'scripts', 'formula', 'cli.mjs');
 //   { script: 'scripts/<name>.mjs', args: (root) => [...argv after the script path] }
 // `root` is the fresh migrate-state temp repo, also the subprocess cwd. The expected stderr prefix
 // is the script's basename without `.mjs` (the scripts' own `<name>: …` diagnostic convention).
-const REFUSING_SCRIPTS = [];
+const REFUSING_SCRIPTS = [
+  // Read-only verification still refuses: the refusal fires right after parse for every mode.
+  { script: 'scripts/autopilot-context.mjs', args: (root) => ['--verify-plan', '--repo-root', root, '--plan', '.apex/work/plans/topic.md'] },
+  // The conductor CLI refuses before its spec checks, so no spec needs to exist.
+  { script: 'scripts/autopilot.mjs', args: () => ['.apex/work/specs/topic.md'] },
+];
 
 // --- temp fixtures -----------------------------------------------------------------------------
 
