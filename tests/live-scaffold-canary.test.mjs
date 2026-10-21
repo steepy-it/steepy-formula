@@ -1,8 +1,7 @@
 // Ported from apex v0.9.4 tests/live-scaffold-canary.test.mjs and adapted to
-// formula identity (G1): the canary declares its hub mode on the CLI
-// (graph|legacy closed vocabulary), the scaffolded bootstrap skill allowlists
-// the eleven canonical skills, and a graph-mode canary case asserts the
-// mode-selected artifact set beyond the legacy one apex carried.
+// formula identity (G1): the canary scaffolds graph mode only (no hub-mode
+// option), the scaffolded bootstrap skill allowlists the eleven canonical
+// skills, and a graph-mode canary case asserts the graph artifact set.
 //
 // G7 hermetic discipline: every case below drives the canary script against
 // fake harness binaries on a scratch temp PATH inside a temp fixture root —
@@ -47,7 +46,7 @@ function tempCase() {
 }
 
 // The fake harness replays one headless session against the scratch fixture.
-// expectMode ('graph' | 'legacy' | null) additionally turns it into a
+// expectMode ('graph' | null) additionally turns it into a
 // mode-artifact prover: before reporting nonces it verifies that the scaffold
 // it just read carries the mode-selected artifact set — spine navigation,
 // bootstrap orientation, its own triad's standard resolution, and the
@@ -88,23 +87,15 @@ const adapter = {
 const inputs = [
   readFileSync(join(process.cwd(), 'AGENTS.md'), 'utf8'),
   readFileSync(join(bootstrapDir, bootstrapName, 'SKILL.md'), 'utf8'),
-  readFileSync(join(process.cwd(), '.apex', 'standards', 'canary.md'), 'utf8'),
   readFileSync(join(process.cwd(), adapter), 'utf8'),
 ];
 if (expectMode !== null) {
-  const graph = expectMode === 'graph';
   const problems = [];
-  const spineOk = graph
-    ? inputs[0].includes('steepy-formula hub-mode') && inputs[0].includes('context resolve') && !inputs[0].includes('_INDEX.md')
-    : inputs[0].includes('.apex/_INDEX.md');
+  const spineOk = inputs[0].includes('steepy-formula hub-mode') && inputs[0].includes('context resolve') && !inputs[0].includes('_INDEX.md');
   if (!spineOk) problems.push('spine');
-  const bootstrapOk = graph
-    ? inputs[1].includes('steepy-formula hub-mode') && !inputs[1].includes('_INDEX.md')
-    : inputs[1].includes('.apex/_INDEX.md');
+  const bootstrapOk = inputs[1].includes('steepy-formula hub-mode') && !inputs[1].includes('_INDEX.md');
   if (!bootstrapOk) problems.push('bootstrap');
-  const adapterOk = graph
-    ? inputs[3].includes('context resolve --target apex:live-canary:surface:canary') && !inputs[3].includes('.apex/standards/')
-    : inputs[3].includes('row of the routing table in') && inputs[3].includes('.apex/_INDEX.md') && !inputs[3].includes('.apex/standards/');
+  const adapterOk = inputs[2].includes('context resolve --target apex:live-canary:surface:canary') && !inputs[2].includes('.apex/standards/');
   if (!adapterOk) problems.push('adapter');
   const enumerated = [...inputs[1].matchAll(/\`([a-z][a-z-]*)\`/gu)].map((match) => match[1]).filter((name) => ELEVEN_SKILLS.includes(name));
   if (JSON.stringify(enumerated) !== JSON.stringify(ELEVEN_SKILLS)) problems.push('allowlist');
@@ -113,9 +104,9 @@ if (expectMode !== null) {
     process.exit(3);
   }
 }
-const nonces = inputs.map((text) => text.match(/LIVE_CANARY_(?:ROOT|BOOTSTRAP|STANDARD|ADAPTER)_[a-f0-9]+/u)?.[0]);
+const nonces = inputs.map((text) => text.match(/LIVE_CANARY_(?:ROOT|BOOTSTRAP|ADAPTER)_[a-f0-9]+/u)?.[0]);
 const secret = process.env[${JSON.stringify(credentialNames[harness])}] ?? '';
-const reportedNonces = ${omitNonce} ? nonces.slice(0, 3) : nonces;
+const reportedNonces = ${omitNonce} ? nonces.slice(0, 2) : nonces;
 if (${traceNonces}) {
   const trace = harness === 'claude'
     ? { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: nonces.join(' ') }] } }
@@ -148,12 +139,10 @@ process.exit(${exitCode});
 
 function runDriver(run, harness, {
   credentials = {}, output = run.output, path = run.bin, extraArgs = [],
-  hubMode = 'legacy',
 } = {}) {
   return spawnSync(process.execPath, [
     script,
     '--harness', harness,
-    '--hub-mode', hubMode,
     '--output', output,
     ...extraArgs,
   ], {
@@ -242,11 +231,11 @@ test('all runs only canonical descriptors, proves nonce lifecycle, redacts logs,
     );
     assert.match(row.version, new RegExp(`^${harness} 9\\.9\\.9 secret=\\[REDACTED\\]$`, 'u'));
     assert.match(row.log, /\[REDACTED\]/u);
-    const nonceEvidence = [...row.log.matchAll(/LIVE_CANARY_(ROOT|BOOTSTRAP|STANDARD|ADAPTER)_[a-f0-9]+/gu)];
+    const nonceEvidence = [...row.log.matchAll(/LIVE_CANARY_(ROOT|BOOTSTRAP|ADAPTER)_[a-f0-9]+/gu)];
     assert.deepEqual(nonceEvidence.map((match) => match[1]), [
-      'ROOT', 'BOOTSTRAP', 'STANDARD', 'ADAPTER',
+      'ROOT', 'BOOTSTRAP', 'ADAPTER',
     ]);
-    assert.equal(new Set(nonceEvidence.map((match) => match[0])).size, 4);
+    assert.equal(new Set(nonceEvidence.map((match) => match[0])).size, 3);
     for (const secret of Object.values(secrets)) {
       assert.doesNotMatch(JSON.stringify(row), new RegExp(secret, 'u'));
     }
@@ -384,16 +373,16 @@ test('Pi and DeepSeek are always runner-unavailable without invoking lookalike b
 test('CLI parsing is strict and produces no report on usage errors', () => {
   const cases = [
     [],
-    ['--harness', 'claude', '--output', 'report.jsonl'],
-    ['--harness', 'claude', '--hub-mode', 'graph'],
-    ['--hub-mode', 'graph', '--output', 'report.jsonl'],
-    ['--harness', 'unknown', '--hub-mode', 'graph', '--output', 'report.jsonl'],
-    ['--harness', 'pi', '--hub-mode', 'none', '--output', 'report.jsonl'],
-    ['--harness', 'pi', '--hub-mode', 'GRAPH', '--output', 'report.jsonl'],
-    ['--harness', 'pi', '--hub-mode', 'graph', '--output', 'report.jsonl', 'positional'],
-    ['--harness', 'pi', '--hub-mode', 'graph', '--output', 'report.jsonl', '--extra'],
-    ['--harness', 'pi', '--hub-mode', 'graph', '--hub-mode', 'graph', '--output', 'report.jsonl'],
-    ['--harness', 'pi', '--hub-mode', 'graph', '--output', 'report.jsonl', '--output', 'report.jsonl'],
+    ['--harness', 'claude'],
+    ['--output', 'report.jsonl'],
+    ['--harness', 'unknown', '--output', 'report.jsonl'],
+    ['--harness', 'pi', '--output', 'report.jsonl', 'positional'],
+    ['--harness', 'pi', '--output', 'report.jsonl', '--extra'],
+    ['--harness', 'pi', '--harness', 'pi', '--output', 'report.jsonl'],
+    ['--harness', 'pi', '--output', 'report.jsonl', '--output', 'report.jsonl'],
+    // --hub-mode was removed: graph is the only mode, so any use is an unknown option.
+    ['--harness', 'pi', '--hub-mode', 'graph', '--output', 'report.jsonl'],
+    ['--harness', 'pi', '--hub-mode', 'legacy', '--output', 'report.jsonl'],
   ];
   for (const args of cases) {
     const run = tempCase();
@@ -426,14 +415,13 @@ test('output rejects symlink parents before making a fixture or invoking a runne
   assert.deepEqual(events(run.events), []);
 });
 
-// --- graph-mode canary case (beyond the legacy one) ----------------------------------------------
+// --- graph-mode canary case ----------------------------------------------
 
 test('the graph-mode canary case proves the mode-selected artifact set end to end', () => {
   for (const harness of ['claude', 'codex', 'opencode']) {
     const run = tempCase();
     fakeHarness(run, harness, { expectMode: 'graph' });
     const result = runDriver(run, harness, {
-      hubMode: 'graph',
       credentials: { [credentialNames[harness]]: 'graph-mode-secret' },
     });
     assert.equal(result.status, 0, `${harness}: ${result.stderr}`);
@@ -446,44 +434,4 @@ test('the graph-mode canary case proves the mode-selected artifact set end to en
     assert.doesNotMatch(JSON.stringify(row), /graph-mode-secret/u, harness);
     assert.equal(events(run.events).filter((event) => event.harness === harness).length, 2, harness);
   }
-});
-
-test('the legacy-mode canary case keeps the markdown-hub artifact set', () => {
-  const run = tempCase();
-  fakeHarness(run, 'claude', { expectMode: 'legacy' });
-  const result = runDriver(run, 'claude', {
-    hubMode: 'legacy',
-    credentials: { ANTHROPIC_API_KEY: 'legacy-mode-secret' },
-  });
-  assert.equal(result.status, 0, result.stderr);
-  const [row] = rows(run.output);
-  assert.equal(row.verdict, 'PASS');
-  assert.equal(row.reasonCode, null);
-});
-
-test('mode-expecting harnesses fail honestly against the other mode\'s scaffold', () => {
-  const crossed = tempCase();
-  fakeHarness(crossed, 'opencode', { expectMode: 'graph' });
-  const graphAgainstLegacy = runDriver(crossed, 'opencode', {
-    hubMode: 'legacy',
-    credentials: { OPENCODE_API_KEY: 'cross-mode-secret' },
-  });
-  assert.equal(graphAgainstLegacy.status, 1, graphAgainstLegacy.stderr);
-  const [legacyRow] = rows(crossed.output);
-  assert.equal(legacyRow.verdict, 'FAIL');
-  assert.equal(legacyRow.reasonCode, 'process-exit');
-  assert.match(legacyRow.log, /mode-artifact-mismatch: spine,bootstrap,adapter/u);
-  assert.doesNotMatch(JSON.stringify(legacyRow), /cross-mode-secret/u);
-
-  const mirrored = tempCase();
-  fakeHarness(mirrored, 'codex', { expectMode: 'legacy' });
-  const legacyAgainstGraph = runDriver(mirrored, 'codex', {
-    hubMode: 'graph',
-    credentials: { OPENAI_API_KEY: 'mirror-mode-secret' },
-  });
-  assert.equal(legacyAgainstGraph.status, 1, legacyAgainstGraph.stderr);
-  const [graphRow] = rows(mirrored.output);
-  assert.equal(graphRow.verdict, 'FAIL');
-  assert.equal(graphRow.reasonCode, 'process-exit');
-  assert.match(graphRow.log, /mode-artifact-mismatch: spine,bootstrap,adapter/u);
 });

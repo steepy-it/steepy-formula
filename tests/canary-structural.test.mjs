@@ -265,7 +265,7 @@ test('Pi and DeepSeek structural canaries report runner-unavailable without a li
       const output = join(temp, `${harness}.json`);
       const result = spawnSync(
         process.execPath,
-        [join(root, 'scripts', 'live-scaffold-canary.mjs'), '--harness', harness, '--hub-mode', 'graph', '--output', output],
+        [join(root, 'scripts', 'live-scaffold-canary.mjs'), '--harness', harness, '--output', output],
         { encoding: 'utf8' },
       );
       assert.equal(result.status, 1, 'a non-runnable harness must keep the release gate closed');

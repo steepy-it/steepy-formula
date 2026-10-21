@@ -6,7 +6,6 @@ import {
   constants as FS_CONSTANTS,
   existsSync,
   lstatSync,
-  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -29,10 +28,6 @@ const CREDENTIALS = Object.freeze({
   codex: Object.freeze(['OPENAI_API_KEY', 'CODEX_API_KEY']),
   opencode: Object.freeze(['OPENCODE_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']),
 });
-// The caller-declared hub mode rides the fixture Project model into the
-// scaffold planner's closed vocabulary (graph|legacy) — `none`, the
-// undetected state, is not declarable here.
-const HUB_MODES = Object.freeze(['graph', 'legacy']);
 // G1 (9→10 skills) + inception (10→11): the canonical formula skill set the
 // scaffolded bootstrap skill must allowlist, graph-migrate and inception included.
 const ELEVEN_SKILLS = Object.freeze([
@@ -47,7 +42,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = dirname(SCRIPT_DIR);
 
 function usage() {
-  return 'usage: node scripts/live-scaffold-canary.mjs --harness <claude|codex|opencode|pi|deepseek|all> --hub-mode <graph|legacy> --output <json-path>';
+  return 'usage: node scripts/live-scaffold-canary.mjs --harness <claude|codex|opencode|pi|deepseek|all> --output <json-path>';
 }
 
 function parseCli(argv) {
@@ -55,7 +50,6 @@ function parseCli(argv) {
     args: argv,
     options: {
       harness: { type: 'string' },
-      'hub-mode': { type: 'string' },
       output: { type: 'string' },
     },
     allowPositionals: false,
@@ -63,20 +57,17 @@ function parseCli(argv) {
     tokens: true,
   });
   if (positionals.length > 0) throw new TypeError('positionals are not accepted');
-  for (const option of ['harness', 'hub-mode', 'output']) {
+  for (const option of ['harness', 'output']) {
     const occurrences = tokens.filter((token) => token.kind === 'option' && token.name === option);
     if (occurrences.length !== 1) throw new TypeError(`--${option} must be provided exactly once`);
   }
   if (![...HARNESSES, 'all'].includes(values.harness)) {
     throw new TypeError('--harness is not a supported value');
   }
-  if (!HUB_MODES.includes(values['hub-mode'])) {
-    throw new TypeError(`--hub-mode must be one of: ${HUB_MODES.join(', ')}`);
-  }
   if (typeof values.output !== 'string' || values.output.length === 0 || values.output.includes('\0')) {
     throw new TypeError('--output must be a non-empty path');
   }
-  return { harness: values.harness, hubMode: values['hub-mode'], output: values.output };
+  return { harness: values.harness, output: values.output };
 }
 
 function safeOutputPath(path) {
@@ -150,34 +141,24 @@ function appendNonce(root, relativePath, value) {
   appendFileSync(join(root, relativePath), `\n<!-- ${value} -->\n`, 'utf8');
 }
 
-// Mode-aware (beyond the legacy-only canary): before any harness is invoked,
-// the scratch project is machine-verified against the mode-selected artifact
-// set — spine navigation, bootstrap orientation, adapter standard resolution,
-// and the ten-entry skill allowlist. The expectations are declared here
-// independently of the renderer so live evidence detects checkout drift
-// instead of restating it.
+// Before any harness is invoked, the scratch project is machine-verified
+// against the graph-mode artifact set — spine navigation, bootstrap
+// orientation, adapter standard resolution, and the eleven-entry skill
+// allowlist. The expectations are declared here independently of the
+// renderer so live evidence detects checkout drift instead of restating it.
 function verifyModeArtifacts(root, model) {
   const problems = [];
-  const graph = model.hubMode === 'graph';
   const spine = readFileSync(join(root, 'AGENTS.md'), 'utf8');
-  if (graph) {
-    if (!spine.includes('steepy-formula hub-mode') || !spine.includes('context resolve')) {
-      problems.push('spine-graph-navigation');
-    }
-    if (spine.includes('_INDEX.md')) problems.push('spine-references-markdown-hub');
-  } else if (!spine.includes('.apex/_INDEX.md')) {
-    problems.push('spine-legacy-navigation');
+  if (!spine.includes('steepy-formula hub-mode') || !spine.includes('context resolve')) {
+    problems.push('spine-graph-navigation');
   }
+  if (spine.includes('_INDEX.md')) problems.push('spine-references-markdown-hub');
   const bootstrap = readFileSync(
     join(root, '.agents', 'skills', `${model.projectName}-bootstrap`, 'SKILL.md'),
     'utf8',
   );
-  if (graph) {
-    if (!bootstrap.includes('steepy-formula hub-mode')) problems.push('bootstrap-graph-orientation');
-    if (bootstrap.includes('_INDEX.md')) problems.push('bootstrap-references-markdown-hub');
-  } else if (!bootstrap.includes('.apex/_INDEX.md')) {
-    problems.push('bootstrap-legacy-orientation');
-  }
+  if (!bootstrap.includes('steepy-formula hub-mode')) problems.push('bootstrap-graph-orientation');
+  if (bootstrap.includes('_INDEX.md')) problems.push('bootstrap-references-markdown-hub');
   const enumerated = [...bootstrap.matchAll(/`([a-z][a-z-]*)`/gu)]
     .map((match) => match[1])
     .filter((name) => ELEVEN_SKILLS.includes(name));
@@ -188,30 +169,24 @@ function verifyModeArtifacts(root, model) {
   for (const surface of model.surfaces) {
     for (const [adapter, extension] of [['claude', 'md'], ['codex', 'toml'], ['opencode', 'md']]) {
       const adapterText = readFileSync(join(root, `.${adapter}`, 'agents', `${surface.agent}.${extension}`), 'utf8');
-      if (graph) {
-        if (!adapterText.includes(`steepy-formula context resolve --target apex:${model.projectName}:surface:${surface.name}`)) {
-          problems.push(`${surface.agent}-${adapter}-graph-standard-resolution`);
-        }
-        if (adapterText.includes('.apex/standards/')) {
-          problems.push(`${surface.agent}-${adapter}-references-standards-tree`);
-        }
-      } else if (!adapterText.includes(`the \`${surface.name}\` row of the routing table in \`.apex/_INDEX.md\``)
-          || adapterText.includes('.apex/standards/')) {
-        problems.push(`${surface.agent}-${adapter}-legacy-standard-resolution`);
+      if (!adapterText.includes(`steepy-formula context resolve --target apex:${model.projectName}:surface:${surface.name}`)) {
+        problems.push(`${surface.agent}-${adapter}-graph-standard-resolution`);
+      }
+      if (adapterText.includes('.apex/standards/')) {
+        problems.push(`${surface.agent}-${adapter}-references-standards-tree`);
       }
     }
   }
   if (problems.length > 0) {
-    throw new Error(`mode artifact verification failed (${model.hubMode}): ${problems.join(', ')}`);
+    throw new Error(`mode artifact verification failed (graph): ${problems.join(', ')}`);
   }
 }
 
-function createFixture(hubMode) {
+function createFixture() {
   const root = mkdtempSync(join(tmpdir(), 'steepy-live-scaffold-canary-'));
   const nonces = Object.freeze({
     root: nonce('ROOT'),
     bootstrap: nonce('BOOTSTRAP'),
-    standard: nonce('STANDARD'),
     adapter: nonce('ADAPTER'),
   });
   const model = {
@@ -225,18 +200,12 @@ function createFixture(hubMode) {
       testCmd: 'node --test',
     }],
     resolutions: {},
-    hubMode,
+    hubMode: 'graph',
   };
   try {
     const plan = planProjectScaffold({ hubRoot: root, model });
     applyProjectScaffold({ hubRoot: root, plan });
     verifyModeArtifacts(root, model);
-    mkdirSync(join(root, '.apex', 'standards'), { recursive: true });
-    writeFileSync(
-      join(root, '.apex', 'standards', 'canary.md'),
-      `# Canary standard\n\n<!-- ${nonces.standard} -->\n`,
-      { encoding: 'utf8', mode: 0o600 },
-    );
     appendNonce(root, 'AGENTS.md', nonces.root);
     appendNonce(root, `.agents/skills/${model.projectName}-bootstrap/SKILL.md`, nonces.bootstrap);
     for (const adapterPath of [
@@ -260,9 +229,9 @@ function promptFor(harness) {
   return [
     'This is a disposable Steepy live-scaffold canary fixture.',
     'Read, without modifying, AGENTS.md, .agents/skills/live-canary-bootstrap/SKILL.md,',
-    `.apex/standards/canary.md, and ${adapterPath}.`,
+    `and ${adapterPath}.`,
     'Reply with one compact JSON object whose lifecycle is "complete" and whose nonces array',
-    'contains the discovered root, bootstrap, standard, and adapter nonce values in that order.',
+    'contains the discovered root, bootstrap, and adapter nonce values in that order.',
   ].join(' ');
 }
 
@@ -428,7 +397,7 @@ function verifiesFinalResponse(harness, stdout, nonces) {
   if (Object.getPrototypeOf(parsed) !== Object.prototype) return false;
   if (Object.keys(parsed).sort().join(',') !== 'lifecycle,nonces') return false;
   if (parsed.lifecycle !== 'complete' || !Array.isArray(parsed.nonces)) return false;
-  const expected = [nonces.root, nonces.bootstrap, nonces.standard, nonces.adapter];
+  const expected = [nonces.root, nonces.bootstrap, nonces.adapter];
   return parsed.nonces.length === expected.length
     && parsed.nonces.every((value, index) => value === expected[index]);
 }
@@ -513,7 +482,7 @@ export function main(argv = process.argv.slice(2), env = process.env) {
   let fixture;
   try {
     const output = safeOutputPath(cli.output);
-    fixture = createFixture(cli.hubMode);
+    fixture = createFixture();
     const selected = cli.harness === 'all' ? HARNESSES : [cli.harness];
     const product = productIdentity();
     const reportRows = selected.map((harness) => runHarness(harness, fixture, env, product));
