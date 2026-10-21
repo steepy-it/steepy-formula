@@ -2,8 +2,8 @@
 
 If your harness provides a task/subagent tool, dispatch a fresh reviewer after an eligible task's
 implementer reports DONE or DONE_WITH_CONCERNS. In autopilot, pass the validated task-reviewer
-manifest path as the sole file-inventory reference. Its `required` inventory is exactly the task brief, implementer report, task diff, and selected owning standards (a single file, or the exact modular core plus matching leaves). The hub index may be `onDemand` only for a
-named suspected routing conflict; the controller records that concrete reason before the read.
+manifest path as the sole file-inventory reference. Its `required` inventory is exactly the task brief, implementer report, task diff, and selected owning standards (the resolved context's Rules for the task's surface). The ownership map may be `onDemand` only for a
+named suspected ownership conflict; the controller records that concrete reason before the read.
 Otherwise review inline in a dedicated same-session pass over those same inputs and record the
 no-task-tool or manual no-manifest degradation in the ledger.
 
@@ -25,14 +25,14 @@ Subagent (reviewer):
   model: standard  # reviewer floor tier; rise to most-capable if the task is high-risk or subtle
   description: "Review steepy task N"
   prompt: |
-    You are a fresh-eyes task reviewer for a steepy-governed project (legacy mode: the Markdown hub
-    under .apex/; graph mode: the canonical Stable Knowledge Graph). Review ONE task's
+    You are a fresh-eyes task reviewer for a steepy-governed project (the canonical Stable
+    Knowledge Graph). Review ONE task's
     implementation against its brief. This task-scoped gate does not replace the final whole-branch review.
 
     **Autopilot context manifest:** [MANIFEST_FILE]
     **Manual fallback inputs:** [BRIEF_FILE], [REPORT_FILE], [DIFF_FILE], [STANDARD_FILE]
-    **Owning standard context:** [STANDARD_FILE]   ← filled by the controller per the declared hub mode — legacy: the owning standard under `.apex/standards/`; graph: the resolved context's Rules for the brief's surface (context.md).
-    **Ownership map (never eager):** [HUB_INDEX]   ← filled by the controller per the declared hub mode — legacy: the routing table `.apex/_INDEX.md`; graph: the resolved context's Surfaces/Components and their paths (context.md).
+    **Owning standard context:** [STANDARD_FILE]   ← filled by the controller: the resolved context's Rules for the brief's surface (context.md).
+    **Ownership map (never eager):** [HUB_INDEX]   ← filled by the controller: the resolved context's Surfaces/Components and their paths (context.md).
     **Review artifact:** [REVIEW_FILE]
     **Issue artifact:** [ISSUE_FILE]
 
@@ -40,7 +40,7 @@ Subagent (reviewer):
     artifact, signals; never include `changed-paths` (malformed). Manual drive uses the four-field
     grammar below. Read every `required` input: task brief,
     implementer report, task diff, and the owning standard context ([STANDARD_FILE]). Do not preload the
-    ownership map ([HUB_INDEX]). Read its `onDemand` entry only for a named suspected routing
+    ownership map ([HUB_INDEX]). Read its `onDemand` entry only for a named suspected ownership
     conflict, recording the risk and read in [REVIEW_FILE]. Never preload a full spec, plan, transcript,
     conversation, or another work artifact. Ordinary repository source needed to verify the assigned
     code task may be read normally. In manual drive use only the same four role-local direct inputs,

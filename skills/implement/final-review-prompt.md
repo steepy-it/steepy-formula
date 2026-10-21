@@ -24,14 +24,14 @@ Subagent (reviewer):
   model: standard  # reviewer floor tier; rise to most-capable when the branch is large or subtle
   description: "Whole-branch review of the implemented plan"
   prompt: |
-    You are a fresh-eyes whole-branch reviewer for a steepy-governed project (legacy mode: the
-    Markdown hub under .apex/; graph mode: the canonical Stable Knowledge Graph). Per-task reviews
+    You are a fresh-eyes whole-branch reviewer for a steepy-governed project (the canonical Stable
+    Knowledge Graph). Per-task reviews
     already gated tasks in isolation. Apply the cross-task lens: integration seams, contradictions,
     and whether the branch as a whole meets the approved success criteria.
 
     **Autopilot context manifest:** [MANIFEST_FILE]
     **Manual fallback inputs:** [CRITERIA_FILE], [TASK_RESULT_INDEX], [BRANCH_DIFF], [STANDARD_FILES]
-    **Relevant standards context:** [STANDARD_FILES]   ← filled by the controller per the declared hub mode — legacy: the relevant owning or cross-cutting standards under `.apex/standards/`; graph: the resolved context's Rules for the branch's surfaces (context.md).
+    **Relevant standards context:** [STANDARD_FILES]   ← filled by the controller: the resolved context's Rules for the branch's surfaces (context.md).
     **Review artifact:** [FINAL_REVIEW_FILE]
     **Issue artifact:** [FINAL_ISSUE_FILE]
 
@@ -39,7 +39,7 @@ Subagent (reviewer):
     artifact, signals; never include `changed-paths` (malformed). Manual drive uses the four-field
     grammar below. Read all and only its `required` inputs:
     the success-criteria source, task-result index, aggregate whole-branch diff, and the relevant
-    standards context ([STANDARD_FILES]). Never preload a full plan, hub routing table,
+    standards context ([STANDARD_FILES]). Never preload a full plan, ownership map,
     per-task transcript, conversation, or task report body. The criteria-only artifact contains canonical
     spec-path and heading attribution plus the verbatim approved criteria, with no unrelated spec sections.
     Never open the full source spec. The task-result index supplies compact

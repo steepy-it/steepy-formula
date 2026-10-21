@@ -457,7 +457,7 @@ test('implement: materializes a self-contained Task 7 brief verbatim', () => {
   assert.match(step3, /no chat|conversation history/i, 'the brief must not depend on conversation context');
 });
 
-test('Gear 2 terminates in implement after surface tests and validate-hub, without plan or review', () => {
+test('Gear 2 terminates in implement after surface tests and graph validate, without plan or review', () => {
   const brainstorm = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
   const implement = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
   const brainstormHandoff = sectionBetween(brainstorm, '### Step 8 — Hand off', '## Model Selection');
@@ -466,8 +466,23 @@ test('Gear 2 terminates in implement after surface tests and validate-hub, witho
   assert.match(brainstormHandoff, /Gear 2[^]*direct[^]*`implement` skill/i);
   assert.match(brainstormHandoff, /required:\n\s+spec: <exact-spec-path>\nonDemand: none/);
   assert.match(brainstormHandoff, /Do not route Gear 2 through[^]*`plan` unless[^]*explicitly requested/i);
-  assert.match(implementStep5, /Gear 2[^]*surface test[^]*validate-hub[^]*status: READY[^]*next: none[^]*status: CONSUMED/i);
+  assert.match(implementStep5, /Gear 2[^]*surface test[^]*graph validate[^]*status: READY[^]*next: none[^]*status: CONSUMED/i);
   assert.match(implementStep5, /Gear 2[^]*(?:do not|does not|never)[^]*(?:invoke|hand off|handoff)[^]*review/i);
+});
+
+test('implement: SKILL is graph-only — graph validate gate, migrate stop, resolved-context standards', () => {
+  const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(text, /\blegacy\b|validate-hub|_INDEX\.md|testing-and-checklist|Markdown hub file/i, 'no legacy branch or validate-hub gate');
+  const gear2 = sectionBetween(text, '- **Gear 2**', '- **Gear 3**');
+  assert.match(gear2, /`steepy-formula graph validate`/);
+  const step5 = sectionBetween(text, '### Step 5 — Hand off', '## Model Selection');
+  assert.match(step5, /`steepy-formula graph validate`/);
+  const step3 = sectionBetween(text, '### Step 3', '### Step 4');
+  assert.match(step3, /the owning standard is the resolved context's Rules/);
+  assert.doesNotMatch(step3, /declares no mode|declared mode's values/i);
+  const step4 = sectionBetween(text, '### Step 4', '### Step 5');
+  assert.match(step4, /\[STANDARD_FILES\]` slot with the resolved context's Rules/);
+  assert.match(text, /Stop and tell the user to run the `graph-migrate` skill \(invoke it the way your harness invokes skills\) before any other workflow\./);
 });
 
 test('implement: autopilot creates every task-role manifest with strict CLI args and deterministic paths before dispatch', () => {
@@ -498,10 +513,12 @@ test('implement: role inventories are exact and never eagerly pass upstream bodi
 
   assert.match(implementer, /required` inventory is exactly the task brief and (?:exact )?selected owning (?:surface )?standards/i);
   assert.match(reviewer, /required` inventory is exactly the task brief, implementer report, task diff, and (?:exact )?selected owning (?:surface )?standards/i);
-  assert.match(reviewer, /hub index[\s\S]{0,120}`onDemand`[\s\S]{0,160}named suspected routing conflict/i);
+  assert.match(reviewer, /ownership map[\s\S]{0,120}`onDemand`[\s\S]{0,160}named suspected ownership conflict/i);
+  assert.doesNotMatch(`${skill}\n${implementer}\n${reviewer}\n${finalReviewer}`, /\blegacy\b|validate-hub|_INDEX\.md|routing table|mini-routing|modular (?:core|leaf)/i,
+    'implement autopilot protocol and prompts are graph-only');
   assert.match(finalReviewer, /required` inventory is exactly the success-criteria source, task-result index, aggregate branch diff, and relevant standards/i);
   assert.match(skill, /Fix `required` inventory is exactly the task brief, authoritative reviewer issue artifact, current task diff, and exact selected owning standards/i);
-  assert.match(skill, /Never eagerly pass[\s\S]{0,180}(full spec|spec body)[\s\S]{0,180}(full plan|plan body)[\s\S]{0,180}(hub index|_INDEX)[\s\S]{0,180}transcript/i);
+  assert.match(skill, /Never eagerly pass[\s\S]{0,180}(full spec|spec body)[\s\S]{0,180}(full plan|plan body)[\s\S]{0,180}(hub index|ownership map)[\s\S]{0,180}transcript/i);
   assert.match(implementer, /efficiency protocol[\s\S]{0,180}not[\s\S]{0,80}(access control|sandbox)/i);
   assert.match(implementer, /repository (source|code) files[\s\S]{0,180}(inspect|read)[\s\S]{0,180}(implement|test|verify)/i);
   assert.match(implementer, /`onDemand`[\s\S]{0,180}upstream context[\s\S]{0,180}concrete[\s\S]{0,120}(reason|missing fact)/i);
@@ -832,8 +849,7 @@ function reviewerBody(name, file) {
   for (const marker of ['Status', 'Approved', 'Issues Found']) {
     assert.ok(text.includes(marker), `${name}/${file} must define output marker '${marker}'`);
   }
-  assert.match(text, /routing table|_INDEX\.md/, `${name}/${file} must check routing-table ownership`);
-  assert.match(text, /standards\/|STANDARD_INPUTS/, `${name}/${file} must reference the surface standard`);
+  assert.match(text, /STANDARD_(?:FILES?|INPUTS)/, `${name}/${file} must reference the surface standard`);
   assert.match(text, /Completeness/, `${name}/${file} must check Completeness`);
   assert.match(text, /Calibration/i, `${name}/${file} must include a Calibration section`);
   return text;
@@ -1131,14 +1147,16 @@ test('review: autopilot manifest and manual capability inventories are authorita
     'review checklist must name manifest-backed criteria evidence');
 });
 
-test('implement: autopilot resolves exact task standards from manifest routing evidence', () => {
+test('implement: autopilot takes the standard input from the conductor-resolved context', () => {
   const protocol = readFileSync(join(skillsDir, 'implement', 'autopilot-protocol.md'), 'utf8');
-  assert.match(protocol, /onDemand[\s\S]{0,240}routing/i);
-  assert.match(protocol, /exact registered standard path/i);
+  assert.match(protocol, /## Step 1 — input inventory and resolved-context standards/);
+  assert.match(protocol, /conductor-resolved `context\.md`/);
   assert.match(protocol, /never (?:guess|manufacture)/i);
-  assert.match(protocol, /<exact-standard-path-from-routing>/);
-  assert.match(protocol, /repeat `--standard`|repeat --standard/i);
-  assert.match(protocol, /core[^.]*mini-routing[\s\S]{0,220}matching (?:leaf|leaves)/i);
+  assert.match(protocol, /--standard <resolved-context-path>/);
+  assert.match(protocol, /--hub-index <resolved-context-path>/);
+  assert.match(protocol, /once per resolved context path/i);
+  assert.match(protocol, /the resolved context's Surfaces listing/);
+  assert.doesNotMatch(protocol, /exact-standard-path-from-routing|mode-ownership-map|mini-routing|routing index|routing read/i);
   assert.doesNotMatch(protocol, /--standard \.apex\/standards\/<(?:surface|relevant-surface)>\.md/);
   assert.match(protocol, /manifest\.contract\.(?:verdict|gear|drive)/,
     'manifest-backed implement must take scalars from manifest.contract');
@@ -2403,11 +2421,11 @@ test('brainstorm: Step 1.5 declares the hub mode via steepy-formula hub-mode —
 // require none of them.
 test('workflow chain: Step 1 orientation is mode-aware — the graph branch requires no markdown-hub read', () => {
   // graphOnly skills carry the migrate stop and no legacy bullet; the rest keep the old expectation
-  // until their own task (implement, review) moves them.
+  // until their own task (review) moves them.
   const step1Bounds = {
     brainstorm: { bounds: ['### Step 1 — Orient against the hub', '### Step 1.5'], graphOnly: true },
     plan: { bounds: ['### Step 1 — Load the spec and the hub', '### Step 2'], graphOnly: true },
-    implement: { bounds: ['### Step 1 — Load the accepted input and derive current-run artifacts', '### Step 2'], graphOnly: false },
+    implement: { bounds: ['### Step 1 — Load the accepted input and derive current-run artifacts', '### Step 2'], graphOnly: true },
     review: { bounds: ['### Step 1 — Load bounded review inputs and the hub', '### Step 2'], graphOnly: false },
   };
   for (const [s, { bounds: [start, end], graphOnly }] of Object.entries(step1Bounds)) {
@@ -3000,7 +3018,7 @@ test('autopilot prompts specify only status, artifact, signals; manual drive kee
     const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
     assert.match(text, /status[^]*artifact[^]*signals/);
     assert.match(text, /changed-paths:/, 'manual-drive grammar remains documented');
-    assert.doesNotMatch(withoutLegacyHubMode(text), /legacy/i, file);
+    assert.doesNotMatch(text, /legacy/i, file);
     assert.doesNotMatch(text, /protocol 1/i, file);
     assert.match(text, /autopilot[^]*status[^]*artifact[^]*signals/i, file);
     assert.match(text, /changed-paths[^\n]*malformed/i, file);
@@ -3020,7 +3038,7 @@ test('autopilot sections carry no four-field example and mixed files label manua
   for (const file of ['reviewer-recovery.md', 'task-results-protocol.md', 'autopilot-protocol.md']) {
     const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
     assert.doesNotMatch(text, /^\s*changed-paths: /m, file);
-    assert.doesNotMatch(withoutLegacyHubMode(text), /legacy|protocol 1/i, file);
+    assert.doesNotMatch(text, /legacy|protocol 1/i, file);
   }
   const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   assert.doesNotMatch(withoutLegacyHubMode(sectionBetween(review, '**Autopilot preflight:**', '**Manual/no-manifest:**')), /legacy|protocol 1/i);

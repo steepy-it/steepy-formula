@@ -607,11 +607,8 @@ test('chain skill sources lock the context protocol and canonical review handoff
     /H2 Task-like/,
     'the plan parser discovers every H2 Task-like boundary before validating identifiers'
   );
-  assert.match(
-    autopilotProtocol,
-    /read its mini-routing table and match the task's exact paths\/topics/i,
-  );
-  assert.match(autopilotProtocol, /zero matches\s+meaning core only/i);
+  assert.doesNotMatch(autopilotProtocol, /mini-routing|zero matches/i, 'autopilot protocol carries no modular routing');
+  assert.match(autopilotProtocol, /conductor-resolved `context\.md`/);
   assert.match(autopilotProtocol, /Repeat `--criterion` and every role's `--standard` once per value/);
   // plan is graph-only (no modular leaves); review keeps the leaf-matching locks until its own task.
   for (const [phase, skillText] of [['review', reviewSkill]]) {

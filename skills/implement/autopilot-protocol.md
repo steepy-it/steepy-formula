@@ -34,26 +34,19 @@ positive `attempt` supplied by the conductor's `phasePrompt`; that correlated id
 Do not derive either value from filenames. Do not invent a correlation identity. A child without supplied run/attempt identity
 is unresolvable: exit non-zero without appending an uncorrelated new-protocol marker. Only versioned, correlated status is supported; uncorrelated markers never complete a phase.
 
-## Step 1 — input inventory and standard routing
+## Step 1 — input inventory and resolved-context standards
 
 **Autopilot:** use the validated phase manifest loaded in Step 0 as the authoritative input inventory.
 Do not independently rediscover or preload inputs beyond its `required` list. Use `onDemand` only for a
 concrete named missing fact and record the reason in the ledger. The plan supplied there is authoritative
 for task order, the self-contained task contracts, test commands, criterion IDs, and complexity tiers.
-When a task-local manifest needs its owning standards, that task's `Surface` creates the concrete missing
-fact: read the manifest-declared routing index from `onDemand`, resolve the exact registered standard path
-for the surface, and require that exact path to be one of the manifest's implicated-standard `onDemand`
-references. If it is a modular core, read its mini-routing table and match the task's exact paths/topics;
-select the core plus every matching leaf path already declared in the phase manifest, with zero matches
-meaning core only. Never select or eagerly read unrelated leaves. Use those exact repository-relative
-paths in every task-local `--standard` argument. Never guess or manufacture a standard path (the
-Markdown-hub pattern `.apex/standards/<surface>.md` included); modular and custom routing paths are
-authoritative. The routing values are filled per the declared hub mode — legacy: the routing index
-is the routing table `.apex/_INDEX.md` and each registered standard path lives under
-`.apex/standards/`; graph: the phase manifest declares the `context resolve` equivalents instead —
-the resolved context (`context.md`) carries the surface's Rules as the standard references and its
-Surfaces/Components as the ownership map, and no routing table exists. Record the routing read
-once in the ledger, then reuse the resolved path set for that task's implement/review/fix loop. The spec
+The standard input is the conductor-resolved `context.md`: the conductor resolves one context under
+`.apex/work/tasks/<plan-basename>/context/hub-context/` and the phase manifest lists it once as the
+standard input. Its Rules are the standards the task follows and its Surfaces/Components are the
+ownership map. When a task-local manifest needs its owning standards, use that exact resolved
+`context.md` path in every task-local `--standard` argument. Never guess or manufacture a standard
+path. Record the resolved-context read once in the ledger, then reuse the path for that task's
+implement/review/fix loop. The spec
 remains `onDemand`: read only a named section for a concrete insufficiency in the plan/brief, including
 materializing the criteria-only artifact below, and record the reason; never use it as an automatic
 contract read.
@@ -140,23 +133,17 @@ artifact.
 The canonical command shapes are:
 
 ```sh
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role implementer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --standard <exact-standard-path-from-routing> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-implement.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role task-reviewer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --report .apex/work/tasks/<plan-basename>/task-N-report.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <exact-standard-path-from-routing> --hub-index <mode-ownership-map> --artifact-output .apex/work/tasks/<plan-basename>/task-N-review.md --artifact-output .apex/work/tasks/<plan-basename>/task-N-issues.md --output .apex/work/tasks/<plan-basename>/context/task-N-review-<iteration>.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role fix --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --issue .apex/work/tasks/<plan-basename>/task-N-issues.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <exact-standard-path-from-routing> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-fix-<iteration>.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role final-review --run-id <supplied-run-id> --task-result-protocol 2 --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --criteria .apex/work/tasks/<plan-basename>/success-criteria.md --task-result-index .apex/work/tasks/<plan-basename>/task-result-index.md --branch-diff .apex/work/tasks/<plan-basename>/branch-diff.txt --standard <exact-standard-path-from-routing> --artifact-output .apex/work/tasks/<plan-basename>/final-review.md --artifact-output .apex/work/tasks/<plan-basename>/final-review-issues.md --output .apex/work/tasks/<plan-basename>/context/final-review-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role implementer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --standard <resolved-context-path> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-implement.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role task-reviewer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --report .apex/work/tasks/<plan-basename>/task-N-report.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --hub-index <resolved-context-path> --artifact-output .apex/work/tasks/<plan-basename>/task-N-review.md --artifact-output .apex/work/tasks/<plan-basename>/task-N-issues.md --output .apex/work/tasks/<plan-basename>/context/task-N-review-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role fix --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --issue .apex/work/tasks/<plan-basename>/task-N-issues.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-fix-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role final-review --run-id <supplied-run-id> --task-result-protocol 2 --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --criteria .apex/work/tasks/<plan-basename>/success-criteria.md --task-result-index .apex/work/tasks/<plan-basename>/task-result-index.md --branch-diff .apex/work/tasks/<plan-basename>/branch-diff.txt --standard <resolved-context-path> --artifact-output .apex/work/tasks/<plan-basename>/final-review.md --artifact-output .apex/work/tasks/<plan-basename>/final-review-issues.md --output .apex/work/tasks/<plan-basename>/context/final-review-<iteration>.json
 ```
 
-Repeat `--standard` with `<exact-standard-path-from-routing>` once for the routed core/single standard and
-once for every matching modular leaf, preserving mini-routing order. The examples show one occurrence;
-plural selected paths use repeated `--standard` arguments identically for implementer, task-reviewer,
-fix, and final-review manifests.
-
-Two command placeholders are filled per the declared hub mode. `<exact-standard-path-from-routing>` —
-legacy: the exact registered path under `.apex/standards/` from the Step 1 routing read; graph: the
-resolved context (`context.md`) path whose Rules govern the task's surface.
-`<mode-ownership-map>` — legacy: the routing table `.apex/_INDEX.md`; graph: the resolved context's
-Surfaces/Components and their paths (`context.md`). A child receives the filled values, never the
-mode question.
+Repeat `--standard` with `<resolved-context-path>` once per resolved context path. The examples show one
+occurrence; plural selected paths use repeated `--standard` arguments identically for implementer,
+task-reviewer, fix, and final-review manifests. `<resolved-context-path>` is the resolved `context.md`
+whose Rules govern the task's surface; as `--hub-index` it is the ownership map (the context's
+Surfaces/Components and their paths). A child receives the filled values, never the mode question.
 
 Before the first final-review manifest, materialize the deterministic criteria-only `success-criteria.md`
 artifact at `.apex/work/tasks/<plan-basename>/success-criteria.md`. Give it canonical source attribution containing
@@ -168,7 +155,7 @@ concrete missing fact and record the reason. Failure to locate one unambiguous h
 artifact is correlated `BLOCKED` before dispatch. Reject any final-review `--criteria` value under
 `.apex/work/specs/`; a full spec path is never a valid required input.
 
-Repeat `--criterion` and every role's `--standard` once per value, preserving plan/mini-routing order. Do not add a
+Repeat `--criterion` and every role's `--standard` once per value, preserving plan order. Do not add a
 role-inapplicable option. A missing or invalid manifest is a correlated `BLOCKED` outcome: record the
 reason, make no child dispatch, and exit non-zero. A child receives the validated manifest path as its
 authoritative file inventory; it does not receive copied artifact bodies. For a whole-branch finding,
@@ -177,14 +164,14 @@ and the current aggregate branch diff as `--task-diff`; all other named argument
 
 The eager inventories are exact:
 
-- implementer `required`: task brief + exact selected owning standards (single, or core + matching leaves);
-- task reviewer `required`: task brief + implementer report + task diff + exact selected owning standards; hub index
-  may appear only as `onDemand` for a named suspected routing conflict, with the reason recorded;
-- Fix `required` inventory is exactly the task brief, authoritative reviewer issue artifact, current task diff, and exact selected owning standards;
+- implementer `required`: task brief + the resolved context (`--standard`);
+- task reviewer `required`: task brief + implementer report + task diff + the resolved context; the ownership map
+  may appear only as `onDemand` for a named suspected ownership conflict, with the reason recorded;
+- Fix `required` inventory is exactly the task brief, authoritative reviewer issue artifact, current task diff, and exact selected owning standards (the resolved context);
 - final reviewer `required`: success-criteria source + task-result index + aggregate branch diff +
   relevant standards.
 
-Never eagerly pass a full spec body, full plan body, hub index, or transcript. Never pass the mode's
-ownership map (`_INDEX.md` in legacy mode, the resolved context's Surfaces listing in graph mode)
+Never eagerly pass a full spec body, full plan body, hub index, or transcript. Never pass the
+ownership map (the resolved context's Surfaces listing)
 unconditionally. An `onDemand` read is allowed only when that role's inventory declares it and the
 controller records a concrete reason.

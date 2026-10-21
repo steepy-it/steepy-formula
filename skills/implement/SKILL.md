@@ -260,8 +260,8 @@ here is already enforced by that mechanism, not by this prose.
 
 - **Gear 1**: not an implement entry point (the navigation route identifies the specialist agent
   directly) — if invoked, say so and stop.
-- **Gear 2**: implement with each agent's self-review plus the declared-mode coherence gate
-  (`validate-hub` in legacy mode, `steepy-formula graph validate` in graph mode) only — **skip the
+- **Gear 2**: implement with each agent's self-review plus the coherence gate
+  (`steepy-formula graph validate`) only — **skip the
   Step 3.4 task reviewer and the Step 4 whole-branch review** subagents.
 - **Gear 3**: run the full loop — the whole-branch review always, and the per-task reviewer on
   tasks that carry real judgement (skip it for purely mechanical/transcription tasks; see Step 3.4).
@@ -279,9 +279,7 @@ read, record the consumer role, exact path, and concrete reason in the derived c
 Never infer a different source-spec path.
 
 **Manual drive, direct Gear-2 spec:** Read the accepted spec body eagerly, then orient through the
-hub-mode declaration below — legacy: the stable routing index, the owning surface standard through
-its exact routing-row link, and the testing checklist; graph: the resolved context's Rules, Terms,
-and Check test command. Do not read a sibling spec, plan, or other work artifact. Resolve the
+hub-mode declaration below: the resolved context's Rules, Terms, and Check test command. Do not read a sibling spec, plan, or other work artifact. Resolve the
 registered specialist, exact surface test command, and exact source
 paths needed for one independently testable implementation task by inspecting ordinary repository
 source. This is implementation preparation inside the current phase, not a plan artifact or a new
@@ -290,7 +288,7 @@ feature mutation, leave the spec `READY`, and offer the optional `plan` skill wi
 spec capability.
 
 **Hub-mode declaration (once per run).** Run `steepy-formula hub-mode` and carry its declared
-mode — `graph`, `legacy`, or `none`, each printed with one `evidence:` line — through the whole
+mode — `graph`, `migrate`, or `none`, each printed with one `evidence:` line — through the whole
 run. The command always exits 0: it is a declaration, not a gate, and this prose never
 re-implements its detection — the command is the single authority. The declared mode branches
 the manual hub reads (this is the direct-input discovery path; autopilot's inventory is the
@@ -300,12 +298,10 @@ phase manifest):
   `steepy-formula context resolve --path <p>...` over the accepted plan's or direct spec's exact
   paths (exit 0 emits `context.json` + `context.md`). The resolved context supplies each task's
   owning **surface**,
-  its Rules — the standards-equivalent the implementers follow — its Terms, and the surface test
+  its Rules — the standards the implementers follow — its Terms, and the surface test
   command from its Check item's `ext_v1_command` extension property (fall back to the
   verification Rule's statement prose when the Check carries no command). The bound specialist
-  agent for surface `<name>` is `.claude/agents/<name>-agent.md` by naming convention (there is
-  no routing table in graph mode). Read no Markdown hub file: graph-first init never creates
-  one, and none is required here. On exit 10 UNRESOLVED — normal in a freshly
+  agent for surface `<name>` is `.claude/agents/<name>-agent.md` by naming convention. On exit 10 UNRESOLVED — normal in a freshly
   graph-first-initialized repo, where no topology bridge links the detected Packages to the
   curated Components yet — fall back to the deterministic surface targets:
   `steepy-formula context resolve --target apex:<projectId>:surface:<slug(name)>` for each
@@ -316,13 +312,12 @@ phase manifest):
   root on its own: it resolves empty. If the resolve fails, diagnose with
   `steepy-formula graph status` — exit 3, `initialized: no`, or an engine failure means the
   graph binding is missing or failed: tell the user to run the `init` skill first and stop.
-- **`legacy` mode:** read `.apex/_INDEX.md` and `.apex/testing-and-checklist.md` (a direct Gear-2
-  spec also loads the owning surface standard through the exact routing-row link) — the unchanged
-  direct-input discovery path.
-- **Mode `none`:** no hub on either channel — the repo is not initialized: tell the user to run
+- **`migrate` mode:** the repo still carries a pre-graph Markdown hub.
+  Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow.
+- **Mode `none`:** no graph — the repo is not initialized: tell the user to run
   the `init` skill first and stop.
 
-**Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the input inventory and standard routing.
+**Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the input inventory and resolved-context standards.
 
 Derive `.apex/work/tasks/<entry-basename>/`, its optional `ledger.md`, and its canonical
 `task-result-index.md` solely from the accepted spec or plan basename; never search for a historical
@@ -401,7 +396,7 @@ Before dispatching Task 1, scan the accepted input once for internal conflicts. 
 tasks that contradict one another or the Global Constraints, and anything the plan mandates that the
 review rubric would treat as a defect. Present all plan findings as **one batched question** — each
 finding beside the plan text that mandates it — and wait for the user to adjudicate before execution.
-For a direct Gear-2 spec, resolve safe, implementation-local ambiguity from the routed standard and
+For a direct Gear-2 spec, resolve safe, implementation-local ambiguity from the resolved context's Rules and
 repository source; anything that prevents one unambiguous, independently testable task stops before
 mutation and routes to the optional plan instead of opening a new design dialogue inside implement.
 If the scan is clean, proceed without comment; the applicable self-review/reviewer path remains the
@@ -422,7 +417,7 @@ plan basename for plan-backed work and the spec basename for direct Gear 2.
      **Specialist agent**, **Exact paths**, **Test command**, **Dependencies**, **Complexity**, and
      **Success criteria** (criterion IDs).
    - **Direct Gear-2:** materialize a single self-contained Task 1 from the accepted spec and the
-     Step-1 routed source inspection. Copy the approved requirements, constraints, Feature complexity,
+     Step-1 source inspection. Copy the approved requirements, constraints, Feature complexity,
      and every success-criterion ID from the spec; bind the owning Surface, registered Specialist
      agent, resolved Exact paths, exact surface Test command, and `Dependencies: none`. If those
      facts cannot describe one independently testable task, stop before mutation and offer the
@@ -430,9 +425,9 @@ plan basename for plan-backed work and the spec basename for direct Gear 2.
 
    In both forms, the brief is the implementer contract: no requirement may depend on chat or
    conversation history.
-2. **Implement.** If your harness provides a task/subagent tool and the registered `<surface>-agent`, dispatch that agent using `implementer-prompt.md`. In autopilot (`drive: autopilot`), create and validate the implementer manifest per `autopilot-protocol.md`, then pass only its path plus scalar dispatch controls. In manual drive, pass the brief path, owning standard, surface test command, report-file path, and commit-authorization flag directly and record this no-manifest degradation in the ledger — in `graph` mode the owning standard is the resolved context's Rules for the task's surface (pass the Step 1 resolve output), and the surface test command is the brief's `Test command`, already sourced from the Check's `ext_v1_command` at plan time (direct Gear 2: at Step 1). Otherwise load the owning surface standard (graph mode: the resolved context's Rules) and implement the task inline under the same rigid TDD, then run the Step 3.4 review as a dedicated same-session pass at the end of the task; state the inline degradation in the ledger. Pick the model from the task's `Complexity` line: mechanical → cheap, integration → standard, design → most-capable. To override, record a one-line reason in the ledger. If the plan has no `Complexity` lines, classify the task yourself at dispatch; direct Gear 2 instead uses its mandatory `Feature complexity`. The implementer writes a **failing test** first (rigid TDD), then the minimum code, self-reviews, and reports.
+2. **Implement.** If your harness provides a task/subagent tool and the registered `<surface>-agent`, dispatch that agent using `implementer-prompt.md`. In autopilot (`drive: autopilot`), create and validate the implementer manifest per `autopilot-protocol.md`, then pass only its path plus scalar dispatch controls. In manual drive, pass the brief path, owning standard, surface test command, report-file path, and commit-authorization flag directly and record this no-manifest degradation in the ledger — the owning standard is the resolved context's Rules for the task's surface (pass the Step 1 resolve output), and the surface test command is the brief's `Test command`, already sourced from the Check's `ext_v1_command` at plan time (direct Gear 2: at Step 1). Otherwise load the resolved context's Rules for the task's surface and implement the task inline under the same rigid TDD, then run the Step 3.4 review as a dedicated same-session pass at the end of the task; state the inline degradation in the ledger. Pick the model from the task's `Complexity` line: mechanical → cheap, integration → standard, design → most-capable. To override, record a one-line reason in the ledger. If the plan has no `Complexity` lines, classify the task yourself at dispatch; direct Gear 2 instead uses its mandatory `Feature complexity`. The implementer writes a **failing test** first (rigid TDD), then the minimum code, self-reviews, and reports.
 3. **Diff.** Capture the change to `.apex/work/tasks/<entry-basename>/task-N-diff.txt` — `git diff <base>..<head>` if commits are authorized, else `git diff` of the working tree.
-4. **Review** (**Gear 3 only** — skip in gears 1–2; rely on the implementer's self-review instead). Review only tasks that carry judgment; the task's `Complexity` line decides: `integration`/`design` → review, `mechanical` → skip (the Step 4 whole-branch review catches it). In manual drive, to override either way, record the reason in the ledger. Autopilot requires validated receipts for every integration/design task; mechanical tasks may still opt into review. When you do review, dispatch a fresh reviewer subagent using `task-reviewer-prompt.md`. In autopilot (`drive: autopilot`), create and validate its iteration manifest per `autopilot-protocol.md`; in manual drive pass the same four required artifacts directly and record the degradation. Fill the prompt's `[STANDARD_FILE]` and `[HUB_INDEX]` slots with the declared mode's values — legacy: the exact routed owning standard and the routing table `.apex/_INDEX.md`; graph: the resolved context's Rules for the task's surface and its Surfaces/Components listing, both from the Step 1 `context.md`. A subagent runs no skill and declares no mode of its own — it receives the filled slot values, never the mode question. The hub index is never eager: include it only as `onDemand`, and read it only for a named suspected routing conflict whose reason is recorded. On **Issues Found**, require `task-N-issues.md`, then create and validate a fix manifest before dispatching the fix back to the same `<surface>-agent` (inline: apply the fix yourself). Regenerate the diff and re-review until **Status: Approved**. Fix loops remain sequential.
+4. **Review** (**Gear 3 only** — skip in gears 1–2; rely on the implementer's self-review instead). Review only tasks that carry judgment; the task's `Complexity` line decides: `integration`/`design` → review, `mechanical` → skip (the Step 4 whole-branch review catches it). In manual drive, to override either way, record the reason in the ledger. Autopilot requires validated receipts for every integration/design task; mechanical tasks may still opt into review. When you do review, dispatch a fresh reviewer subagent using `task-reviewer-prompt.md`. In autopilot (`drive: autopilot`), create and validate its iteration manifest per `autopilot-protocol.md`; in manual drive pass the same four required artifacts directly and record the degradation. Fill the prompt's `[STANDARD_FILE]` and `[HUB_INDEX]` slots with the resolved context's Rules for the task's surface and its Surfaces/Components listing, both from the Step 1 `context.md`. The hub index is never eager: include it only as `onDemand`, and read it only for a named suspected ownership conflict whose reason is recorded. On **Issues Found**, require `task-N-issues.md`, then create and validate a fix manifest before dispatching the fix back to the same `<surface>-agent` (inline: apply the fix yourself). Regenerate the diff and re-review until **Status: Approved**. Fix loops remain sequential.
 5. **Mark complete.** Append one line to the ledger, recording the model tier used — or `session model` where the harness gives no per-dispatch choice — and any degradation exercised (inline implementation, same-session review pass): `Task N: complete (model: standard, review: 1 iteration, commits <base7>..<head7>)` if authorized, else `Task N: complete (model: cheap, review: skipped (mechanical), no commit)`. On a harness with no task tool the line records the degradation, e.g. `Task N: complete (session model, inline impl + same-session review, 1 iteration, no commit)`. Also append the compact validated implementer outcome to `.apex/work/tasks/<entry-basename>/task-result-index.md` using this exact bullet grammar (one line per task, in execution order):
 
    `- Task <id>: <DONE|DONE_WITH_CONCERNS>; artifact: <sanitized repo-relative path>; changed-paths: <comma list or none>; signals: <short machine-readable IDs or none>`
@@ -517,9 +512,7 @@ source bytes must produce the same artifact bytes. Both serve this whole-branch 
 Dispatch a fresh reviewer subagent using `final-review-prompt.md` over the full implement diff (all tasks)
 and the criteria-only artifact. In autopilot (`drive: autopilot`), create and validate the final-review
 manifest per `autopilot-protocol.md`. In manual drive, pass those same inputs directly
-and record the no-manifest degradation. Fill the prompt's `[STANDARD_FILES]` slot with the declared
-mode's value — legacy: every relevant owning or cross-cutting standard under `.apex/standards/`;
-graph: the resolved context's Rules from the Step 1 `context.md`. If your harness has no task tool, perform this whole-branch review
+and record the no-manifest degradation. Fill the prompt's `[STANDARD_FILES]` slot with the resolved context's Rules from the Step 1 `context.md`. If your harness has no task tool, perform this whole-branch review
 yourself in a fresh dedicated pass over the same inputs, stating the degradation in the ledger. Fix any
 **Issues Found** with one fix dispatch carrying the complete list from `final-review-issues.md` (inline:
 apply the fixes yourself), then regenerate the aggregate diff and re-review until **Status: Approved**.
@@ -528,15 +521,9 @@ apply the fixes yourself), then regenerate the aggregate diff and re-review unti
 
 **Gear 2 terminates here.** After every implementation task completes, self-verify each success
 criterion against the resulting diff, run every distinct surface test command named by the direct
-brief or optional light plan, then run the coherence gate for the hub mode declared at Step 1 —
-in `legacy` mode the hub linter:
-
-```bash
-node <engine-root>/scripts/validate-hub.mjs .
-```
-
-and in `graph` mode `steepy-formula graph validate` (mode `none` already stopped at Step 1). Both
-the surface test and that gate (`validate-hub` or `graph validate`) must be green; record their
+brief or optional light plan, then run the coherence gate, `steepy-formula graph validate`
+(`migrate` and `none` already stopped at Step 1). Both
+the surface test and `graph validate` must be green; record their
 exact command outcomes in the current-run ledger. Record the applicable approval and verification,
 exact input/output content identities and current branch/HEAD or uncommitted diff identity in the
 index before publishing READY.

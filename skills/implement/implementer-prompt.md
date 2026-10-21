@@ -4,7 +4,7 @@ If your harness provides a task/subagent tool, dispatch the task's bound **speci
 (`<surface>-agent` from the brief) as a fresh implementer — **one implementer in flight at a time**,
 never in parallel. In autopilot, the validated context manifest is the sole file-inventory reference
 passed to the child. Its `required` inventory is exactly the task brief and selected owning standards
-(a single file, or the exact modular core plus matching leaves).
+(the resolved context's Rules for the task's surface).
 Otherwise implement inline in a dedicated pass using those same inputs and record the no-task-tool or
 manual no-manifest degradation in the ledger/run output.
 
@@ -26,8 +26,8 @@ Subagent (<surface>-agent):
   model: <tier>  # task Complexity: cheap for transcription, standard for integration, most-capable for design/subtle; the agent's own model is the floor
   description: "Implement Task N: <task name>"
   prompt: |
-    You are implementing one task of a plan on a steepy-governed project (legacy mode: the Markdown
-    hub under .apex/; graph mode: the canonical Stable Knowledge Graph). Work only on this task.
+    You are implementing one task of a plan on a steepy-governed project (the canonical Stable
+    Knowledge Graph). Work only on this task.
 
     **Autopilot context manifest:** [MANIFEST_FILE]
     **Manual fallback inputs:** [BRIEF_FILE], [STANDARD_FILE]
@@ -40,7 +40,7 @@ Subagent (<surface>-agent):
     Read every `required` entry before acting; its inventory is exactly the task brief and selected
     owning standards. This manifest is an efficiency protocol, not repository access control or a sandbox.
     Repository source files needed to inspect, implement, test, or verify the task may be read normally.
-    Do not preload a spec, plan, routing table, transcript, or prior task report. A declared `onDemand`
+    Do not preload a spec, plan, ownership map, transcript, or prior task report. A declared `onDemand`
     upstream context document may be read only for a concrete missing fact; record that reason in the report.
     The brief is the complete implementer contract: requirements, relevant constraints, surface and
     specialist, exact paths, test command, dependencies, complexity, and criterion IDs.
@@ -68,9 +68,10 @@ Subagent (<surface>-agent):
     | "This change is too small to test" | STOP. Small changes regress silently. Write the test. |
     | "The test obviously passes, skip running Red" | STOP. Confirm it FAILS for the expected reason first. |
 
-    ## Keep the hub living
-    If the brief requires a standard, workflow, or domain-term update, make that exact change. Do not
-    broaden scope beyond the brief.
+    ## Keep the graph living
+    Do not edit the graph inline. If the brief's change invalidates a durable Rule, Term, or Decision,
+    report it as a typed promotion candidate in [REPORT_FILE] for review's sweep. Do not broaden scope
+    beyond the brief.
 
     ## Self-review and commit
     Verify the brief completely, test quality, names, and pristine output. If commit authorization is
