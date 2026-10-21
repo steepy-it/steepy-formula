@@ -5,8 +5,7 @@
 // no workflow behavior of its own (that lives in `skills/`).
 //
 // Surface: adapters — its standard resolves from the canonical graph
-// (`steepy-formula context resolve`); the archived `.apex/standards/adapters.md`
-// is legacy migration semantics only. Core rule is fail-open — every optional
+// (`steepy-formula context resolve`). Core rule is fail-open — every optional
 // host service is behind a capability gate and the module no-ops safely on a
 // stub, empty, or frozen context. Node built-ins only, no build step, nothing
 // imported from the host's own packages.
@@ -121,9 +120,8 @@ function getBootstrapBlock() {
     '  model, recorded in the ledger as a declared degradation.',
     '- Interactive questions (D3): ask in plain prose, one at a time, with numbered options',
     '  and a recommendation.',
-    '- Coherence gate (D4): no end-of-turn gate, so the mode-declared coherence gate runs',
-    '  at `check` / `review` time — `scripts/validate-hub.mjs` in legacy mode,',
-    '  `steepy-formula graph validate` in graph mode.',
+    '- Coherence gate (D4): the coherence gate (`steepy-formula graph validate`) runs at',
+    '  `check` / `review` time; no harness runs it at the end of a turn.',
     '- Wiring degradation: each capability is registered on its own dependency-gated fiber.',
     '  A host that does not compose one of those services simply never registers that',
     '  capability — silently, with no error, and indistinguishable from "not loaded yet".',

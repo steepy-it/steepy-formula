@@ -1,6 +1,5 @@
 // Codex packaging lock suite for the `adapters` surface (standard resolved from the
-// canonical graph; the archived .apex/standards/adapters.md is legacy migration
-// semantics only).
+// canonical graph).
 //
 // Locks the Codex-native packaging trio introduced by T6 of the
 // native-multi-harness-plugins plan: `.codex-plugin/plugin.json` (the Codex plugin
@@ -249,8 +248,8 @@ describe('opencode adapter (adapters/opencode/steepy-formula.js)', () => {
       'the reconciliation rule declares its ledger degradation',
     );
     assert.match(parts[0].text, /degrades to the session model/, 'D2 declares the no-pin degradation');
-    assert.match(parts[0].text, /validate-hub/, 'D4 names the legacy-mode coherence gate (validate-hub.mjs)');
-    assert.match(parts[0].text, /graph validate/, 'D4 names the graph-mode coherence gate (steepy-formula graph validate)');
+    assert.doesNotMatch(parts[0].text, /validate-hub/, 'D4 no longer names the removed validate-hub gate');
+    assert.match(parts[0].text, /graph validate/, 'D4 names the coherence gate (steepy-formula graph validate)');
 
     await transform({}, output);
     assert.equal(output.messages[0].parts.length, 2, 'second pass over marked content is a no-op');
@@ -341,7 +340,7 @@ describe('opencode adapter (adapters/opencode/steepy-formula.js)', () => {
 // pinned provider/model id: the tier trio (steepy-cheap / steepy-standard /
 // steepy-most-capable) with the provider's concrete ids, plus (further below)
 // the project hub's surface agents from <project>/.opencode/agents/*.md —
-// only when <project>/.apex exists. Everything fails open: a stub, frozen, or
+// only when <project>/.formula/config.json (the graph binding) exists. Everything fails open: a stub, frozen, or
 // unpinned host config never throws and never leaves a partial trio. Fixtures
 // are hermetic mkdtemp projects, never the repo itself.
 // ---------------------------------------------------------------------------
@@ -361,6 +360,11 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
 
   function tempProject(suffix) {
     return realpathSync(mkdtempSync(join(tmpdir(), `steepy-opencode-${suffix}-`)));
+  }
+
+  function writeBinding(project) {
+    mkdirSync(join(project, '.formula'), { recursive: true });
+    writeFileSync(join(project, '.formula', 'config.json'), '{"projectId":"fixture"}\n');
   }
 
   function writeAgentFile(project, file, frontmatter, body) {
@@ -470,12 +474,12 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     }
   });
 
-  // -- project hub agents (<project>/.opencode/agents/*.md, gated on .apex) --
+  // -- project hub agents (<project>/.opencode/agents/*.md, gated on .formula/config.json) --
 
   it('registers a project hub agent under its native filename on the tier-mapped concrete model', async () => {
     const dir = tempProject('hub');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeOpenCodeAgentFile(dir, 'adapters-agent.md', 'description: Adapters specialist\nmode: subagent\nmodel: sonnet', 'You specialize in adapters work for `adapters`.');
       const hooks = await mod.SteepyFormula({ directory: dir });
       const config = { model: pin };
@@ -495,7 +499,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
   it('prefers native .opencode/agents thin syntax over Claude .claude/agents', async () => {
     const dir = tempProject('native-first');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeAgentFile(dir, 'adapters-agent.md', 'name: adapters-agent\nmodel: sonnet', 'Claude prompt.');
       writeOpenCodeAgentFile(
         dir,
@@ -516,7 +520,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
   it('does not fall back to Claude agents when present native directory is invalid', async () => {
     const dir = tempProject('native-invalid');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeAgentFile(dir, 'adapters-agent.md', 'name: adapters-agent\nmodel: sonnet', 'Claude prompt.');
       mkdirSync(join(dir, '.opencode', 'agents'), { recursive: true });
       writeFileSync(join(dir, '.opencode', 'agents', 'adapters-agent.md'), 'invalid native agent');
@@ -535,7 +539,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
       const dir = tempProject(dangling ? 'native-dangling-link' : 'native-dir-link');
       const external = tempProject('native-external');
       try {
-        mkdirSync(join(dir, '.apex'), { recursive: true });
+        writeBinding(dir);
         writeAgentFile(dir, 'adapters-agent.md', 'name: adapters-agent\nmodel: sonnet', 'Claude prompt.');
         mkdirSync(join(dir, '.opencode'), { recursive: true });
         if (!dangling) {
@@ -566,7 +570,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     const lexicalRoot = tempProject('project-path-lexical');
     const project = join(targetRoot, 'project');
     try {
-      mkdirSync(join(project, '.apex'), { recursive: true });
+      writeBinding(project);
       writeOpenCodeAgentFile(
         project,
         'native-agent.md',
@@ -604,8 +608,8 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     const physicalProject = join(fixture, 'physical', 'project');
     const physicalChild = join(fixture, 'physical', 'child');
     try {
-      mkdirSync(join(lexicalProject, '.apex'), { recursive: true });
-      mkdirSync(join(physicalProject, '.apex'), { recursive: true });
+      writeBinding(lexicalProject);
+      writeBinding(physicalProject);
       mkdirSync(physicalChild, { recursive: true });
       writeOpenCodeAgentFile(
         lexicalProject,
@@ -650,8 +654,8 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     const physicalProject = join(fixture, 'physical', 'project');
     const physicalChild = join(fixture, 'physical', 'child');
     try {
-      mkdirSync(join(lexicalProject, '.apex'), { recursive: true });
-      mkdirSync(join(physicalProject, '.apex'), { recursive: true });
+      writeBinding(lexicalProject);
+      writeBinding(physicalProject);
       mkdirSync(physicalChild, { recursive: true });
       writeAgentFile(
         lexicalProject,
@@ -694,7 +698,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     const fixture = tempProject('parent-nondirectory');
     const project = join(fixture, 'project');
     try {
-      mkdirSync(join(project, '.apex'), { recursive: true });
+      writeBinding(project);
       writeOpenCodeAgentFile(
         project,
         'canceled-component.md',
@@ -728,7 +732,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     const fixture = realpathSync(mkdtempSync(join(process.cwd(), '.steepy-opencode-relative-')));
     const project = join(fixture, 'project');
     try {
-      mkdirSync(join(project, '.apex'), { recursive: true });
+      writeBinding(project);
       writeOpenCodeAgentFile(
         project,
         'relative-agent.md',
@@ -757,8 +761,8 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     const actualProject = join(fixture, 'project\\name');
     const alternateProject = join(fixture, 'project', 'name');
     try {
-      mkdirSync(join(actualProject, '.apex'), { recursive: true });
-      mkdirSync(join(alternateProject, '.apex'), { recursive: true });
+      writeBinding(actualProject);
+      writeBinding(alternateProject);
       writeOpenCodeAgentFile(
         actualProject,
         'actual-native.md',
@@ -796,8 +800,8 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     const actualProject = join(fixture, 'project\\name');
     const alternateProject = join(fixture, 'project', 'name');
     try {
-      mkdirSync(join(actualProject, '.apex'), { recursive: true });
-      mkdirSync(join(alternateProject, '.apex'), { recursive: true });
+      writeBinding(actualProject);
+      writeBinding(alternateProject);
       writeAgentFile(
         actualProject,
         'actual-claude-agent.md',
@@ -830,7 +834,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     const dir = tempProject('descriptor-files');
     const external = tempProject('descriptor-external');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       mkdirSync(join(dir, '.opencode', 'agents'), { recursive: true });
       const valid = '---\ndescription: Valid\nmode: subagent\nmodel: sonnet\n---\nValid prompt.';
       writeFileSync(join(dir, '.opencode', 'agents', 'valid-agent.md'), valid);
@@ -861,7 +865,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     }
     const dir = tempProject('fifo');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       mkdirSync(join(dir, '.opencode', 'agents'), { recursive: true });
       const fifo = join(dir, '.opencode', 'agents', 'blocked-agent.md');
       const made = spawnSync('mkfifo', [fifo], { encoding: 'utf8' });
@@ -888,7 +892,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     const dir = tempProject('diagnostics');
     const external = tempProject('diagnostics-external');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       mkdirSync(join(dir, '.opencode', 'agents'), { recursive: true });
       writeFileSync(join(external, 'agent.md'), 'not safe through a link');
       for (let i = 0; i < 6; i += 1) {
@@ -917,7 +921,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
   it('a string ctx.project property also drives project resolution', async () => {
     const dir = tempProject('hubproject');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeOpenCodeAgentFile(dir, 'adapters-agent.md', 'description: Adapters specialist\nmode: subagent\nmodel: sonnet', 'Body via the project property.');
       const hooks = await mod.SteepyFormula({ project: dir });
       const config = { model: pin };
@@ -931,7 +935,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
   it('inline frontmatter comments are stripped from field values', async () => {
     const dir = tempProject('comment');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeOpenCodeAgentFile(
         dir,
         'adapters-agent.md',
@@ -951,7 +955,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     }
   });
 
-  it('a project without .apex/ registers no project agents', async () => {
+  it('a project without .formula/config.json registers no project agents', async () => {
     const dir = tempProject('nohub');
     try {
       writeOpenCodeAgentFile(dir, 'adapters-agent.md', 'description: Adapters specialist\nmode: subagent\nmodel: sonnet', 'Body.');
@@ -965,10 +969,61 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
     }
   });
 
+  it('.apex/ alone registers no project agents', async () => {
+    const dir = tempProject('apex-only');
+    try {
+      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeOpenCodeAgentFile(dir, 'adapters-agent.md', 'description: Adapters specialist\nmode: subagent\nmodel: sonnet', 'Body.');
+      const hooks = await mod.SteepyFormula({ directory: dir });
+      const config = { model: pin };
+      await hooks.config(config);
+      assert.equal(config.agent?.['adapters-agent'], undefined, 'the legacy .apex hub is not the graph binding');
+      assert.equal(Object.keys(config.agent).length, 3, 'only the trio registers');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('.formula/ without config.json registers no project agents', async () => {
+    const dir = tempProject('formula-no-config');
+    try {
+      mkdirSync(join(dir, '.formula'), { recursive: true });
+      writeOpenCodeAgentFile(dir, 'adapters-agent.md', 'description: Adapters specialist\nmode: subagent\nmodel: sonnet', 'Body.');
+      const hooks = await mod.SteepyFormula({ directory: dir });
+      const config = { model: pin };
+      await hooks.config(config);
+      assert.equal(config.agent?.['adapters-agent'], undefined);
+      assert.equal(Object.keys(config.agent).length, 3, 'only the trio registers');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a symlinked config.json registers no project agents and emits a diagnostic', async () => {
+    const dir = tempProject('binding-link');
+    const external = tempProject('binding-external');
+    try {
+      mkdirSync(join(dir, '.formula'), { recursive: true });
+      writeFileSync(join(external, 'config.json'), '{"projectId":"external"}\n');
+      symlinkSync(join(external, 'config.json'), join(dir, '.formula', 'config.json'), 'file');
+      writeOpenCodeAgentFile(dir, 'adapters-agent.md', 'description: Adapters specialist\nmode: subagent\nmodel: sonnet', 'Body.');
+      const logs = [];
+      const hooks = await mod.SteepyFormula({ directory: dir, client: { app: { log(entry) { logs.push(entry); } } } });
+      const config = { model: pin };
+      await assert.doesNotReject(() => hooks.config(config));
+      assert.equal(config.agent?.['adapters-agent'], undefined);
+      assert.equal(Object.keys(config.agent).length, 3, 'only the trio registers');
+      assert.ok(logs.some((entry) => entry.body?.message.includes('unsafe-directory-ancestor')), 'invalid binding emits the existing diagnostic');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(external, { recursive: true, force: true });
+    }
+  });
+
   it('an unparsable ordinary agent warns and skips without hiding a parsable sibling', async () => {
     const dir = tempProject('unparsable');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       mkdirSync(join(dir, '.opencode', 'agents'), { recursive: true });
       writeFileSync(join(dir, '.opencode', 'agents', 'broken-agent.md'), 'this file has no frontmatter at all');
       writeOpenCodeAgentFile(dir, 'adapters-agent.md', 'description: Adapters specialist\nmode: subagent\nmodel: sonnet', 'Good body.');
@@ -990,7 +1045,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
   it('does not read Claude descriptors when the OpenCode namespace is absent', async () => {
     const dir = tempProject('native-absent');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeAgentFile(dir, 'ghost-agent.md', 'name: ghost-agent\nmodel: sonnet', 'Claude-only body.');
       const hooks = await mod.SteepyFormula({ directory: dir });
       const config = { model: pin };
@@ -1005,7 +1060,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
   it('a native descriptor with a non-subagent mode warns and skips while a valid sibling registers', async () => {
     const dir = tempProject('native-mode');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeOpenCodeAgentFile(
         dir,
         'primary-agent.md',
@@ -1036,7 +1091,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
   it('a non-tier frontmatter model registers without a model field (session-model degradation)', async () => {
     const dir = tempProject('nontier');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeOpenCodeAgentFile(dir, 'custom-agent.md', 'description: Custom specialist\nmode: subagent\nmodel: glm-4.7', 'Custom body.');
       const hooks = await mod.SteepyFormula({ directory: dir });
       const config = { model: pin };
@@ -1054,7 +1109,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
   it('a tier-word frontmatter model without a mapped provider pin registers without a model field', async () => {
     const dir = tempProject('nopin');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeOpenCodeAgentFile(dir, 'adapters-agent.md', 'description: Adapters specialist\nmode: subagent\nmodel: sonnet', 'Body without a pin.');
       const hooks = await mod.SteepyFormula({ directory: dir });
       const config = {}; // no model pin
@@ -1070,7 +1125,7 @@ describe('opencode adapter agent registration (D2 tier dispatch)', () => {
   it('an existing project-agent entry is never overwritten', async () => {
     const dir = tempProject('keepagent');
     try {
-      mkdirSync(join(dir, '.apex'), { recursive: true });
+      writeBinding(dir);
       writeOpenCodeAgentFile(dir, 'adapters-agent.md', 'description: Adapters specialist\nmode: subagent\nmodel: sonnet', 'File body.');
       const hooks = await mod.SteepyFormula({ directory: dir });
       const config = { model: pin, agent: { 'adapters-agent': { mode: 'subagent', prompt: 'HOST-OWNED' } } };
@@ -1207,8 +1262,8 @@ describe('pi adapter (adapters/pi/steepy-formula.js)', () => {
     assert.match(block, /D2/, 'block carries the D2 (no per-dispatch model) note');
     assert.match(block, /D3/, 'block carries the D3 (plain-text questions) note');
     assert.match(block, /D4/, 'block carries the D4 (no end-of-turn gate) note');
-    assert.match(block, /validate-hub/, 'D4 names the legacy-mode coherence gate (validate-hub.mjs)');
-    assert.match(block, /graph validate/, 'D4 names the graph-mode coherence gate (steepy-formula graph validate)');
+    assert.doesNotMatch(block, /validate-hub/, 'D4 no longer names the removed validate-hub gate');
+    assert.match(block, /graph validate/, 'D4 names the coherence gate (steepy-formula graph validate)');
 
     await fireSessionStart(state, ctx, { reason: 'resume' });
     assert.equal(state.sent.length, 1, 'a second session_start over marked context is a no-op');
@@ -1596,8 +1651,8 @@ describe('dsh adapter (adapters/dsh/steepy-formula.js)', () => {
     assert.match(text, /D2/, 'block carries the D2 (session model) note');
     assert.match(text, /D3/, 'block carries the D3 (plain-prose questions) note');
     assert.match(text, /D4/, 'block carries the D4 (no end-of-turn gate) note');
-    assert.match(text, /validate-hub/, 'D4 names the legacy-mode coherence gate (validate-hub.mjs)');
-    assert.match(text, /graph validate/, 'D4 names the graph-mode coherence gate (steepy-formula graph validate)');
+    assert.doesNotMatch(text, /validate-hub/, 'D4 no longer names the removed validate-hub gate');
+    assert.match(text, /graph validate/, 'D4 names the coherence gate (steepy-formula graph validate)');
     assert.match(text, /silent/i, 'the residual degradation is declared, not hidden');
   });
 

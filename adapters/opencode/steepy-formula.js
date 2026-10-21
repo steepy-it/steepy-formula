@@ -5,8 +5,7 @@
 // core; it holds no workflow behavior of its own (that lives in `skills/`).
 //
 // Surface: adapters — its standard resolves from the canonical graph
-// (`steepy-formula context resolve`); the archived `.apex/standards/adapters.md`
-// is legacy migration semantics only. Core rule is fail-open — every optional
+// (`steepy-formula context resolve`). Core rule is fail-open — every optional
 // host API is behind a capability check and the module no-ops safely on a stub,
 // empty, or frozen context. Node built-ins only, no build step.
 //
@@ -77,9 +76,8 @@ function getBootstrapBlock() {
     '  degrades to the session model (declared degradation).',
     '- Interactive questions (D3): ask in plain text, one at a time, with numbered',
     '  options and a recommendation.',
-    '- Coherence gate (D4): OpenCode has no end-of-turn hook, so the mode-declared',
-    '  coherence gate runs at `check` / `review` time — `scripts/validate-hub.mjs` in',
-    '  legacy mode, `steepy-formula graph validate` in graph mode; the RELEASE.md',
+    '- Coherence gate (D4): the coherence gate (`steepy-formula graph validate`) runs at',
+    '  `check` / `review` time; no harness runs it at the end of a turn. The RELEASE.md',
     '  capability matrix records the canary verdict for this harness.',
     '',
   ].join('\n');
@@ -138,7 +136,7 @@ function applyConfig(config, ctx) {
 // existing same-named entry, try/catch per write (stop, leaving prior writes
 // intact). Tier entries register only when `config.model` is a mapped
 // provider/model pin; anything else registers nothing tier-related.
-// Project hub agents register only when <project>/.apex exists, with the
+// Project hub agents register only when `<project>/.formula/config.json` exists (the graph binding), with the
 // frontmatter tier word (haiku/sonnet/opus) mapped through the session
 // provider's concrete ids — a non-tier word, or no mapped pin, registers
 // without a `model` field (declared session-model degradation).
@@ -202,7 +200,7 @@ function diagnosticReporter(ctx) {
 // root is included so a host-supplied alias cannot redirect discovery. Inspect
 // the raw native-platform components first: resolve() would otherwise erase a
 // symlink or non-directory followed by `..` before it could be rejected.
-function physicalDirectoryState(project, components, diagnose) {
+function physicalDirectoryState(project, components, diagnose, { fileLeaf = false } = {}) {
   const lexicalRoot = parse(project).root;
   const lexicalTail = project.slice(lexicalRoot.length);
   const lexicalComponents = sep === '\\' ? lexicalTail.split(/[\\/]+/) : lexicalTail.split(sep);
@@ -225,6 +223,7 @@ function physicalDirectoryState(project, components, diagnose) {
     paths.push(current);
   }
   for (const path of paths) {
+    const isLeaf = fileLeaf && path === current;
     let descriptor;
     try {
       descriptor = lstatSync(path);
@@ -233,7 +232,7 @@ function physicalDirectoryState(project, components, diagnose) {
       diagnose('directory-unreadable', path);
       return { state: 'invalid' };
     }
-    if (descriptor.isSymbolicLink() || !descriptor.isDirectory()) {
+    if (descriptor.isSymbolicLink() || !(isLeaf ? descriptor.isFile() : descriptor.isDirectory())) {
       diagnose('unsafe-directory-ancestor', path);
       return { state: 'invalid' };
     }
@@ -339,8 +338,8 @@ function agentEntriesFromDirectory(agentsDir, tierModels, diagnose) {
 // Project specialists are read only from OpenCode's native namespace.
 function collectProjectAgentEntries(ctx, tierModels, diagnose) {
   const project = projectDirectoryFromContext(ctx);
-  const hub = physicalDirectoryState(project, ['.apex'], diagnose);
-  if (hub.state !== 'present') return [];
+  const binding = physicalDirectoryState(project, ['.formula', 'config.json'], diagnose, { fileLeaf: true });
+  if (binding.state !== 'present') return [];
   const native = physicalDirectoryState(project, ['.opencode', 'agents'], diagnose);
   if (native.state !== 'present') return [];
   return agentEntriesFromDirectory(native.path, tierModels, diagnose);

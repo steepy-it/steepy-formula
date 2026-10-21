@@ -21,9 +21,9 @@
 // disk as produced by `scripts/project-scaffold.mjs` in graph mode: the AGENTS.md spine, the
 // CLAUDE.md managed import channel, the per-mode bootstrap under `.agents/skills/`, its Claude
 // stub under `.claude/skills/`, and the per-surface claude/codex/opencode agent triads. `.apex/work/**`
-// remains gitignored operational state: its tracked two-line .gitignore keeps `.apex/` present in
-// a clone (the OpenCode adapter registers project specialists only under an existing `.apex/`), and
-// the root .gitignore also ignores `/.apex/work/` (apex v1.0.0).
+// remains gitignored operational state: its tracked two-line .gitignore is retained (G2), but the
+// OpenCode adapter no longer depends on it — it registers project specialists only when the graph
+// binding `.formula/config.json` exists. The root .gitignore also ignores `/.apex/work/` (apex v1.0.0).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';

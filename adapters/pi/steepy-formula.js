@@ -5,8 +5,7 @@
 // no workflow behavior of its own (that lives in `skills/`).
 //
 // Surface: adapters — its standard resolves from the canonical graph
-// (`steepy-formula context resolve`); the archived `.apex/standards/adapters.md`
-// is legacy migration semantics only. Core rule is fail-open — every optional
+// (`steepy-formula context resolve`). Core rule is fail-open — every optional
 // host API is behind a capability check and the module no-ops safely on a stub,
 // empty, or frozen context. Node built-ins only, no build step.
 //
@@ -62,10 +61,9 @@ function getBootstrapBlock() {
     '  and record it in the ledger.',
     '- Interactive questions (D3): ask in plain text, one at a time, with numbered options',
     '  and a recommendation.',
-    '- Coherence gate (D4): Pi has no end-of-turn gate, so the mode-declared coherence',
-    '  gate runs at `check` / `review` time — `scripts/validate-hub.mjs` in legacy mode,',
-    '  `steepy-formula graph validate` in graph mode; the RELEASE.md capability matrix',
-    '  records the canary verdict for this harness.',
+    '- Coherence gate (D4): the coherence gate (`steepy-formula graph validate`) runs at',
+    '  `check` / `review` time; no harness runs it at the end of a turn. The RELEASE.md',
+    '  capability matrix records the canary verdict for this harness.',
     '',
   ].join('\n');
   return bootstrapBlock;
