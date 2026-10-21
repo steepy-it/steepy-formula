@@ -885,6 +885,18 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
 `;
   }
 
+  // Graph-mode hub context: a hermetic stand-in for `resolveGraphHubContext` that
+  // writes a fixed `context.md` under the requested output path and returns the
+  // same shape, so no fixture needs a Markdown hub or the real graph CLI.
+  const HUB_CONTEXT_TEXT = '# Context (schema v1)\n\nNode built-ins only. Test command: `npm test`.\n';
+  function fakeResolveHubContext({ repoRoot, outputPath }) {
+    const outputDir = outputPath;
+    mkdirSync(join(repoRoot, outputDir), { recursive: true });
+    const contextPath = `${outputDir}/context.md`;
+    writeFileSync(join(repoRoot, contextPath), HUB_CONTEXT_TEXT);
+    return { outputDir, contextPath, bytes: Buffer.byteLength(HUB_CONTEXT_TEXT), projectId: null };
+  }
+
   // A temp git repo holding one spec, plus the paths the conductor derives from it.
   // Work artifacts are gitignored exactly as in a real hub, and the baseline is
   // committed: the conductor's fresh-run preflight demands a clean working tree.
@@ -909,11 +921,8 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
       );
       trackedPaths.push(opencodeConfig);
     }
-    mkdirSync(join(dir, '.apex', 'standards'), { recursive: true });
-    writeFileSync(join(dir, '.apex', '_INDEX.md'), '# Hub\n\n| Surface | Min docs |\n|---|---|\n| `scripts` | [standards/scripts.md](standards/scripts.md) |\n');
-    writeFileSync(join(dir, '.apex', 'testing-and-checklist.md'), '# Tests\n\n`npm test`\n');
-    writeFileSync(join(dir, '.apex', 'conventions.md'), '# Context manifests\n\nRequired inputs are eager; on-demand inputs are references.\n');
-    writeFileSync(join(dir, '.apex', 'standards', 'scripts.md'), '# Scripts\n\nNode built-ins only.\n');
+    mkdirSync(join(dir, '.apex'), { recursive: true });
+    writeFileSync(join(dir, '.apex', '.gitkeep'), '');
     execFileSync('git', ['add', ...trackedPaths], { cwd: dir });
     execFileSync('git', ['commit', '-q', '-m', 'baseline'], { cwd: dir });
     mkdirSync(join(dir, '.apex', 'work', 'specs'), { recursive: true });
@@ -967,6 +976,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
       const code = await invoke(cliArgs ?? run.specPath, {
         commandFor: stubCommandFor,
         cwd: run.dir,
+        resolveHubContext: fakeResolveHubContext,
         opencodeConfig: { env: vars, homedir: () => fixtureHome },
         liveStdout: capture(out),
         liveStderr: capture(err),
@@ -1521,15 +1531,14 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
       assert.equal(routed.length, 3, status);
       const expectedRequired = {
         plan: [
-          '.apex/work/specs/topic.md', '.apex/_INDEX.md', '.apex/testing-and-checklist.md',
-          '.apex/standards/scripts.md',
+          '.apex/work/specs/topic.md', '.apex/work/tasks/topic/context/hub-context/context.md',
         ],
         implement: [
           '.apex/work/plans/topic.md',
         ],
         review: [
           '.apex/work/tasks/topic/success-criteria.md', '.apex/work/tasks/topic/task-result-index.md',
-          '.apex/work/tasks/topic/branch-diff.txt', '.apex/standards/scripts.md',
+          '.apex/work/tasks/topic/branch-diff.txt', '.apex/work/tasks/topic/context/hub-context/context.md',
         ],
       };
       for (const [index, phase] of ['plan', 'implement', 'review'].entries()) {
@@ -1538,11 +1547,12 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         assert.equal(manifest.scope.phase, phase);
         assert.equal(manifest.modelTier, expectedTierByPhase[phase]);
         assert.equal(Object.hasOwn(manifest.contract, 'budget'), false);
-        assert.deepEqual(manifest.required.map(({ path }) => path), expectedRequired[phase]);
+        // The graph resolver artifact stands in for routing, testing and standard alike,
+        // so it can be listed once per role; the distinct inputs are what is contracted.
+        assert.deepEqual([...new Set(manifest.required.map(({ path }) => path))], expectedRequired[phase]);
         if (phase === 'implement') {
-          assert.deepEqual(manifest.onDemand.map(({ path, available }) => [path, available]), [
-            ['.apex/_INDEX.md', true],
-            ['.apex/standards/scripts.md', true],
+          assert.deepEqual([...new Map(manifest.onDemand.map(({ path, available }) => [path, available]))], [
+            ['.apex/work/tasks/topic/context/hub-context/context.md', true],
             ['.apex/work/tasks/topic/ledger.md', false],
             ['.apex/work/tasks/topic/task-result-index.md', false],
             ['.apex/work/specs/topic.md', true],
@@ -2324,21 +2334,23 @@ if (process.argv[2] === '--version') {
         join(run.taskDir, 'context', 'phase-plan-attempt-1.json'), 'utf8',
       ));
       assert.ok(
-        planManifest.required.some((entry) => entry.path === '.apex/standards/scripts.md'),
-        'the routed implicated plan standard must remain required',
+        planManifest.required.some((entry) => entry.path === '.apex/work/tasks/topic/context/hub-context/context.md'),
+        'the resolved graph context must remain required for the implicated plan surface',
       );
     } finally {
       rmSync(run.dir, { recursive: true, force: true });
     }
   });
 
-  it('halts when the owning surface itself has no routing row', async () => {
-    const run = makeRun({ owningSurface: 'ghost' });
+  it('halts with ARTIFACT_FAILED when the injected hub-context resolver throws', async () => {
+    const run = makeRun();
     try {
-      const { code } = await drive(run, { FAKE_HARNESS_MODE: 'done' });
-      assert.equal(code, 1, 'an unrouted owning surface is a binding error, not prose');
+      const { code } = await drive(run, { FAKE_HARNESS_MODE: 'done' }, {
+        resolveHubContext: () => { throw new Error('graph resolver failed (injected)'); },
+      });
+      assert.equal(code, 1, 'an unresolvable hub context is a binding error');
       const status = statusOf(run);
-      assert.match(linesWith(status, ' — ARTIFACT_FAILED — ')[0], /implicated surface 'ghost'/);
+      assert.match(linesWith(status, ' — ARTIFACT_FAILED — ')[0], /graph resolver failed \(injected\)/);
       assert.equal(linesWith(status, ' — SPAWNED — ').length, 0, status);
     } finally {
       rmSync(run.dir, { recursive: true, force: true });
@@ -2464,12 +2476,16 @@ if (process.argv[2] === '--version') {
     const malformed = makeRun({ featureComplexity: 'enormous' });
     try {
       mkdirSync(missing.taskDir, { recursive: true });
-      writeFileSync(missing.statusFile, protocolLine + '2026-08-10T09:00:00.000Z — CONDUCTOR — RESUMING — prior run\n');
-      rmSync(join(missing.dir, '.apex', 'standards', 'scripts.md'));
+      // The plan phase is accepted, so the run resumes at implement, whose required
+      // input is the plan artifact; with it gone the phase halts before any spawn.
+      writeFileSync(missing.statusFile, acceptedPhase());
+      seedPlanArtifacts(missing);
+      rmSync(join(missing.dir, '.apex', 'work', 'plans', 'topic.md'));
+      const spawnedBefore = linesWith(statusOf(missing), ' — SPAWNED — ').length;
       const missingResult = await drive(missing, { FAKE_HARNESS_MODE: 'done' });
       assert.equal(missingResult.code, 1);
-      assert.equal(linesWith(statusOf(missing), ' — SPAWNED — ').length, 0);
-      assert.match(statusOf(missing), / — ARTIFACT_FAILED — .*phase=plan.*required input does not exist/);
+      assert.equal(linesWith(statusOf(missing), ' — SPAWNED — ').length, spawnedBefore);
+      assert.match(statusOf(missing), / — ARTIFACT_FAILED — .*phase=implement.*(?:required input does not exist|missing work artifact)/);
       assert.ok(!existsSync(join(missing.taskDir, 'phase-1-attempt-1.raw.jsonl')));
 
       const malformedResult = await drive(malformed, { FAKE_HARNESS_MODE: 'done' });
@@ -4111,7 +4127,7 @@ if (process.argv[2] === '--version') {
           const result = await drive(run, { FAKE_HARNESS_MODE: 'done' }, {
             async lockTransition(stage) {
               if (stage !== 'acquired') return;
-              contender = await autopilot.runConductor(spec, { cwd: run.dir, commandFor: () => { throw new Error('must not spawn'); } });
+              contender = await autopilot.runConductor(spec, { cwd: run.dir, resolveHubContext: fakeResolveHubContext, commandFor: () => { throw new Error('must not spawn'); } });
               independent = await drive(other, { FAKE_HARNESS_MODE: 'done' });
             },
           });
@@ -4140,7 +4156,8 @@ if (process.argv[2] === '--version') {
               const acquired = new Promise((resolve) => { successorAcquired = resolve; });
               const barrier = new Promise((resolve) => { resumeSuccessor = resolve; });
               const successor = autopilot.runConductor(run.specPath, {
-                cwd: run.dir, processProbe: deadProbe, commandFor: () => { throw new Error('stop successor'); },
+                cwd: run.dir, processProbe: deadProbe, resolveHubContext: fakeResolveHubContext,
+                commandFor: () => { throw new Error('stop successor'); },
                 async lockTransition(point) {
                   if (point === 'acquired') {
                     successorOwner = readFileSync(ownerOf(run), 'utf8');

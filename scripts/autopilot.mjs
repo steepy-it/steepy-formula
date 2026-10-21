@@ -1062,7 +1062,7 @@ function readArtifact(cwd, path) {
   return readFileSync(join(cwd, safePath), 'utf8');
 }
 
-function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion, resumeInputs }) {
+function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion, resumeInputs, resolveHubContext = resolveGraphHubContext }) {
   const specPath = repositoryPath(cwd, absSpec, 'spec path');
   const specName = basename(absSpec, '.md');
   const routingPath = '.apex/_INDEX.md';
@@ -1080,12 +1080,17 @@ function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, bas
   // (`steepy-formula context resolve`), never archived Markdown. When the legacy routing
   // file is still present (mock/archived hubs), the apex behavior is kept unchanged.
   const graphHub = !existsSync(join(cwd, routingPath))
-    ? resolveGraphHubContext({ repoRoot: cwd, outputPath: `.apex/work/tasks/${specName}/context/hub-context` })
+    ? resolveHubContext({ repoRoot: cwd, outputPath: `.apex/work/tasks/${specName}/context/hub-context` })
     : null;
   const resolvedRoutingPath = graphHub ? graphHub.contextPath : routingPath;
   const resolvedTestingPath = graphHub ? graphHub.contextPath : testingPath;
   const resolvedConventionsPath = graphHub ? graphHub.contextPath : conventionsPath;
-  const routingText = readArtifact(cwd, resolvedRoutingPath);
+  // The resolver's own `context.md` sits under `.apex/work/tasks/<spec>/context/hub-context/`,
+  // a directory the typed work-paths grammar has no family for; like every hub-context read
+  // it keeps the lexical guard rather than the work-path primitive.
+  const routingText = graphHub
+    ? readFileSync(join(cwd, assertSafeRelPath(graphHub.contextPath, 'hub context path')), 'utf8')
+    : readArtifact(cwd, resolvedRoutingPath);
   const standardsBySurface = standardsBySurfaceFromRouting(routingText, { repoRoot: cwd });
   // A cross-cutting entry with no routing row loads no standard. That is a real
   // loss of eager context (a misspelled surface looks exactly like prose), so it
@@ -2196,7 +2201,7 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
       }
       const prepared = phaseManifestInput({
         phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion,
-        resumeInputs: opts.resumeInputs,
+        resumeInputs: opts.resumeInputs, resolveHubContext: opts.resolveHubContext,
       });
       route = prepared.route;
       unroutedSurfaces = prepared.unroutedSurfaces;
