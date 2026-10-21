@@ -35,6 +35,12 @@ const REFUSING_SCRIPTS = [
   { script: 'scripts/autopilot-context.mjs', args: (root) => ['--verify-plan', '--repo-root', root, '--plan', '.apex/work/plans/topic.md'] },
   // The conductor CLI refuses before its spec checks, so no spec needs to exist.
   { script: 'scripts/autopilot.mjs', args: () => ['.apex/work/specs/topic.md'] },
+  // The CLAUDE.md renderer refuses before it writes; its diagnostics carry the `steepy ` prefix.
+  {
+    script: 'scripts/render-claude-md.mjs',
+    prefix: 'steepy render-claude-md',
+    args: (root) => ['--hub', root, '--project', 'demo-project', '--upsert', '--mode', 'graph'],
+  },
   // The loop controller refuses a fresh graph run before runner availability, graph resolution or
   // any loop state; its diagnostics carry the `loop controller [<CODE>]` prefix.
   {
