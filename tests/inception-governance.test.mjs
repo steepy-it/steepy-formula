@@ -7,23 +7,16 @@ import { spawnSync } from 'node:child_process';
 import * as state from '../scripts/inception-state.mjs';
 import { planProjectScaffold, applyProjectScaffold, renderProjectArtifact, withProjectScaffoldLock } from '../scripts/project-scaffold.mjs';
 import { fixture as processFixture, governanceInput } from './helpers/inception-fixture.mjs';
-import { renderTemplate } from '../scripts/template.mjs';
-import { prepareGovernance, writeGovernanceDocuments, finishGovernance, GOVERNANCE_PENDING, GOVERNANCE_RECEIPT } from '../scripts/inception-governance.mjs';
+import * as governance from '../scripts/inception-governance.mjs';
+import { prepareGovernance, finishGovernance, validateGovernanceInput, GOVERNANCE_PENDING, GOVERNANCE_RECEIPT } from '../scripts/inception-governance.mjs';
 
 const area = '.apex/inception';
 const put = (root, path, bytes) => { fs.mkdirSync(join(root, path, '..'), { recursive: true }); fs.writeFileSync(join(root, path), bytes); };
 const read = (root, path) => JSON.parse(fs.readFileSync(join(root, path)));
 const descriptor = root => read(root, `${area}/run.json`);
-// Formula normalization: planner-driven models carry the declared hub mode; the apex cases below
-// keep the legacy channel and its certified Markdown document set.
-const model = () => ({ projectName: 'sample', description: 'Sample app', devCommands: ['node --test'], surfaces: [{ name: 'src', path: 'src', agent: 'src-agent', testCmd: 'node --test' }], resolutions: {}, hubMode: 'legacy' });
-const template = (name, vars) => renderTemplate(fs.readFileSync(new URL(`../templates/${name}`, import.meta.url), 'utf8'), vars);
-const documents = () => [
-  { path: '.apex/_INDEX.md', content: template('_INDEX.md', { projectName: 'sample', routingRows: template('routing-row.md', { surface: 'src', docsPath: 'standards/src.md', agent: 'src-agent', skill: '—' }).trimEnd(), gitPolicyDirective: '' }) },
-  { path: '.apex/standards/src.md', content: template('surface-standard.md', { name: 'src', path: 'src', testCmd: 'node --test' }) },
-  ...['conventions', 'glossary', 'testing-and-checklist'].map(name => ({ path: `.apex/${name}.md`, content: `# ${name}\nConfirmed interview decisions.\n` })),
-];
-const input = root => ({ schema: 'steepy-inception-governance-input/v1', runId: descriptor(root).runId, completion: descriptor(root).completion, projectModel: model(), documents: documents() });
+// Formula: init certifies the graph-mode scaffold alone, so the governance input names no document.
+const model = () => ({ projectName: 'sample', description: 'Sample app', devCommands: ['node --test'], surfaces: [{ name: 'src', path: 'src', agent: 'src-agent', testCmd: 'node --test' }], resolutions: {}, hubMode: 'graph' });
+const input = root => ({ schema: 'steepy-inception-governance-input/v1', runId: descriptor(root).runId, completion: descriptor(root).completion, projectModel: model(), documents: [] });
 function git(root, ...args) { const r = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); }
 function fixture(t, { mixed = false, gitRepo = false, initialRoots, roots = ['.'], exclusions = [] } = {}) {
   const root = fs.mkdtempSync(join(tmpdir(), 'steepy-governance-')); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -51,7 +44,6 @@ function fixture(t, { mixed = false, gitRepo = false, initialRoots, roots = ['.'
 function apply(root, request) {
   const plan = planProjectScaffold({ hubRoot: root, model: request.projectModel });
   assert.equal(plan.conflicts.length, 0);
-  for (const document of request.documents) put(root, document.path, document.content);
   applyProjectScaffold({ hubRoot: root, plan });
 }
 function metadata(root) {
@@ -66,7 +58,6 @@ test('complete → prepare → real plan/apply → finish → default verify pre
   apply(root, request); const finished = finishGovernance(root); assert.equal(finished.status, 'complete');
   assert.equal(state.verifyComplete(root).ok, true, state.verifyComplete(root).reason);
   assert.deepEqual(metadata(join(root, area)), run);
-  const hub = spawnSync(process.execPath, [resolve('scripts/validate-hub.mjs'), root], { encoding: 'utf8' }); assert.equal(hub.status, 0, hub.stdout + hub.stderr);
   const before = metadata(root); prepareGovernance(root, request); finishGovernance(root); state.verifyComplete(root); assert.deepEqual(metadata(root), before);
 });
 // Formula: graph-first init certifies the graph-mode scaffold with an empty document set; the
@@ -74,15 +65,14 @@ test('complete → prepare → real plan/apply → finish → default verify pre
 test('graph-mode certified init binds only the scaffold operations and tolerates the .formula binding', t => {
   const root = fixture(t, { mixed: true }); const run = metadata(join(root, area));
   put(root, '.formula/config.json', '{\n  "projectId": "sample"\n}\n');
-  const request = { ...input(root), projectModel: { ...model(), hubMode: 'graph' }, documents: [] };
-  const legacyDocuments = { ...request, documents: documents() };
-  assert.throws(() => prepareGovernance(root, legacyDocuments), /documents must name exactly the stable init documents/);
+  const request = input(root);
+  const withDocument = { ...request, documents: [{ path: '.apex/conventions.md', content: '# conventions\nConfirmed interview decisions.\n' }] };
+  assert.throws(() => prepareGovernance(root, withDocument), /documents must be empty: init certifies no Markdown hub document/);
   const prepared = prepareGovernance(root, request);
   assert.deepEqual(prepared.producer.documents, []);
   assert.ok(prepared.operations.every(op => !op.path.startsWith('.apex/')), 'no Markdown hub document is certified');
   assert.ok(prepared.operations.some(op => op.path === '.agents/skills/sample-bootstrap/SKILL.md'));
   applyProjectScaffold({ hubRoot: root, plan: planProjectScaffold({ hubRoot: root, model: request.projectModel }) });
-  assert.deepEqual(writeGovernanceDocuments(root, request).created, []);
   assert.equal(finishGovernance(root).status, 'complete');
   assert.equal(state.verifyComplete(root).ok, true, state.verifyComplete(root).reason);
   assert.deepEqual(metadata(join(root, area)), run);
@@ -101,7 +91,7 @@ for (const path of ['src/app.js', '.agents/foreign.md', '.codex/config.toml', 'p
 test('finish refuses incomplete or extraneous changes; prepare cannot overwrite a different reservation', t => {
   const root = fixture(t); const request = input(root); prepareGovernance(root, request);
   assert.throws(() => finishGovernance(root));
-  const different = structuredClone(request); different.documents[0].content += 'Different';
+  const different = structuredClone(request); different.projectModel.description = 'Different app';
   const before = metadata(root); assert.throws(() => prepareGovernance(root, different)); assert.deepEqual(metadata(root), before);
   apply(root, request); put(root, 'foreign.txt', 'foreign'); assert.throws(() => finishGovernance(root));
   fs.unlinkSync(join(root, 'foreign.txt')); finishGovernance(root); assert.equal(state.verifyComplete(root).ok, true);
@@ -140,7 +130,6 @@ for (const git of [false, true]) for (const boundary of ['after-prepare', 'befor
     const command = boundary === 'after-prepare' ? 'prepare' : 'finish';
     if (command === 'finish') {
       prepareGovernance(f.root, request);
-      for (const doc of request.documents) f.put(doc.path, doc.content);
       applyProjectScaffold({ hubRoot: f.root, plan });
     }
     f.crash('inception-governance', `api.${command}Governance(root,${command === 'prepare' ? `${JSON.stringify(request)},` : ''}{fault:point=>{if(point===${JSON.stringify(boundary)})process.exit(73)}});`);
@@ -158,7 +147,6 @@ for (const git of [false, true]) for (const boundary of ['after-prepare', 'befor
     assert.deepEqual(f.read(inputPath), request); assert.deepEqual(f.read(planPath), plan);
     assert.deepEqual(f.read(reservation), pending);
     if (command === 'prepare') {
-      for (const doc of request.documents) f.put(doc.path, doc.content);
       applyProjectScaffold({ hubRoot: f.root, plan });
       f.run('inception-governance', ['finish', '--repo-root', f.root]);
     }
@@ -244,9 +232,9 @@ for (const command of ['prepare', 'finish']) {
     finishGovernance(root); assert.equal(state.verifyComplete(root).ok, true);
   });
 }
-test('input scope, existing stable documents, unsafe targets and strict CLI are rejected before effects', t => {
+test('input scope, existing Markdown hub documents, unsafe targets and strict CLI are rejected before effects', t => {
   const root = fixture(t); const request = input(root);
-  for (const mutation of [r => r.documents.push({ path: 'src/app.js', content: 'bad' }), r => r.documents.push({ path: '.codex/config.toml', content: 'bad' }), r => r.extra = true, r => r.documents[0].path = '.apex/../app.js']) {
+  for (const mutation of [r => r.documents.push({ path: 'src/app.js', content: 'bad' }), r => r.documents.push({ path: '.codex/config.toml', content: 'bad' }), r => r.extra = true, r => r.documents.push({ path: '.apex/../app.js', content: 'bad' })]) {
     const bad = structuredClone(request); mutation(bad); const before = metadata(root); assert.throws(() => prepareGovernance(root, bad)); assert.deepEqual(metadata(root), before);
   }
   put(root, '.apex/conventions.md', 'Existing'); assert.throws(() => prepareGovernance(root, request)); fs.unlinkSync(join(root, '.apex/conventions.md'));
@@ -359,7 +347,8 @@ test('prepare recovers an atomically staged reservation without adopting an empt
 });
 test('a partially applied prepared init resumes registration without rewriting its completed files', t => {
   const root = fixture(t); const request = input(root); const pending = prepareGovernance(root, request);
-  put(root, request.documents[0].path, request.documents[0].content); const before = metadata(root);
+  const [first] = planProjectScaffold({ hubRoot: root, model: request.projectModel }).operations;
+  put(root, first.path, first.content); const before = metadata(root);
   assert.deepEqual(prepareGovernance(root, request), pending); assert.deepEqual(metadata(root), before); assert.throws(() => finishGovernance(root));
   apply(root, request); finishGovernance(root); assert.equal(state.verifyComplete(root).ok, true);
 });
@@ -435,101 +424,24 @@ for (const scope of ['narrow-roots', 'excluded-root', 'existing-provider']) {
   });
 }
 
-// F1: `documents` is the only writer of the certified stable documents. The
-// receipt fixes their mode; a refusal happens before any write.
-const DOCUMENT_PATHS = documents().map(d => d.path).sort();
-// Applies only the provider plan; the stable documents stay with `documents`.
-// CR4: discovery's inception source is one-time because its own write-back drifts the certificate.
-test('CR4 a discovery write-back to a certified document ends the source with governance output drift', t => {
-  const root = fixture(t); const request = input(root); prepareGovernance(root, request); apply(root, request); finishGovernance(root);
-  assert.equal(state.verifyComplete(root).ok, true);
-  fs.appendFileSync(join(root, '.apex/conventions.md'), '- Accepted discovery rule.\n');
-  assert.match(state.verifyComplete(root).reason, /\.apex\/conventions\.md governance output drift/);
-});
-function applyProviders(root, request) {
-  const plan = planProjectScaffold({ hubRoot: root, model: request.projectModel });
-  assert.equal(plan.conflicts.length, 0);
-  applyProjectScaffold({ hubRoot: root, plan });
-}
-function fileMetadata(root, path) {
-  const absolute = join(root, path);
-  if (!fs.existsSync(absolute)) return null;
-  const st = fs.lstatSync(absolute); return [fs.readFileSync(absolute).toString('base64'), st.mode, st.mtimeMs, st.ino];
-}
-const F1_REFUSALS = [
-  ['no pending receipt', { prepared: false }, /governance: documents requires the prepared pending receipt/],
-  ['an input that differs from the prepared receipt', { change: r => { r.documents[0].content += 'Different'; } }, /governance: documents input differs from the prepared receipt/],
-  ['an existing document with different bytes', { setup: root => put(root, '.apex/conventions.md', 'Different bytes\n') },
-    /governance: \.apex\/conventions\.md exists with bytes that differ from the certified document/],
-  ['an exact document at mode 0664', { setup: (root, request) => {
-    put(root, '.apex/conventions.md', request.documents.find(d => d.path === '.apex/conventions.md').content); fs.chmodSync(join(root, '.apex/conventions.md'), 0o664);
-  } }, /governance: \.apex\/conventions\.md mode 0664 differs from certified mode 0644; documents never changes modes/],
-  ['foreign application drift', { setup: root => put(root, 'foreign.txt', 'foreign') }, /^(?:Error: )?governance: application-drift outside certified init operations: foreign\.txt$/],
-];
-for (const [name, { prepared = true, change, setup }, error] of F1_REFUSALS) {
-  test(`F1 SC3 documents refuses ${name} before any write`, t => {
-    const root = fixture(t); const request = input(root);
-    if (prepared) prepareGovernance(root, request);
-    setup?.(root, request);
-    const call = structuredClone(request); change?.(call);
-    const before = metadata(root);
-    assert.throws(() => writeGovernanceDocuments(root, call), error);
-    assert.deepEqual(metadata(root), before);
-  });
-}
-for (const [name, linked, link] of [
-  ['.apex/standards as a symlink to src', '.apex/standards', root => fs.symlinkSync(join(root, 'src'), join(root, '.apex/standards'))],
-  ['.apex/conventions.md as a symlink', '.apex/conventions.md', root => fs.symlinkSync(join(root, 'src/app.js'), join(root, '.apex/conventions.md'))],
-]) {
-  test(`F1 SC3 documents refuses ${name} created after prepare without writing through it`, t => {
-    const root = fixture(t); const request = input(root); prepareGovernance(root, request); link(root);
-    // metadata() reads through links, so the link target, receipts, run and work are compared.
-    const guarded = () => ({ src: metadata(join(root, 'src')), run: metadata(join(root, area)), work: metadata(join(root, '.apex/work')),
-      receipts: [GOVERNANCE_PENDING, GOVERNANCE_RECEIPT].map(path => fileMetadata(root, path)) });
-    const before = guarded();
-    const target = linked === '.apex/standards' ? '.apex/standards/src.md' : linked;
-    assert.throws(() => writeGovernanceDocuments(root, request), new RegExp(`governance: ${target.replaceAll('.', '\\.')} has an unsafe target or ancestor: `));
-    assert.deepEqual(guarded(), before);
-    for (const path of DOCUMENT_PATHS) assert.equal(fs.existsSync(join(root, path)), path === linked, path);
-  });
-}
-test('F1 documents preserves an exact 0644 document, creates the rest at 0644 and replays without writes', t => {
+// Formula: governance certifies no Markdown hub document for any model. The input and receipt keep
+// their `documents` field (always empty), and the documents writer and its CLI command are gone.
+test('formula: governance certifies no Markdown document for any model and has no documents writer', t => {
   const root = fixture(t); const request = input(root);
-  const pending = prepareGovernance(root, request); applyProviders(root, request);
-  const kept = request.documents.find(d => d.path === '.apex/glossary.md');
-  put(root, kept.path, kept.content); fs.chmodSync(join(root, kept.path), 0o644); const keptBefore = fileMetadata(root, kept.path);
-  assert.deepEqual(writeGovernanceDocuments(root, request), { receipt: pending, created: DOCUMENT_PATHS.filter(path => path !== kept.path), preserved: [kept.path] });
-  assert.deepEqual(fileMetadata(root, kept.path), keptBefore, 'the exact document is preserved, not rewritten');
-  for (const doc of request.documents) {
-    assert.equal(fs.readFileSync(join(root, doc.path), 'utf8'), doc.content, doc.path);
-    assert.equal(fs.lstatSync(join(root, doc.path)).mode & 0o7777, 0o644, doc.path);
+  for (const hubMode of ['graph', 'legacy']) {
+    const projectModel = { ...model(), hubMode };
+    assert.deepEqual(validateGovernanceInput({ ...request, projectModel }).documents, [], hubMode);
+    const withIndex = { ...request, projectModel, documents: [{ path: '.apex/_INDEX.md', content: '# Hub\n' }] };
+    assert.throws(() => validateGovernanceInput(withIndex), /governance: documents must be empty: init certifies no Markdown hub document/, hubMode);
   }
-  const written = metadata(root);
-  assert.deepEqual(writeGovernanceDocuments(root, request), { receipt: pending, created: [], preserved: DOCUMENT_PATHS });
-  assert.deepEqual(metadata(root), written);
-  const final = finishGovernance(root); assert.equal(state.verifyComplete(root).ok, true);
-  const complete = metadata(root);
-  assert.deepEqual(writeGovernanceDocuments(root, request), { receipt: final, created: [], preserved: DOCUMENT_PATHS });
-  assert.deepEqual(metadata(root), complete);
-  put(root, kept.path, 'Altered after the final receipt\n'); const altered = metadata(root);
-  assert.throws(() => writeGovernanceDocuments(root, request), /\.apex\/glossary\.md governance output drift/);
-  assert.deepEqual(metadata(root), altered);
-});
-test('F1 CLI documents requires its exact work input and reports the receipt id with created and preserved paths', t => {
-  const root = fixture(t); const request = input(root); const path = '.apex/work/init/input.json'; put(root, path, JSON.stringify(request));
-  const cli = (...args) => spawnSync(process.execPath, [resolve('scripts/inception-governance.mjs'), ...args], { encoding: 'utf8' });
-  const pending = prepareGovernance(root, request); applyProviders(root, request);
-  const usage = cli(); assert.equal(usage.status, 2, usage.stderr);
-  assert.match(usage.stderr, /\| documents --repo-root <root> --input <exact-json> \|/);
-  let before = metadata(root);
-  const missing = cli('documents', '--repo-root', root); assert.equal(missing.status, 2, missing.stderr); assert.match(missing.stderr, /missing required option/);
-  assert.deepEqual(metadata(root), before);
-  put(root, 'input.json', JSON.stringify(request)); before = metadata(root);
-  const outside = cli('documents', '--repo-root', root, '--input', 'input.json'); assert.equal(outside.status, 1, outside.stderr); assert.match(outside.stderr, /authorized work scope/);
-  assert.deepEqual(metadata(root), before); fs.unlinkSync(join(root, 'input.json'));
-  const written = cli('documents', '--repo-root', root, '--input', path); assert.equal(written.status, 0, written.stderr);
-  const output = JSON.parse(written.stdout);
-  assert.deepEqual(Object.keys(output), ['ok', 'id', 'created', 'preserved']);
-  assert.deepEqual(output, { ok: true, id: pending.id, created: DOCUMENT_PATHS, preserved: [] });
-  finishGovernance(root); assert.equal(state.verifyComplete(root).ok, true);
+  assert.equal('writeGovernanceDocuments' in governance, false, 'the documents writer is not exported');
+  const path = '.apex/work/init/input.json'; put(root, path, JSON.stringify(request));
+  prepareGovernance(root, request); apply(root, request);
+  const before = metadata(root);
+  const cli = spawnSync(process.execPath, [resolve('scripts/inception-governance.mjs'), 'documents', '--repo-root', root, '--input', path], { encoding: 'utf8' });
+  assert.equal(cli.status, 2, cli.stdout + cli.stderr);
+  assert.equal(cli.stdout, '');
+  assert.equal(cli.stderr, 'governance: usage: prepare --repo-root <root> --input <exact-json> | finish --repo-root <root>\n');
+  assert.deepEqual(metadata(root), before, 'the unknown command writes nothing');
+  assert.equal(finishGovernance(root).status, 'complete'); assert.equal(state.verifyComplete(root).ok, true);
 });

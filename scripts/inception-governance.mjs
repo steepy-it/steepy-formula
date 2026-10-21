@@ -10,6 +10,7 @@ import { parseStrictJson, validateRef, validateAppEntry, validateId, validatePat
 import { observeApplication, applicationIdentity, applicationChanges, withApplicationSnapshotLease } from './inception-snapshot.mjs';
 import { parseRunDescriptor, verifyComplete } from './inception-state.mjs';
 import { writeAllSync } from './write-all.mjs';
+import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 
 export const GOVERNANCE_PENDING = '.apex/init-provenance.pending.json';
 export const GOVERNANCE_RECEIPT = '.apex/init-provenance.json';
@@ -28,13 +29,13 @@ function text(value, where) {
   requireThat(typeof value === 'string' && !value.includes('\0') && Buffer.from(value).toString('utf8') === value, `${where} must be representable UTF-8 text`);
   return value;
 }
-// Formula: a graph-mode init lands its knowledge through the initialization promotion, so it
-// certifies no Markdown hub document; only the legacy channel renders the stable document set.
-function documentPaths(model) {
-  if (model.hubMode === 'graph') return [];
-  return ['.apex/_INDEX.md', '.apex/conventions.md', '.apex/glossary.md', '.apex/testing-and-checklist.md', ...model.surfaces.map(s => `.apex/standards/${s.name}.md`)].sort();
+// Formula: init lands its knowledge in the graph through discovery's inception source, so it
+// certifies no Markdown hub document for any model. The input and receipt keep their `documents`
+// field, always empty, so both shapes are unchanged.
+function documentPaths() {
+  return [];
 }
-function canonicalDocuments(documents, model, contents) {
+function canonicalDocuments(documents, contents) {
   requireThat(Array.isArray(documents), 'documents must be an array');
   const docs = documents.map(document => {
     shape(document, ['path', contents ? 'content' : 'sha256'], 'document'); validatePath(document.path);
@@ -42,7 +43,7 @@ function canonicalDocuments(documents, model, contents) {
     requireThat(/^[0-9a-f]{64}$/u.test(document.sha256), 'document digest must be SHA-256');
     return { path: document.path, sha256: document.sha256 };
   }).sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-  requireThat(same(docs.map(d => d.path), documentPaths(model)), 'documents must name exactly the stable init documents for this model');
+  requireThat(same(docs.map(d => d.path), documentPaths()), 'documents must be empty: init certifies no Markdown hub document');
   return docs;
 }
 export function validateGovernanceInput(input) {
@@ -50,7 +51,7 @@ export function validateGovernanceInput(input) {
   requireThat(input.schema === INPUT_SCHEMA, 'unsupported input schema');
   validateRef(input.completion); requireThat(/^inc-\d{8}T\d{6}Z-[0-9a-f]{8}$/u.test(input.runId), 'malformed runId');
   const projectModel = normalizeProjectModel(input.projectModel);
-  return { schema: INPUT_SCHEMA, runId: input.runId, completion: { ...input.completion }, projectModel, documents: canonicalDocuments(input.documents, projectModel, true) };
+  return { schema: INPUT_SCHEMA, runId: input.runId, completion: { ...input.completion }, projectModel, documents: canonicalDocuments(input.documents, true) };
 }
 function producerFor(input) {
   return { name: 'init', projectModel: input.projectModel, documents: input.documents.map(({ path, content }) => ({ path, sha256: sha(Buffer.from(content)) })) };
@@ -70,7 +71,7 @@ export function validateGovernanceReceipt(value) {
   requireThat(/^inc-\d{8}T\d{6}Z-[0-9a-f]{8}$/u.test(value.runId), 'malformed runId');
   shape(value.producer, ['name', 'projectModel', 'documents'], 'producer'); requireThat(value.producer.name === 'init', 'unsupported producer');
   const projectModel = normalizeProjectModel(value.producer.projectModel);
-  const producer = { name: 'init', projectModel, documents: canonicalDocuments(value.producer.documents, projectModel, false) };
+  const producer = { name: 'init', projectModel, documents: canonicalDocuments(value.producer.documents, false) };
   requireThat(value.id === receiptId(value.runId, value.completion, producer), 'receipt input identity mismatch');
   requireThat(['prepared', 'complete'].includes(value.status), 'unsupported status');
   const ids = artifactIds(projectModel); const documents = new Map(producer.documents.map(d => [d.path, d.sha256]));
@@ -336,91 +337,6 @@ export function prepareGovernance(repoRoot, rawInput, options = {}) {
     bindReceipt(receipt, current); stagingReservation(root, receipt, { create: true, fault: options.fault }); options.fault?.('after-reservation'); publish(root, GOVERNANCE_PENDING, receipt, options); options.fault?.('after-prepare'); return receipt;
   });
 }
-// Read-only: every existing ancestor is a physical directory and an existing
-// target is an ordinary single-link file. Anything else refuses the whole call.
-function documentEntry(root, path) {
-  try {
-    const parts = path.split('/');
-    for (let n = 1; n < parts.length; n++) {
-      const absolute = join(root, ...parts.slice(0, n));
-      let stat;
-      try { stat = fs.lstatSync(absolute); } catch (error) { if (error.code === 'ENOENT') break; throw error; }
-      if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(absolute) !== absolute) throw new Error(`${parts.slice(0, n).join('/')} is not a physical directory`);
-    }
-    return currentEntry(root, path);
-  } catch (error) { throw new Error(`governance: ${path} has an unsafe target or ancestor: ${error.message}`); }
-}
-function absent(root, path) {
-  try { fs.lstatSync(join(root, path)); return false; } catch (error) { if (error.code === 'ENOENT') return true; throw error; }
-}
-// The reserved namespace owns the generations: a complete stage is reused at the
-// certified mode, an exact prefix is kept and skipped, anything else collides.
-function stageDocument(root, pending, op, bytes) {
-  const base = stagingBase(pending); const family = `${base}/document-${sha(op.path)}`;
-  for (let generation = 1; ; generation++) {
-    requireThat(Number.isSafeInteger(generation), 'staging generation overflow');
-    const stage = `${family}-${String(generation).padStart(4, '0')}.tmp`;
-    const staged = readPublicationFile(root, stage, { missing: true });
-    if (staged === null) {
-      const fd = fs.openSync(join(root, stage), 'wx', 0o600);
-      try { writeAllSync(fd, bytes); fs.fchmodSync(fd, op.after.mode); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-      syncDirectory(join(root, base)); return stage;
-    }
-    if (staged.equals(bytes)) {
-      const fd = fs.openSync(join(root, stage), fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-      try {
-        const stat = fs.fstatSync(fd); requireThat(stat.isFile() && stat.nlink === 1, `${stage} must be an ordinary single-link staging file`);
-        fs.fchmodSync(fd, op.after.mode); fs.fsyncSync(fd);
-      } finally { fs.closeSync(fd); }
-      return stage;
-    }
-    requireThat(staged.length < bytes.length && bytes.subarray(0, staged.length).equals(staged), `${stage} divergent document staging collision`);
-  }
-}
-function publishDocument(root, pending, op, bytes, fault) {
-  fault?.('documents-before-stage', { path: op.path });
-  ensureDirectory(root, dirname(op.path));
-  const stage = stageDocument(root, pending, op, bytes);
-  fault?.('documents-after-stage', { path: op.path, stage });
-  requireThat(absent(root, op.path), `${op.path} appeared before publication`);
-  fs.renameSync(join(root, stage), join(root, op.path)); syncDirectory(join(root, stagingBase(pending))); syncDirectory(dirname(join(root, op.path)));
-  requireThat(same(currentEntry(root, op.path), op.after), `${op.path} published document differs from the certified document`);
-  fault?.('documents-after-rename', { path: op.path });
-}
-// The only writer of the certified stable documents: exact bytes at the receipt
-// mode, never the umask. Provider artifacts stay with the planner.
-export function writeGovernanceDocuments(repoRoot, rawInput, options = {}) {
-  const input = validateGovernanceInput(rawInput); const root = fs.realpathSync(repoRoot); const producer = producerFor(input);
-  const id = receiptId(input.runId, input.completion, producer); const ctx = context(root);
-  requireThat(input.runId === ctx.descriptor.runId && same(input.completion, ctx.descriptor.completion), 'input completion mismatch');
-  return withGovernanceSnapshotLease(root, ctx, id, options, () => {
-    const pending = readReceipt(root, GOVERNANCE_PENDING, true); const final = readReceipt(root, GOVERNANCE_RECEIPT, true);
-    requireThat(pending !== null, 'documents requires the prepared pending receipt');
-    requireThat(pending.id === id && same(pending.producer, producer), 'documents input differs from the prepared receipt');
-    const paths = new Set(producer.documents.map(d => d.path));
-    const documents = pending.operations.filter(op => op.kind === 'create' && paths.has(op.path));
-    if (final !== null) {
-      const result = verifyComplete(root); requireThat(result.ok, result.reason);
-      return { receipt: final, created: [], preserved: documents.map(op => op.path) };
-    }
-    stagingReservation(root, pending);
-    const missing = []; const preserved = [];
-    // Classify every document read-only before the first write. A divergent mode
-    // is refused, never corrected: documents does not chmod an existing file.
-    const octal = mode => `0${mode.toString(8)}`;
-    for (const op of documents) {
-      const current = documentEntry(root, op.path);
-      if (current === null) { missing.push(op); continue; }
-      if (same(current, op.after)) { preserved.push(op.path); continue; }
-      requireThat(false, current.bytes === op.after.bytes && current.sha256 === op.after.sha256
-        ? `${op.path} mode ${octal(current.mode)} differs from certified mode ${octal(op.after.mode)}; documents never changes modes`
-        : `${op.path} exists with bytes that differ from the certified document`);
-    }
-    checkCompletion(root, pending, true);
-    for (const op of missing) publishDocument(root, pending, op, Buffer.from(input.documents.find(d => d.path === op.path).content), options.fault);
-    return { receipt: pending, created: missing.map(op => op.path), preserved };
-  });
-}
 export function finishGovernance(repoRoot, options = {}) {
   const root = fs.realpathSync(repoRoot); const observed = context(root);
   return withGovernanceSnapshotLease(root, observed, null, options, ctx => {
@@ -435,21 +351,20 @@ export function finishGovernance(repoRoot, options = {}) {
 export function main(argv = process.argv.slice(2)) {
   let command; let values;
   try {
-    command = argv[0]; requireThat(['prepare', 'documents', 'finish'].includes(command), 'usage: prepare --repo-root <root> --input <exact-json> | documents --repo-root <root> --input <exact-json> | finish --repo-root <root>');
-    const takesInput = command !== 'finish';
+    command = argv[0]; requireThat(['prepare', 'finish'].includes(command), 'usage: prepare --repo-root <root> --input <exact-json> | finish --repo-root <root>');
+    const takesInput = command === 'prepare';
     ({ values } = parseArgs({ args: argv.slice(1), strict: true, allowPositionals: false, options: { 'repo-root': { type: 'string' }, ...(takesInput ? { input: { type: 'string' } } : {}) } }));
     requireThat(values['repo-root'] && (!takesInput || values.input), 'missing required option');
   } catch (error) { console.error(error.message); return 2; }
   try {
     const root = fs.realpathSync(values['repo-root']);
+    // The migrate state refuses before the input read, the lease, or any stdout line.
+    const migrate = migrateRefusal(root);
+    if (migrate !== null) { console.error(`inception-governance: ${migrate.message}`); return migrate.code; }
     const input = () => {
       validatePath(values.input); requireThat(values.input.startsWith('.apex/work/'), 'init input must be an exact file in its authorized work scope');
       return parseStrictJson(readPublicationFile(root, values.input));
     };
-    if (command === 'documents') {
-      const { receipt, created, preserved } = writeGovernanceDocuments(root, input());
-      console.log(JSON.stringify({ ok: true, id: receipt.id, created, preserved })); return 0;
-    }
     const receipt = command === 'prepare' ? prepareGovernance(root, input()) : finishGovernance(root);
     console.log(JSON.stringify({ ok: true, id: receipt.id, status: receipt.status, path: receipt.status === 'complete' ? GOVERNANCE_RECEIPT : GOVERNANCE_PENDING })); return 0;
   } catch (error) { console.error(error.message); return 1; }

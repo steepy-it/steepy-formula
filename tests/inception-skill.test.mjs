@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { planProjectScaffold, applyProjectScaffold } from '../scripts/project-scaffold.mjs';
-import { renderTemplate } from '../scripts/template.mjs';
 import { publicationRef } from '../scripts/inception-protocol.mjs';
 import { sectionBetween, frontmatter } from './support/markdown.mjs';
 
@@ -387,29 +386,21 @@ test('complete source recipe verifies before source reads, certifies init, and r
   assert.equal(receipt.coverage[0].id, 'dr-1');
   assert.equal(receipt.coverage[0].status, 'verified');
   assert.equal(receipt.checks[0].result, 'succeeded');
-  const projectModel = { projectName: 'sample', description: 'Confirmed app', devCommands: ['node --test'], surfaces: [{ name: 'web', path: 'src', agent: 'web-agent', testCmd: 'node --test' }], resolutions: {}, hubMode: 'legacy' };
-  const template = (name, values) => renderTemplate(readFileSync(join(root, 'templates', name), 'utf8'), values);
-  const documents = [
-    { path: '.apex/_INDEX.md', content: template('_INDEX.md', { projectName: projectModel.projectName, routingRows: template('routing-row.md', { surface: 'web', docsPath: 'standards/web.md', agent: 'web-agent', skill: '—' }).trimEnd(), gitPolicyDirective: '' }) },
-    { path: '.apex/standards/web.md', content: template('surface-standard.md', { name: 'web', path: 'src', testCmd: 'node --test' }) },
-    ...['conventions', 'glossary', 'testing-and-checklist'].map(name => ({ path: `.apex/${name}.md`, content: `# ${name}\nConfirmed interview decisions.\n` })),
-  ];
+  // Formula: init certifies the graph-mode scaffold alone, so the governance input names no document.
+  const projectModel = { projectName: 'sample', description: 'Confirmed app', devCommands: ['node --test'], surfaces: [{ name: 'web', path: 'src', agent: 'web-agent', testCmd: 'node --test' }], resolutions: {}, hubMode: 'graph' };
   const plan = planProjectScaffold({ hubRoot: f.repo, model: projectModel });
   assert.deepEqual(plan.conflicts, []);
   const inputPath = '.apex/work/init/' + receipt.runId + '/governance-input.json';
-  f.json(inputPath, { schema: 'steepy-inception-governance-input/v1', runId: receipt.runId, completion: receipt.completion, projectModel, documents });
+  f.json(inputPath, { schema: 'steepy-inception-governance-input/v1', runId: receipt.runId, completion: receipt.completion, projectModel, documents: [] });
   run(prepare, inputPath);
   const readCount = sourceReads.length;
   loadSource(1); assert.equal(sourceReads.length, readCount, 'pending receipt blocks source bodies');
   // Recovery takes precedence over a now-red source gate and retains exact input.
   run(prepare, inputPath);
   applyProjectScaffold({ hubRoot: f.repo, plan });
-  for (const document of documents) f.write(document.path, document.content);
   run(finish);
   assert.deepEqual(loadSource().inputPaths, receipt.inputPaths);
   run(prepare, inputPath); run(finish); // idempotent receipt replay
-  const gateResult = spawnSync(process.execPath, [join(root, 'scripts/validate-hub.mjs'), f.repo], { encoding: 'utf8' });
-  assert.equal(gateResult.status, 0, gateResult.stdout + gateResult.stderr);
   const countAfterInit = sourceReads.length;
   f.write('.codex/foreign.md', 'Application change inside a provider\n');
   const rejected = loadSource(1);
@@ -426,23 +417,17 @@ for (const prefix of ['full-scaffold', 'through-customized-replacement']) test(`
   f.run('complete', { cycle: f.cycle, checkpoint: f.run('checkpoint').checkpoint.path });
   const descriptorBytes = readFileSync(join(f.repo, area, 'run.json'));
   const verified = f.run('verify-complete');
-  const projectModel = { projectName: 'sample', description: 'Confirmed app', devCommands: ['node --test'], surfaces: [{ name: 'web', path: 'src', agent: 'web-agent', testCmd: 'node --test' }], resolutions: {}, hubMode: 'legacy' };
+  const projectModel = { projectName: 'sample', description: 'Confirmed app', devCommands: ['node --test'], surfaces: [{ name: 'web', path: 'src', agent: 'web-agent', testCmd: 'node --test' }], resolutions: {}, hubMode: 'graph' };
   const unresolved = planProjectScaffold({ hubRoot: f.repo, model: projectModel });
   assert.equal(unresolved.conflicts[0].id, 'v1:web-agent-codex:customized');
   assert.deepEqual(unresolved.conflicts[0].choices, ['replace', 'abort']);
   projectModel.resolutions[unresolved.conflicts[0].id] = 'replace';
   const originalPlan = planProjectScaffold({ hubRoot: f.repo, model: projectModel });
   assert.deepEqual(originalPlan.conflicts, []);
-  const template = (name, values) => renderTemplate(readFileSync(join(root, 'templates', name), 'utf8'), values);
-  const documents = [
-    { path: '.apex/_INDEX.md', content: template('_INDEX.md', { projectName: 'sample', routingRows: template('routing-row.md', { surface: 'web', docsPath: 'standards/web.md', agent: 'web-agent', skill: '—' }).trimEnd(), gitPolicyDirective: '' }) },
-    { path: '.apex/standards/web.md', content: template('surface-standard.md', { name: 'web', path: 'src', testCmd: 'node --test' }) },
-    ...['conventions', 'glossary', 'testing-and-checklist'].map(name => ({ path: `.apex/${name}.md`, content: `# ${name}\nConfirmed interview decisions.\n` })),
-  ];
   const work = `.apex/work/init/${verified.runId}`;
   const inputPath = work + '/governance-input.json';
   const planPath = work + '/scaffold-plan.json';
-  f.json(inputPath, { schema: 'steepy-inception-governance-input/v1', runId: verified.runId, completion: verified.completion, projectModel, documents });
+  f.json(inputPath, { schema: 'steepy-inception-governance-input/v1', runId: verified.runId, completion: verified.completion, projectModel, documents: [] });
   f.json(planPath, originalPlan);
   const inputBytes = readFileSync(join(f.repo, inputPath));
   const planBytes = readFileSync(join(f.repo, planPath));
@@ -479,17 +464,6 @@ for (const prefix of ['full-scaffold', 'through-customized-replacement']) test(`
   const result = JSON.parse(recovered.stdout);
   assert.equal(result.applied, originalPlan.operations.length - alreadyApplied.length);
   assert.deepEqual(metadata(), before, 'recovery never rewrites completed scaffold files');
-  // Formula: init is graph-first and certifies no Markdown document, so its skill never runs the
-  // documents writer; this legacy-model case drives the public command directly.
-  assert.ok(!init.includes('inception-governance.mjs documents --repo-root'), 'graph-first init never documents the documents writer');
-  const documentsArgs = [join(root, 'scripts/inception-governance.mjs'), 'documents', '--repo-root', f.repo, '--input', inputPath];
-  const written = spawnSync(process.execPath, documentsArgs, { encoding: 'utf8' });
-  assert.equal(written.status, 0, written.stdout + written.stderr);
-  assert.ok(JSON.parse(written.stdout).created.length > 0, 'documents writes the missing certified documents');
-  for (const document of JSON.parse(inputBytes).documents) {
-    assert.equal(readFileSync(join(f.repo, document.path), 'utf8'), document.content);
-    assert.equal(statSync(join(f.repo, document.path)).mode & 0o777, 0o644);
-  }
   governance('finish');
   assert.equal(f.run('verify-complete').ok, true);
   assert.deepEqual(readFileSync(join(f.repo, inputPath)), inputBytes);

@@ -26,10 +26,11 @@ const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = join(repoRoot, 'scripts', 'formula', 'cli.mjs');
 
 // The workflow scripts that refuse in the migrate state, one row each (Tasks 4–10 extend it):
-//   { script: 'scripts/<name>.mjs', args: (root) => [...argv after the script path], prefix? }
+//   { script: 'scripts/<name>.mjs', args: (root) => [...argv after the script path], prefix?, label? }
 // `root` is the fresh migrate-state temp repo, also the subprocess cwd. The expected stderr prefix
 // defaults to the script's basename without `.mjs` (the scripts' own `<name>: …` diagnostic
 // convention); `prefix` overrides it for a script whose diagnostics carry another fixed prefix.
+// `label` names the test (default: the basename) where one script has several rows.
 const REFUSING_SCRIPTS = [
   // Read-only verification still refuses: the refusal fires right after parse for every mode.
   { script: 'scripts/autopilot-context.mjs', args: (root) => ['--verify-plan', '--repo-root', root, '--plan', '.apex/work/plans/topic.md'] },
@@ -50,6 +51,20 @@ const REFUSING_SCRIPTS = [
       '--repo-root', root, '--goal', '.apex/work/loops/2026-10-21-topic/goal.md', '--harness', 'pi',
       '--commit-authorized', '--graph-target', 'apex:demo-project:surface:scripts',
     ],
+  },
+  // Inception refuses every command, the admission-exempt ones included: a start would otherwise
+  // create the run area, and classify would otherwise print its JSON row.
+  {
+    script: 'scripts/inception-state.mjs',
+    label: 'inception-state start',
+    args: (root) => ['start', '--harness', 'codex', '--capabilities', 'shell', '--git-commits', 'allowed', '--repo-root', root],
+  },
+  { script: 'scripts/inception-state.mjs', label: 'inception-state classify', args: (root) => ['classify', '--repo-root', root] },
+  // Governance refuses before it reads its exact work input, so no input file needs to exist.
+  {
+    script: 'scripts/inception-governance.mjs',
+    label: 'inception-governance prepare',
+    args: (root) => ['prepare', '--repo-root', root, '--input', '.apex/work/init/input.json'],
   },
 ];
 
@@ -150,10 +165,10 @@ test('migrate state: promotion preview of an unknown scenario keeps its normal n
 
 // --- workflow scripts refuse in the migrate state (G5) ----------------------------------------------
 
-for (const { script, args, prefix } of REFUSING_SCRIPTS) {
+for (const { script, args, prefix, label } of REFUSING_SCRIPTS) {
   const name = basename(script, '.mjs');
   const line = `${prefix ?? name}: ${MIGRATE_REFUSAL_MESSAGE}`;
-  test(`migrate state: ${name} refuses with exit ${MIGRATE_REFUSAL_EXIT} before any stdout line or filesystem write`, () => {
+  test(`migrate state: ${label ?? name} refuses with exit ${MIGRATE_REFUSAL_EXIT} before any stdout line or filesystem write`, () => {
     const root = migrateStateRepo();
     const before = treeSnapshot(root);
     const result = spawnSync(process.execPath, [join(repoRoot, script), ...args(root)], { cwd: root, encoding: 'utf8' });

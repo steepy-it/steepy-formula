@@ -31,14 +31,15 @@ import { RUN_CHILDREN_V2, validateSnapshotScope, ABANDON_INTENT_SCHEMA_V2, ABAND
 import { observeApplication, applicationIdentity, applicationChanges, withApplicationSnapshotLease } from './inception-snapshot.mjs';
 import { withProjectScaffoldLock } from './project-scaffold.mjs';
 import { verifyGovernance as verifyCanonicalGovernance } from './inception-governance.mjs';
+import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 export { RUN_SCHEMA_V2, createRunDescriptorV2 } from './inception-protocol.mjs';
 
 export const INCEPTION_AREA = '.apex/inception';
 export const INCEPTION_GITIGNORE = `${INCEPTION_AREA}/.gitignore`;
 export const INCEPTION_GITIGNORE_BYTES = '*\n';
 export const RUN_DESCRIPTOR_PATH = `${INCEPTION_AREA}/run.json`;
-export const HUB_INDEX_PATH = '.apex/_INDEX.md';
-// Formula: the graph channel has no Markdown index; the committed engine binding marks its hub.
+// Formula: the committed engine binding is the only hub marker. A repository that still carries a
+// Markdown hub is in the migrate state, refused by `migrateRefusal` before any command runs.
 export const GRAPH_BINDING_PATH = '.formula/config.json';
 export const RESUME_NOTES_DIR = `${INCEPTION_AREA}/resume-notes`;
 export const ABANDONED_DIR = `${INCEPTION_AREA}/abandoned`;
@@ -190,6 +191,7 @@ export function nextStepFor(descriptor) {
 // ---------------------------------------------------------------------------
 
 // Exit 1: refused precondition, invalid state, or failed verification. Exit 2: usage error.
+// Exit 25 (MIGRATE_REFUSAL_EXIT): the migrate state, a repository that still carries a Markdown hub.
 class InceptionError extends Error {
   constructor(exitCode, message) {
     super(message);
@@ -197,8 +199,8 @@ class InceptionError extends Error {
   }
 }
 
-function refuse(message) {
-  return new InceptionError(1, message);
+function refuse(message, exitCode = 1) {
+  return new InceptionError(exitCode, message);
 }
 
 function usage(message) {
@@ -289,10 +291,13 @@ function observeHubMarker(root, path) {
   return { hub: 'invalid', error: `${path} is not an ordinary file` };
 }
 
-// A hub is the legacy Markdown index or the graph binding; either one present is a hub.
+// A hub is the graph binding alone; only ENOENT means absent, any other failure is invalid state.
 function observeHub(root) {
-  const index = observeHubMarker(root, HUB_INDEX_PATH);
-  return index.hub === 'absent' ? observeHubMarker(root, GRAPH_BINDING_PATH) : index;
+  try {
+    return observeHubMarker(root, GRAPH_BINDING_PATH);
+  } catch (error) {
+    return { hub: 'invalid', error: `${GRAPH_BINDING_PATH} cannot be inspected: ${message(error)}` };
+  }
 }
 
 function observeRun(root) {
@@ -315,24 +320,14 @@ export function observeState(repoRoot) {
     return { hub: 'invalid', run: 'invalid', descriptor: null, error: `.apex cannot be inspected: ${message(error)}` };
   }
   if (apex === null) {
-    let graph;
-    try {
-      graph = observeHubMarker(repoRoot, GRAPH_BINDING_PATH);
-    } catch (error) {
-      graph = { hub: 'invalid', error: `${GRAPH_BINDING_PATH} cannot be inspected: ${message(error)}` };
-    }
-    return { hub: graph.hub, run: 'none', descriptor: null, error: graph.error };
+    const hub = observeHub(repoRoot);
+    return { hub: hub.hub, run: 'none', descriptor: null, error: hub.error };
   }
   if (apex.isSymbolicLink() || !apex.isDirectory()) {
     return { hub: 'invalid', run: 'invalid', descriptor: null, error: '.apex is not a real directory' };
   }
-  let hub;
+  const hub = observeHub(repoRoot);
   let run;
-  try {
-    hub = observeHub(repoRoot);
-  } catch (error) {
-    hub = { hub: 'invalid', error: `${HUB_INDEX_PATH} cannot be inspected: ${message(error)}` };
-  }
   try {
     run = observeRun(repoRoot);
   } catch (error) {
@@ -528,9 +523,8 @@ function startRunUnlocked(repoRoot, {
   try { validateSnapshotScope({ roots: ['.'], exclusions }); } catch (error) { throw refuse(`--exclusions-stdin: ${message(error)}`); }
 
   const apexExists = realDirectory(root, '.apex');
-  if (apexExists && lstatOrNull(join(root, HUB_INDEX_PATH)) !== null) {
-    throw refuse(`${HUB_INDEX_PATH} exists: this project already has a hub`);
-  }
+  const migrate = migrateRefusal(root);
+  if (migrate !== null) throw refuse(migrate.message, migrate.code);
   if (lstatOrNull(join(root, GRAPH_BINDING_PATH)) !== null) {
     throw refuse(`${GRAPH_BINDING_PATH} exists: this project already has a graph hub binding`);
   }
@@ -2519,6 +2513,13 @@ export function main(argv = process.argv.slice(2)) {
     if (resolved.error) throw resolved.error;
     const values = parseCommandArgs(argv, resolved.spec, resolved.positionals);
     const root = resolveRepoRoot(values['repo-root']);
+    // The migrate state refuses every command, the admission-exempt ones included, before
+    // admission and with no stdout line: the shared message on stderr, then its dedicated exit.
+    const migrate = migrateRefusal(root);
+    if (migrate !== null) {
+      emit(2, `inception-state: ${migrate.message}`);
+      return migrate.code;
+    }
     // Admission precedes command-specific input reads, writer leases and files.
     if (!ADMISSION_EXEMPT.includes(command)) v2Descriptor(root);
     result = resolved.spec.run(root, values);

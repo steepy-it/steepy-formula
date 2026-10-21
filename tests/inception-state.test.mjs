@@ -38,11 +38,13 @@ import {
   createRunDescriptor,
   createRunDescriptorV2,
   nextStepFor,
+  observeState,
   parseRunDescriptor,
   replaceFileAtomic,
   serializeRunDescriptor,
   startRun,
 } from '../scripts/inception-state.mjs';
+import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
 import { v1RunDescriptor, v1RunDescriptorText } from './helpers/inception-fixture.mjs';
 
 const SCRIPT = realpathSync(fileURLToPath(new URL('../scripts/inception-state.mjs', import.meta.url)));
@@ -366,6 +368,17 @@ function cli(c, ...args) {
   return spawnHelper(c, [...args, '--repo-root', c.repo]);
 }
 
+// The migrate-state refusal (G5): exit 25, the shared message as the only stderr line, no stdout
+// line at all, and the case repository unchanged.
+function assertMigrateRefusal(c, args, label) {
+  const before = snapshot(c.repo);
+  const result = spawnSync(process.execPath, [SCRIPT, ...args, '--repo-root', c.repo], { cwd: c.repo, env: c.env, encoding: 'utf8' });
+  assert.equal(result.status, MIGRATE_REFUSAL_EXIT, `${label}\n${result.stdout}${result.stderr}`);
+  assert.equal(result.stdout, '', `${label}: the refusal precedes any stdout line`);
+  assert.equal(result.stderr, `inception-state: ${MIGRATE_REFUSAL_MESSAGE}\n`, label);
+  assert.deepEqual(snapshot(c.repo), before, `${label}: the refusal writes nothing`);
+}
+
 function git(c, ...args) {
   const result = spawnSync('git', args, { cwd: c.repo, env: c.env, encoding: 'utf8' });
   assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
@@ -488,12 +501,6 @@ const VALID_CLASSIFICATIONS = [
     setup(c) { writeFile(c, '.apex/inception/.gitignore', '*\n'); writeFile(c, '.apex/inception/.DS_Store', 'finder'); },
     hub: 'absent', run: 'none', rows: ['maturity-decision-required', 'start-new-run', 'propose-init-discovery'],
   },
-  { label: 'hub without a run', setup(c) { writeHub(c); }, hub: 'present', run: 'none', rows: ['ordinary-workflow'] },
-  {
-    label: 'hard-linked hub index',
-    setup(c) { writeHub(c); linkSync(join(c.repo, '.apex/_INDEX.md'), join(c.repo, 'index-copy.md')); },
-    hub: 'present', run: 'none', rows: ['ordinary-workflow'],
-  },
   { label: 'active run', setup(c) { writeDescriptor(c, baseDescriptor()); }, hub: 'absent', run: 'active', rows: ['resume-run'] },
   {
     label: 'blocked run',
@@ -501,21 +508,6 @@ const VALID_CLASSIFICATIONS = [
     hub: 'absent', run: 'blocked', rows: ['resume-run'],
   },
   { label: 'complete run', setup(c) { writeDescriptor(c, completeDescriptor()); }, hub: 'absent', run: 'complete', rows: ['report-next-steps'] },
-  {
-    label: 'complete run beside a hub',
-    setup(c) { writeDescriptor(c, completeDescriptor()); writeHub(c); },
-    hub: 'present', run: 'complete', rows: ['run-complete-ordinary-workflow'],
-  },
-  {
-    label: 'active run beside a hub',
-    setup(c) { writeDescriptor(c, baseDescriptor()); writeHub(c); },
-    hub: 'present', run: 'active', rows: ['conflict-run-beside-hub'],
-  },
-  {
-    label: 'blocked run beside a hub',
-    setup(c) { writeDescriptor(c, blockedDescriptor()); writeHub(c); },
-    hub: 'present', run: 'blocked', rows: ['conflict-run-beside-hub'],
-  },
   // Formula: the graph channel has no Markdown index; its committed engine binding marks the hub.
   { label: 'graph binding without .apex', setup(c) { writeFile(c, '.formula/config.json', '{}\n'); }, hub: 'present', run: 'none', rows: ['ordinary-workflow'] },
   {
@@ -574,6 +566,79 @@ test('classify reports every HC8 row for every maturity without writing, and dec
   }
 });
 
+// Formula: a repository that still carries the Markdown hub's `.apex/_INDEX.md` — as a file, a
+// hard link, a directory or a symlink, beside any run — is in the migrate state, and the CLI
+// refuses it before it classifies anything.
+const MIGRATE_STATE_CLASSIFICATIONS = [
+  { label: 'hub without a run', setup(c) { writeHub(c); } },
+  { label: 'hard-linked hub index', setup(c) { writeHub(c); linkSync(join(c.repo, '.apex/_INDEX.md'), join(c.repo, 'index-copy.md')); } },
+  { label: 'complete run beside a hub', setup(c) { writeDescriptor(c, completeDescriptor()); writeHub(c); } },
+  { label: 'active run beside a hub', setup(c) { writeDescriptor(c, baseDescriptor()); writeHub(c); } },
+  { label: 'blocked run beside a hub', setup(c) { writeDescriptor(c, blockedDescriptor()); writeHub(c); } },
+  { label: 'hub index is a directory', setup(c) { mkdirSync(join(c.repo, '.apex/_INDEX.md'), { recursive: true }); } },
+  {
+    label: 'symlinked hub index',
+    setup(c) {
+      writeFile(c, 'index.md', '# Hub\n');
+      mkdirSync(join(c.repo, '.apex'));
+      symlinkSync(join(c.repo, 'index.md'), join(c.repo, '.apex/_INDEX.md'));
+    },
+  },
+  { label: 'invalid descriptor beside a hub', setup(c) { writeHub(c); writeArea(c, 'not json'); } },
+  { label: 'unsupported v1 schema beside a hub', setup(c) { writeDescriptor(c, v1RunDescriptor()); writeHub(c); } },
+];
+
+test('formula: classify refuses the migrate state with exit 25 and the shared message for every maturity, writing nothing', () => {
+  for (const fixture of MIGRATE_STATE_CLASSIFICATIONS) {
+    withCase('classify-migrate', (c) => {
+      fixture.setup(c);
+      for (const maturity of MATURITIES) assertMigrateRefusal(c, ['classify', ...maturity], `${fixture.label} ${maturity.join(' ')}`);
+    });
+  }
+});
+
+// Every command refuses, the admission-exempt ones (start, classify, abandon, verify-complete)
+// included, even beside a valid run that would otherwise admit it.
+test('formula: every command refuses the migrate state before admission, reads of its inputs, or writes', () => {
+  const commands = [
+    startArgs(),
+    ['classify', '--maturity', 'suitable'],
+    ['abandon', '--reason', 'Stop'],
+    ['abandon', '--resume'],
+    ['verify-complete'],
+    ['inspect'],
+    ['resume-check'],
+    ['resume-note', '--next', 'Continue'],
+    ['transition', '--to', 'architecture', '--reason', 'Continue'],
+    ['unit', 'begin', '--id', 'work', '--input', '.apex/inception/inputs/missing.json'],
+  ];
+  for (const descriptor of [baseDescriptor(), v1RunDescriptor()]) {
+    withCase('commands-migrate', (c) => {
+      writeDescriptor(c, descriptor);
+      writeHub(c);
+      for (const args of commands) assertMigrateRefusal(c, args, `${descriptor.schema} ${args.join(' ')}`);
+    });
+  }
+});
+
+// The classifier counts only the graph binding as a hub: `.apex/_INDEX.md` is not hub evidence.
+test('formula: observeState counts only the .formula/config.json graph binding as a hub', () => {
+  withCase('observe-hub', (c) => {
+    writeHub(c);
+    assert.deepEqual(observeState(c.repo), { hub: 'absent', run: 'none', descriptor: null, error: null });
+    rmSync(join(c.repo, '.apex/_INDEX.md'));
+    mkdirSync(join(c.repo, '.apex/_INDEX.md'));
+    assert.deepEqual(observeState(c.repo), { hub: 'absent', run: 'none', descriptor: null, error: null });
+    writeFile(c, '.formula/config.json', '{}\n');
+    assert.equal(observeState(c.repo).hub, 'present');
+    rmSync(join(c.repo, '.formula/config.json'));
+    mkdirSync(join(c.repo, '.formula/config.json'));
+    assert.deepEqual(observeState(c.repo), {
+      hub: 'invalid', run: 'none', descriptor: null, error: '.formula/config.json is not an ordinary file',
+    });
+  });
+});
+
 // A valid descriptor whose `git.branch` holds one invalid UTF-8 byte: a lenient decode would read
 // it as U+FFFD and accept it.
 function invalidUtf8Descriptor() {
@@ -627,16 +692,6 @@ const INVALID_CLASSIFICATIONS = [
     },
   },
   { label: '.apex is a file', setup(c) { writeFile(c, '.apex', 'not a directory'); } },
-  { label: 'hub index is a directory', setup(c) { mkdirSync(join(c.repo, '.apex/_INDEX.md'), { recursive: true }); } },
-  {
-    label: 'symlinked hub index',
-    setup(c) {
-      writeFile(c, 'index.md', '# Hub\n');
-      mkdirSync(join(c.repo, '.apex'));
-      symlinkSync(join(c.repo, 'index.md'), join(c.repo, '.apex/_INDEX.md'));
-    },
-  },
-  { label: 'invalid descriptor beside a hub', setup(c) { writeHub(c); writeArea(c, 'not json'); } },
   { label: 'unsupported v1 schema', setup: c => writeDescriptor(c, v1RunDescriptor()) },
 ];
 
@@ -721,7 +776,7 @@ test('usage errors exit 2 with one JSON line and never write', () => {
 
 test('the repository root defaults to the working directory and must be an existing directory', () => {
   withCase('repo-root', (c) => {
-    writeHub(c);
+    writeFile(c, '.formula/config.json', '{}\n');
     assert.equal(spawnHelper(c, ['classify']).output.row, 'ordinary-workflow');
     const missing = spawnHelper(c, ['classify', '--repo-root', join(c.repo, 'missing')]);
     assert.equal(missing.status, 1);
@@ -743,6 +798,19 @@ test('formula: start refuses a repository that already carries the graph binding
     assert.equal(result.status, 1);
     assert.match(result.output.error, /\.formula\/config\.json exists: this project already has a graph hub binding/u);
     assert.deepEqual(snapshot(c.repo), before);
+  });
+});
+
+// The library start keeps its own hub refusal (P7), now the shared migrate-state refusal.
+test('formula: the startRun library refuses the migrate state with the shared message and exit code, writing nothing', () => {
+  withCase('start-library-migrate', (c) => {
+    writeHub(c);
+    const before = snapshot(c.repo);
+    assert.throws(
+      () => startRun(c.repo, { harnessName: 'codex', capabilities: ['shell'], gitCommits: 'forbidden' }),
+      { message: MIGRATE_REFUSAL_MESSAGE, exitCode: MIGRATE_REFUSAL_EXIT },
+    );
+    assert.deepEqual(snapshot(c.repo), before, 'the library refusal writes nothing');
   });
 });
 
@@ -832,7 +900,8 @@ test('start records a detached HEAD as a null branch', () => {
 
 test('start refuses an existing hub, an existing descriptor, or a foreign area .gitignore without writing', () => {
   const fixtures = [
-    { label: 'hub index present', setup(c) { writeHub(c); }, error: /_INDEX\.md/u },
+    // Formula: the Markdown hub is the migrate state, refused before start's own preconditions.
+    { label: 'hub index present', setup(c) { writeHub(c); }, migrate: true },
     { label: 'valid descriptor present', setup(c) { writeDescriptor(c, baseDescriptor()); }, error: /descriptor/u },
     { label: 'invalid descriptor present', setup(c) { writeArea(c, 'not json'); }, error: /descriptor/u },
     { label: 'foreign .gitignore bytes', setup(c) { writeFile(c, INCEPTION_GITIGNORE, '*\n!run.json\n'); }, error: /\.gitignore/u },
@@ -855,6 +924,10 @@ test('start refuses an existing hub, an existing descriptor, or a foreign area .
   for (const fixture of fixtures) {
     withCase('start-refused', (c) => {
       fixture.setup(c);
+      if (fixture.migrate) {
+        assertMigrateRefusal(c, startArgs(), fixture.label);
+        return;
+      }
       const before = snapshot(c.repo);
       const { status, output } = cli(c, ...startArgs());
       assert.equal(status, 1, fixture.label);
@@ -2493,12 +2566,12 @@ test('C7 readers inspect only immediate declared archive names and never open ch
       return open.call(this, path, ...args);
     }; syncBuiltinESMExports();
     const {inspectAbandon} = await import(${JSON.stringify(new URL('../scripts/inception-state.mjs', import.meta.url).href)});
-    const {collectViolations} = await import(${JSON.stringify(new URL('../scripts/validate-hub.mjs', import.meta.url).href)});
-    inspectAbandon(process.argv[1]); if (collectViolations(process.argv[1]).length) throw new Error('Expected coherent pending archive');
+    inspectAbandon(process.argv[1]);
     process.stdout.write(JSON.stringify(calls));
   `;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', source, c.repo], { encoding: 'utf8', env: c.env });
-  assert.equal(result.status, 0, result.stderr); assert.ok(JSON.parse(result.stdout).length >= 2);
+  // The reader really listed the archive (the instrumentation is not vacuous), and nothing else.
+  assert.equal(result.status, 0, result.stderr); assert.ok(JSON.parse(result.stdout).length >= 1);
 }));
 
 for (const name of ['intent.json', 'abandon.json', 'receipt.json']) {

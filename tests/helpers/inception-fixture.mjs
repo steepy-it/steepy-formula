@@ -5,7 +5,6 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { renderTemplate } from '../../scripts/template.mjs';
 
 export const area = '.apex/inception';
 export const environment = { tools: [], resources: [] };
@@ -105,9 +104,9 @@ for(const name of ['readFileSync','openSync','readdirSync','opendirSync']){const
   return f;
 }
 
+// Formula: init certifies the graph-mode scaffold alone, so the governance input names no document.
 export function governanceInput(f) {
-  const template = (name, vars) => renderTemplate(fs.readFileSync(new URL(`../../templates/${name}`, import.meta.url), 'utf8'), vars);
   return { schema: 'steepy-inception-governance-input/v1', runId: f.descriptor().runId, completion: f.descriptor().completion,
-    projectModel: { projectName: 'sample', description: 'Sample app', devCommands: ['node --test'], surfaces: [{ name: 'src', path: 'src', agent: 'src-agent', testCmd: 'node --test' }], resolutions: {}, hubMode: 'legacy' },
-    documents: [{ path: '.apex/_INDEX.md', content: template('_INDEX.md', { projectName: 'sample', routingRows: template('routing-row.md', { surface: 'src', docsPath: 'standards/src.md', agent: 'src-agent', skill: '—' }).trimEnd(), gitPolicyDirective: '' }) }, { path: '.apex/standards/src.md', content: template('surface-standard.md', { name: 'src', path: 'src', testCmd: 'node --test' }) }, ...['conventions', 'glossary', 'testing-and-checklist'].map(name => ({ path: `.apex/${name}.md`, content: `# ${name}\nApproved conventions.\n` }))] };
+    projectModel: { projectName: 'sample', description: 'Sample app', devCommands: ['node --test'], surfaces: [{ name: 'src', path: 'src', agent: 'src-agent', testCmd: 'node --test' }], resolutions: {}, hubMode: 'graph' },
+    documents: [] };
 }

@@ -3,12 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes, createHash } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { randomBytes } from 'node:crypto';
 import { fixture, area, check, contract, command, governanceInput, script, moduleURL, v1RunDescriptorText } from './helpers/inception-fixture.mjs';
 import { parseRunDescriptorV2, serializeRunDescriptorV2 } from '../scripts/inception-protocol.mjs';
-import { planProjectScaffold } from '../scripts/project-scaffold.mjs';
-import { GOVERNANCE_PENDING, GOVERNANCE_RECEIPT } from '../scripts/inception-governance.mjs';
 
 test('M01 CLI session recovery preserves completed work without a resume note', t => {
   const f = fixture(t);
@@ -192,14 +189,13 @@ for (const git of [false, true]) test(`M08 complete → init → discovery sourc
   f.run('inception-governance', ['prepare', '--repo-root', f.root, '--input', inputPath]);
   const model = f.json('.apex/work/init/model.json', input.projectModel);
   f.run('project-scaffold', ['--hub', f.root, '--model', join(f.root, model)]);
-  for (const doc of input.documents) f.put(doc.path, doc.content);
   f.run('project-scaffold', ['--hub', f.root, '--model', join(f.root, model), '--apply']);
   f.run('inception-governance', ['finish', '--repo-root', f.root]);
   if (git) { f.git('add', '.'); f.git('commit', '-qm', 'Certified governance'); }
   const source = f.audit(['verify-complete']).result;
   assert.equal(source.ok, true); assert.ok(source.inputPaths.includes(`${area}/run.json`));
   assert.ok(!source.inputPaths.some(p => p.includes('/captures/')));
-  f.run('validate-hub', [f.root]); assert.deepEqual(f.snapshot(area), completed);
+  assert.deepEqual(f.snapshot(area), completed);
   for (const path of ['src/app.js', '.agents/foreign.md', '.codex/config.toml', 'package-lock.json', '.apex/conventions.md', f.descriptor().completion.path]) {
     const absolute = join(f.root, path); const previous = fs.existsSync(absolute) ? fs.readFileSync(absolute) : null;
     f.put(path, 'Drift or substituted evidence'); const before = f.snapshot();
@@ -308,7 +304,6 @@ test('M13 an unsupported v1 run format is refused by every command without mutat
     const before = f.snapshot();
     f.refuse('inspect'); f.refuse('classify'); f.refuse('verify-complete'); f.refuse('abandon', '--reason', 'Archive');
     f.refuse('resume-note', '--next', 'Must not upgrade'); f.refuse('start', '--harness', 'codex', '--capabilities', 'shell', '--git-commits', 'allowed');
-    f.run('validate-hub', [f.root], 1); assert.equal(JSON.parse(f.run('stop-hook', [f.root]).stdout).decision, 'block');
     assert.deepEqual(f.snapshot(), before, status);
   }
 });
@@ -316,8 +311,7 @@ test('M13 an unsupported v1 run format is refused by every command without mutat
 for (const descriptor of ['{"schema":"unknown"}', '{"schema":']) test('M13 unknown or corrupt descriptors fail closed without mutation', t => {
   const f = fixture(t, { start: false }); f.put(`${area}/run.json`, descriptor); const before = f.snapshot();
   f.refuse('inspect'); f.refuse('classify'); f.refuse('verify-complete'); f.refuse('abandon', '--reason', 'Invalid source');
-  assert.equal(JSON.parse(f.run('stop-hook', [f.root]).stdout).decision, 'block');
-  f.run('validate-hub', [f.root], 1); assert.deepEqual(f.snapshot(), before);
+  assert.deepEqual(f.snapshot(), before);
 });
 
 // F2: approved exclusions hide the same paths from the walk and from Git status,
@@ -654,131 +648,3 @@ for (const git of [false, true]) {
     }
   });
 }
-
-// F1: `documents` is the only writer of the certified stable documents. Their
-// mode comes from the receipt, never from the umask, and recovery completes
-// only what is missing.
-const INIT_INPUT = '.apex/work/init/input.json';
-const INIT_PLAN = '.apex/work/init/plan.json';
-function initFixture(t) {
-  const f = fixture(t, { phase: 'verification' });
-  f.manual('verified', ['app']); f.complete();
-  const request = governanceInput(f); f.json(INIT_INPUT, request);
-  // The runner only plans, read-only; every repository write runs in a child.
-  f.json(INIT_PLAN, planProjectScaffold({ hubRoot: f.root, model: request.projectModel }));
-  return { f, request, paths: request.documents.map(d => d.path).sort() };
-}
-const governanceCli = (f, ...args) => JSON.parse(f.run('inception-governance', [...args, '--repo-root', f.root]).stdout);
-function applyPlan(f) {
-  const r = f.process(['--input-type=module', '-e', `import { applyProjectScaffold } from ${JSON.stringify(moduleURL('project-scaffold'))};
-import plan from ${JSON.stringify(pathToFileURL(join(f.root, INIT_PLAN)).href)} with { type: 'json' };
-applyProjectScaffold({ hubRoot: ${JSON.stringify(f.root)}, plan });`]);
-  assert.equal(r.status, 0, r.stdout + r.stderr);
-}
-// Control: the preload really sets the child umask, so no mode check is vacuous.
-function assertChildUmask(f, mask) {
-  const probe = join(f.sandbox, `umask-probe-${mask.toString(8)}`);
-  const r = f.process(['-e', `require('node:fs').writeFileSync(${JSON.stringify(probe)}, '')`]);
-  assert.equal(r.status, 0, r.stderr);
-  assert.equal(fs.statSync(probe).mode & 0o777, 0o666 & ~mask);
-  fs.unlinkSync(probe);
-}
-function assertDocuments(f, request) {
-  for (const doc of request.documents) {
-    const absolute = join(f.root, doc.path);
-    assert.equal(fs.readFileSync(absolute, 'utf8'), doc.content, doc.path);
-    assert.equal(fs.lstatSync(absolute).mode & 0o7777, 0o644, doc.path);
-  }
-}
-for (const mask of [0o022, 0o002, 0o077]) test(`F1 SC1 umask 0${mask.toString(8).padStart(3, '0')}: documents certifies every stable document at 0644`, t => {
-  const { f, request, paths } = initFixture(t);
-  f.umask = mask; assertChildUmask(f, mask);
-  assert.equal(f.cli('verify-complete').ok, true);
-  governanceCli(f, 'prepare', '--input', INIT_INPUT); applyPlan(f);
-  const written = governanceCli(f, 'documents', '--input', INIT_INPUT);
-  assert.equal(written.ok, true); assert.deepEqual(written.created, paths); assert.deepEqual(written.preserved, []);
-  governanceCli(f, 'finish');
-  assert.equal(f.cli('verify-complete').ok, true);
-  f.run('validate-hub', [f.root]);
-  assertDocuments(f, request);
-});
-
-function crashDocuments(f, request, boundary) {
-  const fault = join(f.sandbox, 'fault.json');
-  f.crash('inception-governance', `const { writeFileSync } = await import('node:fs'); api.writeGovernanceDocuments(root, ${JSON.stringify(request)}, { fault: (event, detail) => { if (event === ${JSON.stringify(boundary)}) { writeFileSync(${JSON.stringify(fault)}, JSON.stringify(detail)); process.exit(73); } } });`);
-  return JSON.parse(fs.readFileSync(fault, 'utf8'));
-}
-// Recovery `documents` runs through the CLI in a fresh process. A sandbox preload
-// records every rename, so the published stage is observed directly.
-function recoverDocuments(f) {
-  const log = join(f.sandbox, 'renames.jsonl'); const preload = join(f.sandbox, 'record-renames.mjs');
-  fs.writeFileSync(preload, `import fs from 'node:fs';
-const rename = fs.renameSync;
-fs.renameSync = (from, to) => { fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ from: String(from), to: String(to) }) + '\\n'); return rename(from, to); };
-`);
-  const r = f.process(['--import', preload, script('inception-governance'), 'documents', '--input', INIT_INPUT, '--repo-root', f.root]);
-  assert.equal(r.status, 0, r.stdout + r.stderr);
-  const renames = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [];
-  return { output: JSON.parse(r.stdout), renames };
-}
-function fileIdentity(f, path) {
-  const absolute = join(f.root, path); const st = fs.lstatSync(absolute);
-  return { bytes: fs.readFileSync(absolute).toString('base64'), mode: st.mode & 0o7777, mtimeMs: st.mtimeMs, ino: st.ino };
-}
-const sibling = (stage, generation) => stage.replace(/-0001\.tmp$/u, `-${generation}.tmp`);
-function documentsRecovery(t, boundary, alterStage) {
-  const { f, request, paths } = initFixture(t); f.umask = 0o002;
-  const { id } = governanceCli(f, 'prepare', '--input', INIT_INPUT); applyPlan(f);
-  const detail = crashDocuments(f, request, boundary);
-  assert.equal(detail.path, paths[0]);
-  if (boundary === 'documents-after-stage') assert.match(detail.stage, /^\.apex\/work\/init-provenance\/[0-9a-f]{64}\/document-[0-9a-f]{64}-0001\.tmp$/u);
-  // After the crash every certified path is absent or exact at 0644.
-  for (const op of f.read(GOVERNANCE_PENDING).operations) {
-    const absolute = join(f.root, op.path);
-    if (!fs.existsSync(absolute)) continue;
-    const bytes = fs.readFileSync(absolute);
-    assert.deepEqual({ bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), mode: fs.lstatSync(absolute).mode & 0o7777 },
-      { bytes: op.after.bytes, sha256: op.after.sha256, mode: 0o644 }, op.path);
-  }
-  const complete = Object.fromEntries(paths.filter(path => fs.existsSync(join(f.root, path))).map(path => [path, fileIdentity(f, path)]));
-  assert.deepEqual(Object.keys(complete), boundary === 'documents-after-rename' ? [paths[0]] : []);
-  alterStage?.(f, detail.stage);
-  // Recovery in fresh processes: the same input, then the same plan.
-  assert.equal(governanceCli(f, 'prepare', '--input', INIT_INPUT).id, id);
-  applyPlan(f);
-  const { output, renames } = recoverDocuments(f);
-  assert.deepEqual(output, { ok: true, id, created: paths.filter(path => !(path in complete)), preserved: Object.keys(complete) });
-  governanceCli(f, 'finish');
-  assert.equal(f.cli('verify-complete').ok, true);
-  for (const [path, identity] of Object.entries(complete)) assert.deepEqual(fileIdentity(f, path), identity, `${path} keeps bytes, mode and mtime`);
-  assert.equal(f.read(GOVERNANCE_RECEIPT).id, id);
-  assertDocuments(f, request);
-  // The stages renamed onto the crashed document path, in order.
-  const published = renames.filter(r => r.to === join(f.root, detail.path)).map(r => r.from);
-  return { f, detail, published };
-}
-for (const boundary of ['documents-before-stage', 'documents-after-stage', 'documents-after-rename']) test(`F1 SC2 crash at ${boundary}: fresh-process recovery completes only the missing documents`, t => {
-  const { f, detail, published } = documentsRecovery(t, boundary);
-  if (boundary === 'documents-after-rename') assert.deepEqual(published, [], 'the complete document is not republished');
-  else if (boundary === 'documents-before-stage') { assert.equal(published.length, 1); assert.match(published[0], /\/document-[0-9a-f]{64}-0001\.tmp$/u); }
-  else {
-    assert.deepEqual(published, [join(f.root, detail.stage)], 'the complete stage is reused');
-    assert.equal(fs.existsSync(join(f.root, detail.stage)), false);
-  }
-});
-test('F1 SC2 documents-after-stage (a): a truncated stage stays byte-identical and publication uses generation -0002', t => {
-  let partial;
-  const { f, detail, published } = documentsRecovery(t, 'documents-after-stage', (f, stage) => {
-    fs.truncateSync(join(f.root, stage), 10); partial = fs.readFileSync(join(f.root, stage));
-    assert.equal(fs.existsSync(join(f.root, sibling(stage, '0002'))), false);
-  });
-  assert.equal(partial.length, 10);
-  assert.deepEqual(fs.readFileSync(join(f.root, detail.stage)), partial);
-  assert.deepEqual(published, [join(f.root, sibling(detail.stage, '0002'))]);
-  for (const generation of ['0002', '0003']) assert.equal(fs.existsSync(join(f.root, sibling(detail.stage, generation))), false, generation);
-});
-test('F1 SC2 documents-after-stage (b): a stage chmodded to 0600 is published at 0644', t => {
-  const { f, detail, published } = documentsRecovery(t, 'documents-after-stage', (f, stage) => fs.chmodSync(join(f.root, stage), 0o600));
-  assert.deepEqual(published, [join(f.root, detail.stage)]);
-  assert.equal(fs.lstatSync(join(f.root, detail.path)).mode & 0o7777, 0o644);
-});
