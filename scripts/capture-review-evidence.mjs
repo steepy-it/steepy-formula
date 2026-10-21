@@ -19,7 +19,7 @@ import { writeAllSync } from './write-all.mjs';
 
 export const RECEIPT_EXCERPT_BYTES = 1_024;
 
-const VALIDATE_HUB_SCRIPT = fileURLToPath(new URL('./validate-hub.mjs', import.meta.url));
+const FORMULA_CLI = fileURLToPath(new URL('./formula/cli.mjs', import.meta.url));
 const USAGE = 'usage: node scripts/capture-review-evidence.mjs --repo-root <root> --evidence <canonical-path> --test-command <command> [--verifier-command <command>] [--gate-command <command>]';
 
 function safeCommand(value, label) {
@@ -376,7 +376,7 @@ export async function collectReviewEvidence({
   testCommand,
   verifierCommand,
   gateCommand,
-  noGate = false,
+  graphGateArgs = [],
   writeToFd = writeSync,
   closeFd = closeSync,
   killGraceMs = 500,
@@ -395,17 +395,15 @@ export async function collectReviewEvidence({
   const verifier = verifierCommand === undefined
     ? null
     : safeCommand(verifierCommand, 'verifier command');
-  if (noGate && gateCommand !== undefined) {
-    throw new Error('--no-gate and --gate-command are mutually exclusive');
+  if (!Array.isArray(graphGateArgs) || !graphGateArgs.every((arg) => typeof arg === 'string')) {
+    throw new TypeError('graphGateArgs must be an array of strings');
   }
-  // Formula mode adaptation: the built-in third command is the legacy validate-hub
-  // linter; in graph mode the caller passes the resolved graph coherence gate
-  // (`steepy-formula graph validate ...`) through `gateCommand`, which replaces it
-  // verbatim and runs under the `coherence-gate` receipt label. `noGate` serves the
-  // declared mode `none` — a repo with no hub on either channel has no gate to run.
-  const gate = noGate
-    ? null
-    : (gateCommand === undefined ? 'builtin' : safeCommand(gateCommand, 'gate command'));
+  // The built-in third command is the graph coherence gate, `steepy-formula graph validate`.
+  // `graphGateArgs` is a library-only seam (hermetic tests pass `--port memory --seed <file>
+  // --project <id>`), never a CLI flag. `gateCommand` replaces the built-in verbatim and still
+  // runs under the `coherence-gate` receipt label. A red graph or an unreachable engine exits
+  // non-zero, so `allPassed` stays false.
+  const gate = gateCommand === undefined ? 'builtin' : safeCommand(gateCommand, 'gate command');
   const startedAt = new Date().toISOString();
 
   writeWorkPath(root, evidence, [
@@ -454,12 +452,11 @@ export async function collectReviewEvidence({
       }));
     }
     if (gate === 'builtin') {
-      const validateDisplay = `${JSON.stringify(process.execPath)} ${JSON.stringify(VALIDATE_HUB_SCRIPT)} .`;
       commands.push(await captureCommand({
-        label: 'validate-hub',
-        displayCommand: validateDisplay,
+        label: 'coherence-gate',
+        displayCommand: 'steepy-formula graph validate',
         file: process.execPath,
-        args: [VALIDATE_HUB_SCRIPT, '.'],
+        args: [FORMULA_CLI, 'graph', 'validate', ...graphGateArgs],
         cwd: root,
         fd,
         writeToFd,
@@ -469,7 +466,7 @@ export async function collectReviewEvidence({
         processGroupProbe,
         processGroupSignal,
       }));
-    } else if (gate !== null) {
+    } else {
       commands.push(await captureCommand({
         label: 'coherence-gate',
         displayCommand: gate,
@@ -520,7 +517,6 @@ export async function main(argv = process.argv.slice(2)) {
         'test-command': { type: 'string' },
         'verifier-command': { type: 'string' },
         'gate-command': { type: 'string' },
-        'no-gate': { type: 'boolean' },
       },
       allowPositionals: false,
       strict: true,
@@ -534,7 +530,6 @@ export async function main(argv = process.argv.slice(2)) {
       testCommand: values['test-command'],
       verifierCommand: values['verifier-command'],
       gateCommand: values['gate-command'],
-      noGate: values['no-gate'],
     });
     console.log(JSON.stringify(receipt));
     return 0;

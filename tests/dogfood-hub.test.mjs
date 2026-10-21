@@ -38,6 +38,7 @@ import { validateGraph } from '../scripts/formula/core/validate-graph.mjs';
 import { readChain, verifyChain } from '../scripts/formula/core/revision.mjs';
 import { resolveContext } from '../scripts/formula/core/resolve-context.mjs';
 import { collectReviewEvidence } from '../scripts/capture-review-evidence.mjs';
+import { buildSeed, PROJECT as SEED_PROJECT } from './helpers/graph-seed.mjs';
 import { DOGFOOD_CHECKPOINT, DOGFOOD_CHECKPOINT_SKIP } from './helpers/dogfood-checkpoint.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -444,24 +445,19 @@ test('the repository ignores the entire local work tree from its root', () => {
     'the repository must ignore the entire local work tree from its root');
 });
 
-test('terminal review evidence cannot report reviewed-clean when its owned hub gate is red', async () => {
-  const repo = mkdtempSync(join(tmpdir(), 'steepy-terminal-review-red-hub-'));
+test('terminal review evidence cannot report reviewed-clean when its owned graph gate is red', async () => {
+  const repo = mkdtempSync(join(tmpdir(), 'steepy-terminal-review-red-graph-'));
   try {
     writeFileSync(join(repo, '.gitignore'), '');
-    const apex = join(repo, '.apex');
-    mkdirSync(apex, { recursive: true });
-    writeFileSync(join(apex, '_INDEX.md'), [
-      '# Broken target hub', '', '## Routing table', '',
-      '| Surface | Standard | Agent |', '|---|---|---|',
-      '| `scripts` | [missing](standards/missing.md) | `scripts-agent` |', '',
-    ].join('\n'));
+    const { file } = await buildSeed({ term: true });
     const receipt = await collectReviewEvidence({
       repoRoot: repo,
       evidencePath: '.apex/work/loops/2026-09-04-red-hub/evidence-report.md',
       testCommand: `${JSON.stringify(process.execPath)} -e ${JSON.stringify('process.exit(0)')}`,
+      graphGateArgs: ['--port', 'memory', '--seed', file, '--project', SEED_PROJECT],
     });
     assert.equal(receipt.commands[0].passed, true);
-    assert.equal(receipt.commands.at(-1).label, 'validate-hub');
+    assert.equal(receipt.commands.at(-1).label, 'coherence-gate');
     assert.equal(receipt.commands.at(-1).passed, false);
     assert.equal(receipt.allPassed, false);
   } finally {

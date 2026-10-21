@@ -20,6 +20,15 @@ import {
   RECEIPT_EXCERPT_BYTES,
 } from '../scripts/capture-review-evidence.mjs';
 import { classifyWorkPath } from '../scripts/work-paths.mjs';
+import { buildSeed, PROJECT } from './helpers/graph-seed.mjs';
+
+const FORMULA_CLI = new URL('../scripts/formula/cli.mjs', import.meta.url).pathname;
+// Hermetic graph gate: the built-in `graph validate` runs against a clean in-memory seed.
+const CLEAN_SEED = await buildSeed();
+const RED_SEED = await buildSeed({ term: true });
+const seedArgs = ({ file }) => ['--port', 'memory', '--seed', file, '--project', PROJECT];
+const CLEAN_GATE_ARGS = seedArgs(CLEAN_SEED);
+const RED_GATE_ARGS = seedArgs(RED_SEED);
 
 const scriptPath = new URL('../scripts/capture-review-evidence.mjs', import.meta.url);
 const EVIDENCE = '.apex/work/tasks/demo/evidence-report.md';
@@ -27,9 +36,13 @@ const GROUPS_SUPPORTED = process.platform === 'linux' || process.platform === 'd
 
 function fixture() {
   const repo = mkdtempSync(join(tmpdir(), 'steepy-review-evidence-'));
-  mkdirSync(join(repo, '.apex'), { recursive: true });
-  writeFileSync(join(repo, '.apex', '_INDEX.md'), '# Test hub\n');
   return repo;
+}
+
+function graphValidateCommand(args) {
+  return [process.execPath, FORMULA_CLI, 'graph', 'validate', ...args]
+    .map((part) => JSON.stringify(part))
+    .join(' ');
 }
 
 function nodeCommand(source) {
@@ -64,6 +77,7 @@ test('collector streams the complete transcript to disk and returns a bounded re
     const receipt = await collectReviewEvidence({
       repoRoot: repo,
       evidencePath: EVIDENCE,
+      graphGateArgs: CLEAN_GATE_ARGS,
       testCommand: nodeCommand(`process.stdout.write(${JSON.stringify(payload)})`),
       writeToFd(fd, buffer, offset, length) {
         writeCalls += 1;
@@ -74,7 +88,7 @@ test('collector streams the complete transcript to disk and returns a bounded re
     assert.equal(receipt.schemaVersion, 1);
     assert.equal(receipt.artifact, EVIDENCE);
     assert.equal(receipt.allPassed, true);
-    assert.deepEqual(receipt.commands.map(({ label }) => label), ['surface-test', 'validate-hub']);
+    assert.deepEqual(receipt.commands.map(({ label }) => label), ['surface-test', 'coherence-gate']);
 
     const testResult = receipt.commands[0];
     assert.equal(testResult.exitCode, 0);
@@ -161,7 +175,6 @@ test('capture failure after an accepted prefix converges the group, closes once,
     const report = readFileSync(join(repo, EVIDENCE), 'utf8');
     assert.match(report, /CAPTURE/u);
     assert.doesNotMatch(report, /AFTER_FAILURE_SHOULD_NOT_PERSIST/u);
-    assert.doesNotMatch(report, /steepy validate-hub: OK/u);
     const descendantPid = Number(readFileSync(pidPath, 'utf8'));
     assert.throws(() => process.kill(descendantPid, 0));
   } finally {
@@ -224,7 +237,6 @@ test('capture failure settles cleanup without waiting for a leader that denied g
     assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
     assert.equal(closeCalls, 1);
     const report = readFileSync(join(repo, EVIDENCE), 'utf8');
-    assert.doesNotMatch(report, /steepy validate-hub: OK/u);
   } finally {
     if (Number.isInteger(groupPid)) {
       try { process.kill(-groupPid, 'SIGKILL'); } catch { /* fixture group already exited */ }
@@ -268,7 +280,6 @@ test('a null capture failure after an accepted prefix rejects, closes once, and 
     assert.equal(closeCalls, 1);
     const report = readFileSync(join(repo, EVIDENCE), 'utf8');
     assert.match(report, /NULL_C/u);
-    assert.doesNotMatch(report, /steepy validate-hub: OK/u);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -346,13 +357,14 @@ test('normal and nonzero leaders converge signal-ignoring inherited-pipe descend
       const receipt = await collectReviewEvidence({
         repoRoot: repo,
         evidencePath: EVIDENCE,
+      graphGateArgs: CLEAN_GATE_ARGS,
         testCommand: nodeCommand(leader),
         killGraceMs: 50,
         processGroupConvergenceMs: 800,
         streamSettlementMs: 800,
       });
       assert.equal(receipt.commands[0].exitCode, exitCode);
-      assert.equal(receipt.commands[1].label, 'validate-hub');
+      assert.equal(receipt.commands[1].label, 'coherence-gate');
       assert.ok(Date.now() - started < 1_200, `exit ${exitCode} took ${Date.now() - started}ms`);
       const descendantPid = Number(readFileSync(pidPath, 'utf8'));
       assert.throws(() => process.kill(descendantPid, 0), undefined, `exit ${exitCode}`);
@@ -383,6 +395,7 @@ test('receipt remains bounded for non-UTF-8 and JSON-escaped command output', as
     const receipt = await collectReviewEvidence({
       repoRoot: repo,
       evidencePath: EVIDENCE,
+      graphGateArgs: CLEAN_GATE_ARGS,
       testCommand: nodeCommand('process.stdout.write(Buffer.alloc(120_000, 255))'),
       verifierCommand: nodeCommand('process.stdout.write(Buffer.alloc(120_000, 0))'),
     });
@@ -397,7 +410,7 @@ test('receipt remains bounded for non-UTF-8 and JSON-escaped command output', as
   }
 });
 
-test('a red test remains collected evidence, runs validate-hub, and exits the CLI successfully', () => {
+test('a red test remains collected evidence, runs the graph gate, and exits the CLI successfully', () => {
   const repo = fixture();
   try {
     const result = spawnSync(process.execPath, [
@@ -405,6 +418,7 @@ test('a red test remains collected evidence, runs validate-hub, and exits the CL
       '--repo-root', repo,
       '--evidence', EVIDENCE,
       '--test-command', nodeCommand("process.stdout.write('failure-detail'); process.exit(7)"),
+      '--gate-command', graphValidateCommand(CLEAN_GATE_ARGS),
     ], { encoding: 'utf8' });
 
     assert.equal(result.status, 0, result.stderr);
@@ -414,13 +428,12 @@ test('a red test remains collected evidence, runs validate-hub, and exits the CL
     assert.equal(receipt.allPassed, false);
     assert.equal(receipt.commands[0].exitCode, 7);
     assert.equal(receipt.commands[0].excerpt, 'failure-detail');
-    assert.equal(receipt.commands[1].label, 'validate-hub');
+    assert.equal(receipt.commands[1].label, 'coherence-gate');
     assert.equal(receipt.commands[1].exitCode, 0);
 
     const report = readFileSync(join(repo, EVIDENCE), 'utf8');
     assert.match(report, /failure-detail/u);
     assert.match(report, /Exit code: 7/u);
-    assert.match(report, /steepy validate-hub: OK/u);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -432,11 +445,13 @@ test('a new collection replaces stale evidence instead of merging history', asyn
     await collectReviewEvidence({
       repoRoot: repo,
       evidencePath: EVIDENCE,
+      graphGateArgs: CLEAN_GATE_ARGS,
       testCommand: nodeCommand("process.stdout.write('first-run-only')"),
     });
     await collectReviewEvidence({
       repoRoot: repo,
       evidencePath: EVIDENCE,
+      graphGateArgs: CLEAN_GATE_ARGS,
       testCommand: nodeCommand("process.stdout.write('second-run-only')"),
     });
 
@@ -516,7 +531,6 @@ test('gateCommand replaces the built-in linter under the coherence-gate receipt 
     const report = readFileSync(join(repo, EVIDENCE), 'utf8');
     assert.match(report, /## coherence-gate/u);
     assert.match(report, /violations: 0 chain clean/u);
-    assert.doesNotMatch(report, /steepy validate-hub: OK/u);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
@@ -546,7 +560,7 @@ test('a red gateCommand marks the collection failed while persisting its transcr
   }
 });
 
-test('CLI --gate-command overrides the built-in validate-hub invocation', () => {
+test('CLI --gate-command overrides the built-in graph validate invocation', () => {
   const repo = fixture();
   try {
     const result = spawnSync(process.execPath, [
@@ -566,39 +580,82 @@ test('CLI --gate-command overrides the built-in validate-hub invocation', () => 
     assert.equal(receipt.allPassed, true);
     const report = readFileSync(join(repo, EVIDENCE), 'utf8');
     assert.match(report, /graph gate ran/u);
-    assert.doesNotMatch(report, /steepy validate-hub: OK/u);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test('--no-gate omits the third command and refuses combination with --gate-command', async () => {
+test('the built-in gate is steepy-formula graph validate and a clean graph passes', async () => {
   const repo = fixture();
   try {
     const receipt = await collectReviewEvidence({
       repoRoot: repo,
       evidencePath: EVIDENCE,
       testCommand: nodeCommand("process.stdout.write('ok')"),
-      noGate: true,
+      graphGateArgs: CLEAN_GATE_ARGS,
     });
-    assert.deepEqual(
-      receipt.commands.map(({ label }) => label),
-      ['surface-test'],
-    );
+    assert.deepEqual(receipt.commands.map(({ label }) => label), ['surface-test', 'coherence-gate']);
     assert.equal(receipt.allPassed, true);
+    assert.equal(receipt.commands[1].exitCode, 0);
     const report = readFileSync(join(repo, EVIDENCE), 'utf8');
-    assert.doesNotMatch(report, /validate-hub|coherence-gate/u);
+    assert.match(report, /Command JSON: "steepy-formula graph validate"/u);
+    assert.match(report, /verdict:\s+clean/u);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
-    await assert.rejects(
-      () => collectReviewEvidence({
+test('the built-in gate on a red graph blocks reviewed-clean and records the violation code', async () => {
+  const repo = fixture();
+  try {
+    const receipt = await collectReviewEvidence({
+      repoRoot: repo,
+      evidencePath: EVIDENCE,
+      testCommand: nodeCommand("process.stdout.write('ok')"),
+      graphGateArgs: RED_GATE_ARGS,
+    });
+    assert.equal(receipt.commands[0].passed, true);
+    assert.equal(receipt.commands[1].label, 'coherence-gate');
+    assert.equal(receipt.commands[1].exitCode, 1);
+    assert.equal(receipt.allPassed, false);
+    const report = readFileSync(join(repo, EVIDENCE), 'utf8');
+    assert.match(report, /verdict:\s+violations/u);
+    assert.match(report, /PROJECT_ROOT_MISSING/u);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('graphGateArgs must be an array of strings', async () => {
+  const repo = fixture();
+  try {
+    for (const bad of ['--port memory', [1], null]) {
+      await assert.rejects(() => collectReviewEvidence({
         repoRoot: repo,
         evidencePath: EVIDENCE,
         testCommand: nodeCommand("process.stdout.write('ok')"),
-        gateCommand: nodeCommand("process.stdout.write('gate')"),
-        noGate: true,
-      }),
-      /mutually exclusive/u,
-    );
+        graphGateArgs: bad,
+      }), TypeError);
+    }
+    assert.equal(existsSync(join(repo, EVIDENCE)), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('the CLI rejects --no-gate with the usage error and creates no evidence', () => {
+  const repo = fixture();
+  try {
+    const result = spawnSync(process.execPath, [
+      scriptPath.pathname,
+      '--repo-root', repo,
+      '--evidence', EVIDENCE,
+      '--test-command', nodeCommand("process.stdout.write('ok')"),
+      '--no-gate',
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /steepy capture-review-evidence:/u);
+    assert.equal(existsSync(join(repo, EVIDENCE)), false);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
