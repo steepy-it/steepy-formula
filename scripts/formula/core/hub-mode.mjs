@@ -1,30 +1,39 @@
 // Hub-mode detection (spec D4 of the promotion-in-chain work; plan decision 5) — the ONE place a
 // repository's documentation-hub mode is decided. The mode answers "which hub does this repo use
-// right now?" for every skill prose that must declare it:
+// right now?" for every skill prose that must declare it, and names the step that comes next:
 //
-//   graph   the Stable Knowledge Graph is operational — the engine is reachable AND the project's
-//           graph is initialized (the system record exists), the SAME facts `graph status` reads
-//           (server readiness + the system record `statusFacts` probes in cli.mjs).
-//   legacy  a Markdown Hub is present — `<rootDir>/.apex/_INDEX.md` exists.
-//   none    neither.
+//   graph    the Stable Knowledge Graph is operational — the engine is reachable AND the project's
+//            graph is initialized (the system record exists), the SAME facts `graph status` reads
+//            (server readiness + the system record `statusFacts` probes in cli.mjs) — AND no
+//            Markdown hub is left (`<rootDir>/.apex/_INDEX.md` absent). Next: nothing.
+//   migrate  a steepy-apex Markdown hub is still present — `<rootDir>/.apex/_INDEX.md` exists.
+//            Next: the `graph-migrate` skill moves it into the graph; until then the workflow
+//            scripts refuse (markdown-hub.mjs `migrateRefusal`) while the graph primitives
+//            (`graph *`, `promotion *`, `context resolve`, `hub-mode`) keep working.
+//   none     neither. Next: the `init` skill.
 //
-//   detectHubMode({ projectId, facts?, fs?, rootDir? }) -> { ok: true, mode, evidence }
+//   detectHubMode({ projectId, facts?, fs?, rootDir? }) -> { ok: true, mode, next, evidence }
 //
 //     projectId  REQUIRED — the caller names the project (the CLI's D3 chain resolves it); there
 //                is no private default, a missing id is a TypeError like an invalid one.
 //
-//     mode      'graph' | 'legacy' | 'none' (the HUB_MODES vocabulary)
+//     mode      'graph' | 'migrate' | 'none' (the HUB_MODES vocabulary)
+//     next      the skill that comes next — HUB_MODE_NEXT_STEPS[mode]: 'graph-migrate' for
+//               migrate, 'init' for none, null for graph
 //     evidence  { engine: { reachable, detail?, reason? }, initialized, markdownHub }
 //               `initialized` is true/false once the engine answered, null when it could not;
 //               an unreachable engine ALWAYS carries a `reason` — evidence records why.
 //
-// Precedence (plan decision 5, verbatim semantics): `graph` iff reachable AND initialized;
-// otherwise `legacy` iff the markdown hub file exists; otherwise `none`. An engine that is up but
-// uninitialized is NOT graph — the scenario-arbitration rule (Task 3's precedence case).
+// Precedence: `migrate` iff the Markdown hub file exists — it wins even over a reachable,
+// initialized engine; otherwise `graph` iff reachable AND initialized; otherwise `none`. An engine
+// that is up but uninitialized is NOT graph — the scenario-arbitration rule (Task 3's precedence
+// case).
 //
 // DETECTION LIVES ONLY HERE (SC4, deferred proposal DP4): neither the CLI nor any skill prose
 // re-implements the decision. The CLI parses options, prints the declaration and exits; prose
-// invokes `steepy-formula hub-mode` and quotes the output.
+// invokes `steepy-formula hub-mode` and quotes the output. The Markdown-hub probe itself is the
+// fs-only `markdownHubPresent` (markdown-hub.mjs), shared with the refusing workflow scripts —
+// this module imports it, never the reverse (this module pulls in the engine).
 //
 // CONVENTIONS (core-module standard of promotion.mjs): structured results, never exceptions on
 // data problems — an unreachable engine, a missing docker daemon or a failing port read is
@@ -36,21 +45,21 @@
 // ever needs sanitizing on this path.
 
 import { existsSync as defaultExistsSync } from 'node:fs';
-import { join } from 'node:path';
 import { isValidProjectId } from './ids.mjs';
+import { markdownHubPresent } from './markdown-hub.mjs';
 import { systemRecordId } from './validate-graph.mjs';
 import { SERVER_STATUS, containerNameFor, serverStatus } from '../engine/lifecycle.mjs';
 import { createArcadeDbPort, databaseNameFor } from '../engine/arcadedb.mjs';
 import { withTransaction } from '../engine/port.mjs';
 
-// The markdown hub's navigation root (spec criterion 12): its presence is the legacy-mode marker.
-const MARKDOWN_HUB_ENTRY = '.apex/_INDEX.md';
-
 const DETECT_INPUT_KEYS = ['projectId', 'facts', 'fs', 'rootDir'];
 
 // --- vocabulary -----------------------------------------------------------------------------------
 
-export const HUB_MODES = deepFreeze(['graph', 'legacy', 'none']);
+export const HUB_MODES = deepFreeze(['graph', 'migrate', 'none']);
+
+// The skill each mode names as the next step (the CLI prints it as the `next:` line); graph has none.
+export const HUB_MODE_NEXT_STEPS = deepFreeze({ graph: null, migrate: 'graph-migrate', none: 'init' });
 
 // --- helpers --------------------------------------------------------------------------------------
 
@@ -170,8 +179,8 @@ export async function detectHubMode(input = {}) {
     resolved = { reachable: false, initialized: null, reason: error?.message ?? String(error) };
   }
   const { engine, initialized } = normalizeEngineFacts(resolved);
-  const markdownHub = fs.existsSync(join(rootDir, MARKDOWN_HUB_ENTRY)) === true;
+  const markdownHub = markdownHubPresent(rootDir, fs);
 
-  const mode = engine.reachable && initialized ? 'graph' : markdownHub ? 'legacy' : 'none';
-  return { ok: true, mode, evidence: { engine, initialized, markdownHub } };
+  const mode = markdownHub ? 'migrate' : (engine.reachable && initialized ? 'graph' : 'none');
+  return { ok: true, mode, next: HUB_MODE_NEXT_STEPS[mode], evidence: { engine, initialized, markdownHub } };
 }

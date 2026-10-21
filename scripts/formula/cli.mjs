@@ -146,11 +146,15 @@
 //
 // `hub-mode` (promotion-in-chain spec D4, plan decision 5) — the declaration every skill prose
 // quotes instead of re-implementing detection (SC4, DP4): which documentation hub this repo uses
-// right now (`graph` | `legacy` | `none`). Detection lives ONLY in core/hub-mode.mjs — this
-// command parses, prints `hub-mode '<project>'` + a `mode:` line + an `evidence:` line, and
-// ALWAYS exits 0: it is a declaration for a report, not a gate, and an unreachable engine is
-// evidence, not a failure. The `--port memory`/`--seed` test seam only swaps the facts source
-// (`portEngineFacts` over the seeded memory port); the mode decision never moves into the CLI.
+// right now. `graph` — the engine is reachable and the project initialized, and `.apex/_INDEX.md`
+// is absent; `migrate` — `.apex/_INDEX.md` is present (it wins over graph), next: the
+// `graph-migrate` skill; `none` — neither, next: the `init` skill. Detection lives ONLY in
+// core/hub-mode.mjs (the Markdown-hub probe in core/markdown-hub.mjs) — this command parses,
+// prints `hub-mode '<project>'` + a `mode:` line + exactly one `evidence:` line, then a `next:`
+// line naming the core's next step for migrate and none (graph prints none), and ALWAYS exits 0:
+// it is a declaration for a report, not a gate, and an unreachable engine is evidence, not a
+// failure. The `--port memory`/`--seed` test seam only swaps the facts source (`portEngineFacts`
+// over the seeded memory port); the mode decision never moves into the CLI.
 //
 // PROJECT IDENTITY (D3, plan task 2): every command resolves its project id through the fixed
 // chain `--project` > `STEEPY_PROJECT` > `<cwd>/.formula/config.json` (core/project-config.mjs —
@@ -195,6 +199,7 @@ import { CONTEXT_OUTPUT_ERROR_CODES, buildContextOutput } from './core/context-o
 import { PROMOTION_ERROR_CODES, applyPromotion, discardScenario, inspectScenario } from './core/promotion.mjs';
 import { SCENARIO_ASSEMBLY_ERROR_CODES, assembleScenario } from './core/scenario-assembly.mjs';
 import { detectHubMode, portEngineFacts } from './core/hub-mode.mjs';
+import { MARKDOWN_HUB_ENTRY } from './core/markdown-hub.mjs';
 import { adoptProjectBinding, readProjectConfig } from './core/project-config.mjs';
 
 const EXIT = {
@@ -259,9 +264,10 @@ promotion:
 
 hub-mode (top level, no subcommand):
   hub-mode  declare this repo's documentation-hub mode — 'graph' (engine reachable +
-            initialized), 'legacy' (.apex/_INDEX.md present) or 'none' — with one evidence
-            line; ALWAYS exit 0 (a declaration for reports, not a gate; an unreachable
-            engine is evidence, not a failure)
+            initialized, .apex/_INDEX.md absent), 'migrate' (.apex/_INDEX.md present; next:
+            the graph-migrate skill) or 'none' (next: the init skill) — with one evidence
+            line and, for migrate and none, one next line; ALWAYS exit 0 (a declaration for
+            reports, not a gate; an unreachable engine is evidence, not a failure)
 
 common options:
   --project <id>  project id (flag > STEEPY_PROJECT env > .formula/config.json > demo)
@@ -1427,9 +1433,10 @@ async function cmdPromotionDiscard({ projectId, projectSource, port, seed, scena
 
 // --- hub-mode (promotion-in-chain spec D4, plan decision 5) ----------------------------------------
 
-// The declaration command. The CLI NEVER decides the mode (SC4): `detectHubMode` is the single
-// authority. The `--port memory`/`--seed` seam swaps only the facts source — the seeded memory
-// port probed by the core's own `portEngineFacts` — so hermetic runs see the same decision path.
+// The declaration command. The CLI NEVER decides the mode or its next step (SC4): `detectHubMode`
+// is the single authority. The `--port memory`/`--seed` seam swaps only the facts source — the
+// seeded memory port probed by the core's own `portEngineFacts` — so hermetic runs see the same
+// decision path.
 async function cmdHubMode({ projectId, projectSource, port, seed }) {
   const memory = port === 'memory' ? createMemoryPort() : null;
   if (memory && seed) await loadSeed(memory, seed);
@@ -1456,7 +1463,8 @@ async function cmdHubMode({ projectId, projectSource, port, seed }) {
   console.log(`hub-mode '${projectId}'`);
   console.log(projectEchoLine({ projectId, projectSource }));
   console.log(`  mode:     ${result.mode}`);
-  console.log(`  evidence: ${engineLine}; initialized: ${initialized}; .apex/_INDEX.md: ${markdownHub}`);
+  console.log(`  evidence: ${engineLine}; initialized: ${initialized}; ${MARKDOWN_HUB_ENTRY}: ${markdownHub}`);
+  if (result.next !== null) console.log(`  next:     run the \`${result.next}\` skill`);
   return EXIT.OK;
 }
 

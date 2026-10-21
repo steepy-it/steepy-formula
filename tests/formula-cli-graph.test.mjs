@@ -7,9 +7,10 @@
 //     documented `--port memory` test seam — a subprocess cannot share an in-memory port, so the
 //     graph is handed to the process with `--seed <file>`, an export artifact (core/export.mjs)
 //     imported into a fresh memory port before the command runs. The suite builds the artifacts
-//     IN-PROCESS from real core calls (`writeTopology`, `applyChangeSet`, direct port writes), so
-//     the validate verdicts (clean / blocking violations / out-of-band writes) are genuinely
-//     produced by the validator and the chain replay, never by a hand-built byte string.
+//     IN-PROCESS (`buildSeed`, tests/helpers/graph-seed.mjs) from real core calls (`writeTopology`,
+//     `applyChangeSet`, direct port writes), so the validate verdicts (clean / blocking violations
+//     / out-of-band writes) are genuinely produced by the validator and the chain replay, never by
+//     a hand-built byte string.
 //  2. DOCKER-GATED: `graph init` (provision + idempotent re-init) and `graph status` against a live
 //     pinned ArcadeDB — the C1/E2 pattern; explicit diagnostic on docker absence, never silent.
 import { test, describe, before, after } from 'node:test';
@@ -20,17 +21,11 @@ import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createMemoryPort } from '../scripts/formula/engine/memory.mjs';
-import { withTransaction } from '../scripts/formula/engine/port.mjs';
-import { buildExportArtifact } from '../scripts/formula/core/export.mjs';
-import { applyChangeSet } from '../scripts/formula/core/revision.mjs';
-import { detectTopology, writeTopology } from '../scripts/formula/core/topology.mjs';
 import { readProjectConfig, writeProjectConfig } from '../scripts/formula/core/project-config.mjs';
 import { containerNameFor, destroyContainer, dockerGate } from '../scripts/formula/engine/lifecycle.mjs';
+import { PROJECT, ROGUE_PACKAGE, buildSeed, makeWorkspaceRoot } from './helpers/graph-seed.mjs';
 
 const cliPath = fileURLToPath(new URL('../scripts/formula/cli.mjs', import.meta.url));
-const PROJECT = 'cli-proj';
-const ROGUE_PACKAGE = `apex:${PROJECT}:package:rogue`;
 
 // --- subprocess helper -------------------------------------------------------------------------
 
@@ -56,80 +51,12 @@ function tempDir(prefix) {
   return dir;
 }
 
-// A real npm-workspace repository tree, so D1 detects it deterministically.
-function makeWorkspaceRoot() {
-  const root = tempDir('steepy-cli-root-');
-  mkdirSync(join(root, 'packages', 'alpha'), { recursive: true });
-  writeFileSync(
-    join(root, 'package.json'),
-    `${JSON.stringify({ name: 'cli-root', private: true, workspaces: ['packages/*'] }, null, 2)}\n`,
-  );
-  writeFileSync(
-    join(root, 'packages', 'alpha', 'package.json'),
-    `${JSON.stringify({ name: '@cli/alpha', version: '1.0.0' }, null, 2)}\n`,
-  );
-  return root;
-}
-
 function addPackage(root, name) {
   mkdirSync(join(root, 'packages', name), { recursive: true });
   writeFileSync(
     join(root, 'packages', name, 'package.json'),
     `${JSON.stringify({ name: `@cli/${name}`, version: '1.0.0' }, null, 2)}\n`,
   );
-}
-
-const PROMOTE_META = {
-  projectId: PROJECT,
-  proposer: { type: 'agent-proposer', id: 'agent:cli-test' },
-  approver: { type: 'human-approver', id: 'human:cli-test' },
-  provenance: [{ quotation: 'test fixture', source: 'tests/formula-cli-graph.test.mjs:1', digest: 'a'.repeat(64) }],
-};
-
-// Builds a seed export artifact for the memory seam:
-//   - base: an audited topology write (valid graph + r1 on the chain);
-//   - `term`: additionally promotes a curated Term with no Project root -> PROJECT_ROOT_MISSING;
-//   - `rogue`: additionally writes a topology Package DIRECTLY to the port (no Revision) -> the
-//     out-of-band write of success criterion 13.
-async function buildSeed({ term = false, rogue = false } = {}) {
-  const port = createMemoryPort();
-  const root = makeWorkspaceRoot();
-  const detection = await detectTopology(root);
-  await writeTopology(port, detection, { projectId: PROJECT });
-  if (term) {
-    const applied = await applyChangeSet(
-      port,
-      {
-        operations: [
-          {
-            op: 'ADD',
-            target: 'node',
-            namespace: 'curated',
-            type: 'Term',
-            id: `apex:${PROJECT}:term:alpha`,
-            properties: { id: `apex:${PROJECT}:term:alpha`, status: 'active' },
-          },
-        ],
-      },
-      PROMOTE_META,
-    );
-    assert.equal(applied.ok, true, applied.violations.map((v) => v.message).join('; '));
-  }
-  if (rogue) {
-    await withTransaction(port, (tx) =>
-      tx.createNode({
-        namespace: 'topology',
-        type: 'Package',
-        id: ROGUE_PACKAGE,
-        properties: { id: ROGUE_PACKAGE, path: 'packages/rogue' },
-      }),
-    );
-  }
-  const artifact = await buildExportArtifact(port, { projectId: PROJECT });
-  await port.close();
-  const file = join(tempDir('steepy-cli-seed-'), 'seed.json');
-  writeFileSync(file, artifact.text);
-  return { file, root };
 }
 
 // --- usage / exit-code table (non-docker) --------------------------------------------------------

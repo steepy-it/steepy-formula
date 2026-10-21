@@ -1,18 +1,22 @@
-// Hub-mode suite (promotion-in-chain Task 3, spec D4 / plan decision 5).
+// Hub-mode suite (promotion-in-chain Task 3, spec D4 / plan decision 5; graph-only formula: the
+// `migrate` state replaces `legacy`).
 //
 // Two layers, per the tests standard:
 //  1. UNIT (always runs): `detectHubMode` with injected `facts`/`fs` over mkdtemp dirs — every
-//     row of the precedence table (graph-active, engine-unreachable, legacy, none, and the
-//     scenario-arbitration precedence: engine up but uninitialized is NOT graph), the evidence
-//     contract (an unreachable engine always carries a reason), the `portEngineFacts` seam the
-//     CLI's `--port memory` uses, and the programmer-error throws. No live engine is ever probed.
+//     row of the precedence table (graph-active, engine-unreachable, migrate, none, and the two
+//     precedence rules: a present Markdown hub decides migrate even over an initialized engine,
+//     and an engine that is up but uninitialized is NOT graph), the `next` step each mode names,
+//     the evidence contract (an unreachable engine always carries a reason), the
+//     `portEngineFacts` seam the CLI's `--port memory` uses, and the programmer-error throws. No
+//     live engine is ever probed.
 //  2. CLI (always runs): `steepy-formula hub-mode` spawned as a real subprocess (prior art:
-//     tests/formula-cli-context.test.mjs) in all three modes — graph through the
-//     `--port memory --seed tests/fixtures/dogfood-export.jsonl` seam, legacy/none through temp
-//     cwd dirs on the same memory seam (reachable-but-uninitialized, exactly the precedence
-//     rule's premise) — asserting exit 0 and the mode line each time.
-// The dogfood seed is a local-only checkpoint: the seeded cases (graph CLI, seeded port) skip
-// with the explicit DOGFOOD_CHECKPOINT_SKIP reason when it is absent; everything else still runs.
+//     tests/formula-cli-context.test.mjs) in all three modes — graph through the `--port memory
+//     --seed <buildSeed()>` seam (tests/helpers/graph-seed.mjs), migrate/none through temp cwd
+//     dirs on the same memory seam — asserting exit 0, the mode line, exactly one evidence line,
+//     and the `next:` line migrate and none print (graph prints none).
+// The dogfood seed is a local-only checkpoint: the pre-existing seeded cases (graph CLI, seeded
+// port) skip with the explicit DOGFOOD_CHECKPOINT_SKIP reason when it is absent; everything else,
+// including the buildSeed graph case, still runs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -22,8 +26,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createMemoryPort } from '../scripts/formula/engine/memory.mjs';
 import { importGraph } from '../scripts/formula/core/export.mjs';
-import { detectHubMode, HUB_MODES, portEngineFacts } from '../scripts/formula/core/hub-mode.mjs';
+import { detectHubMode, HUB_MODES, HUB_MODE_NEXT_STEPS, portEngineFacts } from '../scripts/formula/core/hub-mode.mjs';
 import { DOGFOOD_CHECKPOINT, DOGFOOD_CHECKPOINT_SKIP } from './helpers/dogfood-checkpoint.mjs';
+import { PROJECT as SEED_PROJECT, buildSeed } from './helpers/graph-seed.mjs';
 
 const cliPath = fileURLToPath(new URL('../scripts/formula/cli.mjs', import.meta.url));
 
@@ -41,11 +46,11 @@ function tempDir(prefix) {
   return dir;
 }
 
-// The legacy-mode marker (spec criterion 12): a Markdown Hub's navigation root.
-function legacyHubDir() {
-  const dir = tempDir('steepy-hub-mode-legacy-');
+// The migrate-mode marker (spec criterion 12): a Markdown Hub's navigation root.
+function markdownHubDir() {
+  const dir = tempDir('steepy-hub-mode-markdown-');
   mkdirSync(join(dir, '.apex'));
-  writeFileSync(join(dir, '.apex', '_INDEX.md'), '# Legacy Markdown Hub\n');
+  writeFileSync(join(dir, '.apex', '_INDEX.md'), '# Markdown Hub\n');
   return dir;
 }
 
@@ -59,7 +64,14 @@ function run(args, { cwd } = {}) {
 // --- the mode vocabulary and the precedence table (injected facts/fs, mkdtemp dirs) ----------------
 
 test('HUB_MODES is the closed three-mode vocabulary', () => {
-  assert.deepEqual([...HUB_MODES], ['graph', 'legacy', 'none']);
+  assert.deepEqual([...HUB_MODES], ['graph', 'migrate', 'none']);
+  assert.equal(Object.isFrozen(HUB_MODES), true);
+});
+
+test('HUB_MODE_NEXT_STEPS is the frozen per-mode next step: graph-migrate, init, or nothing for graph', () => {
+  assert.deepEqual({ ...HUB_MODE_NEXT_STEPS }, { graph: null, migrate: 'graph-migrate', none: 'init' });
+  assert.deepEqual(Object.keys(HUB_MODE_NEXT_STEPS).sort(), [...HUB_MODES].sort(), 'one next step per mode');
+  assert.equal(Object.isFrozen(HUB_MODE_NEXT_STEPS), true);
 });
 
 test('graph-active: a reachable, initialized engine decides graph, evidence recorded', async () => {
@@ -71,6 +83,7 @@ test('graph-active: a reachable, initialized engine decides graph, evidence reco
   assert.deepEqual(result, {
     ok: true,
     mode: 'graph',
+    next: null,
     evidence: { engine: { reachable: true, detail: 'http://localhost:2480' }, initialized: true, markdownHub: false },
   });
 });
@@ -79,6 +92,7 @@ test('engine-unreachable: an unreachable engine is evidence with a reason, and a
   const result = await detectHubMode({ projectId: 'demo', facts: UNREACHABLE, rootDir: tempDir('steepy-hub-mode-empty-') });
   assert.equal(result.ok, true);
   assert.equal(result.mode, 'none');
+  assert.equal(result.next, 'init');
   assert.deepEqual(result.evidence, {
     engine: { reachable: false, reason: 'server status: absent (docker daemon not running)' },
     initialized: null,
@@ -86,10 +100,11 @@ test('engine-unreachable: an unreachable engine is evidence with a reason, and a
   });
 });
 
-test('legacy: a present .apex/_INDEX.md decides legacy when the engine cannot serve the graph', async () => {
-  const result = await detectHubMode({ projectId: 'demo', facts: UNREACHABLE, rootDir: legacyHubDir() });
+test('migrate: a present .apex/_INDEX.md decides migrate when the engine cannot serve the graph', async () => {
+  const result = await detectHubMode({ projectId: 'demo', facts: UNREACHABLE, rootDir: markdownHubDir() });
   assert.equal(result.ok, true);
-  assert.equal(result.mode, 'legacy');
+  assert.equal(result.mode, 'migrate');
+  assert.equal(result.next, 'graph-migrate');
   assert.deepEqual(result.evidence, {
     engine: { reachable: false, reason: 'server status: absent (docker daemon not running)' },
     initialized: null,
@@ -97,15 +112,16 @@ test('legacy: a present .apex/_INDEX.md decides legacy when the engine cannot se
   });
 });
 
-test('precedence: an engine that is up but uninitialized is NOT graph — the markdown hub wins', async () => {
-  const legacy = await detectHubMode({
+test('precedence: an engine that is up but uninitialized is NOT graph — the markdown hub decides migrate', async () => {
+  const migrate = await detectHubMode({
     projectId: 'demo',
     facts: () => ({ reachable: true, initialized: false, detail: 'memory-port' }),
-    rootDir: legacyHubDir(),
+    rootDir: markdownHubDir(),
   });
-  assert.deepEqual(legacy, {
+  assert.deepEqual(migrate, {
     ok: true,
-    mode: 'legacy',
+    mode: 'migrate',
+    next: 'graph-migrate',
     evidence: { engine: { reachable: true, detail: 'memory-port' }, initialized: false, markdownHub: true },
   });
   // and without the markdown hub the same facts leave none — there is no fourth mode
@@ -115,13 +131,18 @@ test('precedence: an engine that is up but uninitialized is NOT graph — the ma
     rootDir: tempDir('steepy-hub-mode-empty-'),
   });
   assert.equal(none.mode, 'none');
+  assert.equal(none.next, 'init');
   assert.equal(none.evidence.initialized, false);
 });
 
-test('precedence: a reachable, initialized engine outranks a present markdown hub', async () => {
-  const result = await detectHubMode({ projectId: 'demo', facts: LIVE_INITIALIZED, rootDir: legacyHubDir() });
-  assert.equal(result.mode, 'graph');
-  assert.equal(result.evidence.markdownHub, true);
+test('precedence: a present markdown hub decides migrate even over a reachable, initialized engine', async () => {
+  const result = await detectHubMode({ projectId: 'demo', facts: LIVE_INITIALIZED, rootDir: markdownHubDir() });
+  assert.deepEqual(result, {
+    ok: true,
+    mode: 'migrate',
+    next: 'graph-migrate',
+    evidence: { engine: { reachable: true, detail: 'http://localhost:2480' }, initialized: true, markdownHub: true },
+  });
 });
 
 // --- the evidence contract and the injection seams --------------------------------------------------
@@ -151,7 +172,7 @@ test('the fs seam is the markdown-hub probe: an injected existsSync decides mark
     rootDir: root,
     fs: { existsSync: (path) => path === join(root, '.apex/_INDEX.md') },
   });
-  assert.equal(result.mode, 'legacy');
+  assert.equal(result.mode, 'migrate');
   assert.equal(result.evidence.markdownHub, true);
 });
 
@@ -206,23 +227,45 @@ test("CLI: hub-mode on a seeded memory port declares graph (exit 0, mode line + 
   assert.match(result.stdout, /initialized:\s+yes/);
 });
 
-test('CLI: hub-mode from a legacy temp root on the memory seam declares legacy (exit 0)', () => {
-  const result = run(['hub-mode', '--project', 'hub-seam', '--port', 'memory'], { cwd: legacyHubDir() });
+const evidenceLines = (stdout) => stdout.match(/^ {2}evidence:/gm)?.length ?? 0;
+const nextLines = (stdout) => stdout.match(/^ {2}next:/gm)?.length ?? 0;
+
+test('CLI: hub-mode on a buildSeed graph from an empty temp root declares graph and prints no next: line', async () => {
+  const { file } = await buildSeed();
+  const result = run(['hub-mode', '--project', SEED_PROJECT, '--port', 'memory', '--seed', file], {
+    cwd: tempDir('steepy-hub-mode-empty-'),
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /mode:\s+graph$/m);
+  assert.match(result.stdout, /initialized:\s+yes/);
+  assert.match(result.stdout, /\.apex\/_INDEX\.md:\s+absent/);
+  assert.equal(evidenceLines(result.stdout), 1, 'exactly one evidence: line');
+  assert.equal(nextLines(result.stdout), 0, 'graph names no next step');
+});
+
+test('CLI: hub-mode from a markdown-hub temp root on the memory seam declares migrate and names graph-migrate (exit 0)', () => {
+  const result = run(['hub-mode', '--project', 'hub-seam', '--port', 'memory'], { cwd: markdownHubDir() });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /hub-mode 'hub-seam'/);
   assert.match(result.stdout, /project:\s+hub-seam \(flag\)/);
-  assert.match(result.stdout, /mode:\s+legacy/);
+  assert.match(result.stdout, /mode:\s+migrate$/m);
   assert.match(result.stdout, /initialized:\s+no/);
   assert.match(result.stdout, /\.apex\/_INDEX\.md:\s+present/);
+  assert.equal(evidenceLines(result.stdout), 1, 'exactly one evidence: line');
+  assert.equal(nextLines(result.stdout), 1, 'exactly one next: line');
+  assert.match(result.stdout, /^ {2}next:\s+run the `graph-migrate` skill$/m);
 });
 
-test('CLI: hub-mode from an empty temp root on the memory seam declares none (exit 0)', () => {
+test('CLI: hub-mode from an empty temp root on the memory seam declares none and names init (exit 0)', () => {
   const result = run(['hub-mode', '--project', 'hub-seam', '--port', 'memory'], { cwd: tempDir('steepy-hub-mode-empty-') });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /project:\s+hub-seam \(flag\)/);
-  assert.match(result.stdout, /mode:\s+none/);
+  assert.match(result.stdout, /mode:\s+none$/m);
   assert.match(result.stdout, /initialized:\s+no/);
   assert.match(result.stdout, /\.apex\/_INDEX\.md:\s+absent/);
+  assert.equal(evidenceLines(result.stdout), 1, 'exactly one evidence: line');
+  assert.equal(nextLines(result.stdout), 1, 'exactly one next: line');
+  assert.match(result.stdout, /^ {2}next:\s+run the `init` skill$/m);
 });
 
 test('CLI: hub-mode is a declaration, but usage errors still exit 2', () => {
