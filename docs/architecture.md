@@ -284,16 +284,12 @@ Markdown templates with `{{placeholder}}` variables — project instruction arti
 | Template | Becomes |
 |---|---|
 | `AGENTS.md` | The managed root instruction spine. |
-| `claude-import.md` | The managed thin `CLAUDE.md` import of `AGENTS.md` (legacy channel). |
+| `claude-import.md` | The managed thin `CLAUDE.md` import of `AGENTS.md`. |
 | `project-bootstrap-skill.md` | The canonical, harness-neutral project bootstrap under `.agents/skills/`. |
 | `claude-bootstrap-stub.md` | Claude's thin stub pointing to the canonical bootstrap. |
-| `surface-agent-claude.md` / `surface-agent-codex.toml` / `surface-agent-opencode.md` | One thin native adapter triad for each surface; `{{standardOrientation}}` resolves the surface context in graph mode or reads the routed standard in legacy mode. |
+| `surface-agent-claude.md` / `surface-agent-codex.toml` / `surface-agent-opencode.md` | One thin native adapter triad for each surface; `{{standardOrientation}}` resolves the surface context. |
 | `bootstrap-skill-graph.md` | The graph-mode project bootstrap that `graph-migrate` writes at cutover — hub-mode declaration, `context resolve` navigation, coverage verdict, gear selection. |
 | `surface-agent-graph.md` | The graph-mode specialist agent that the `graph-migrate` and `new-surface` graph flows render; it points at `steepy-formula context resolve --target apex:<projectId>:surface:<slug>` and reads the surface's test command from the resolved Check's `ext_v1_command`. |
-| `_INDEX.md` | The `.apex/` hub root — the DAG root every doc is reachable from (legacy hubs and migration semantics). |
-| `surface-standard.md` | A per-surface standard doc (legacy mode only — graph mode has no standards doc). |
-| `surface-standard-core.md` | The modular-form core of a per-surface standard (`.apex/standards/<name>/<name>-core.md`, the shape `new-surface.mjs --repair` recognizes; legacy). |
-| `routing-row.md` | One row of the routing table (legacy). |
 
 ## `tests/` — the safety net
 

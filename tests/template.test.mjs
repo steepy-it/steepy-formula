@@ -331,6 +331,10 @@ function retiredTemplateNames() {
     ['CL', 'AUDE.md'],
     ['bootstrap', '-skill.md'],
     ['surface-agent', '.md'],
+    ['_IN', 'DEX.md'],
+    ['routing', '-row.md'],
+    ['surface-standard', '.md'],
+    ['surface-standard', '-core.md'],
   ].map(([prefix, suffix]) => `${prefix}${suffix}`);
 }
 
@@ -347,6 +351,8 @@ test('final v1 layout excludes retired template sources and consumer reads', () 
 
   for (const directory of ['scripts', 'skills', 'adapters', 'tests']) {
     for (const path of sourceFiles(join(here, '..', directory))) {
+      // The frozen dogfood export is graph data (provenance prose), not a consumer read.
+      if (path.endsWith(join('tests', 'fixtures', 'dogfood-export.jsonl'))) continue;
       const source = readFileSync(path, 'utf8');
       for (const retiredSource of retiredSources) {
         assert.doesNotMatch(
@@ -382,20 +388,4 @@ test('placeholder vocabulary is complete and documented — every code-rendered 
       assert.ok(key in graphVars, `${name}: var ${key} missing from the graph render vars`);
     }
   }
-});
-
-test('the steepy-hub-version stamp is copied verbatim and is never a placeholder (G10)', () => {
-  const stamp = '<!-- steepy-hub-version: 1 -->';
-  const raw = template('_INDEX.md');
-  assert.ok(raw.startsWith(stamp), '_INDEX.md must open with the hub-version stamp');
-  assert.doesNotMatch(raw, /\{\{steepy-hub-version\}\}/, 'the stamp is not a placeholder');
-  const rendered = renderTemplate(raw, {
-    projectName: 'demo-project',
-    routingRows: '| `web` | [standards/web.md](standards/web.md) | `web-agent` | — |',
-    gitPolicyDirective: '',
-  });
-  assert.ok(
-    rendered.startsWith(stamp),
-    'the stamp must survive rendering byte-identical (copied verbatim, not substituted)',
-  );
 });

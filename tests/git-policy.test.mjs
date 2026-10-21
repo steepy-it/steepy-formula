@@ -3,41 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { renderTemplate } from '../scripts/template.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const indexTpl = readFileSync(join(here, '..', 'templates', '_INDEX.md'), 'utf8');
 const workflowRoot = join(here, '..', '.github', 'workflows');
 
-test('a chosen git policy renders a Git policy directive line in _INDEX.md', () => {
-  const out = renderTemplate(indexTpl, {
-    projectName: 'demo',
-    routingRows: '| `web` | [standards/web.md](standards/web.md) | `web-agent` | — |',
-    gitPolicyDirective: '4. **Git policy:** Do not run any `git` command without explicit user confirmation.',
-  });
-  assert.match(out, /4\. \*\*Git policy:\*\* Do not run any `git` command without explicit user confirmation\./);
-  assert.match(out, /1\. \*\*Anti-orphan:\*\*/);
-  assert.match(out, /2\. \*\*Living docs:\*\*/);
-  assert.match(out, /3\. \*\*Work artifacts:\*\*/);
-  assert.deepEqual([...out.matchAll(/^(\d+)\. \*\*/gm)].map((match) => match[1]), ['1', '2', '3', '4']);
-});
-
-test('skip / git-libero (empty directive) leaves required directives 1-3', () => {
-  const out = renderTemplate(indexTpl, {
-    projectName: 'demo',
-    routingRows: '| `web` | [standards/web.md](standards/web.md) | `web-agent` | — |',
-    gitPolicyDirective: '',
-  });
-  assert.doesNotMatch(out, /\*\*Git policy:\*\*/);
-  assert.match(out, /1\. \*\*Anti-orphan:\*\*/);
-  assert.match(out, /2\. \*\*Living docs:\*\*/);
-  assert.match(out, /3\. \*\*Work artifacts:\*\*/);
-  assert.deepEqual([...out.matchAll(/^(\d+)\. \*\*/gm)].map((match) => match[1]), ['1', '2', '3']);
-});
-
-test('graph-first init no longer renders the gitPolicyDirective placeholder — the _INDEX template keeps it for legacy hubs only', () => {
+test('graph-first init never renders the gitPolicyDirective placeholder or the numbered markdown directive', () => {
   const skill = readFileSync(join(here, '..', 'skills', 'init', 'SKILL.md'), 'utf8');
-  assert.match(indexTpl, /\{\{gitPolicyDirective\}\}/, 'the legacy _INDEX template still carries the placeholder');
   assert.doesNotMatch(skill, /\{\{gitPolicyDirective\}\}/, 'graph-first init never renders the markdown hub template');
   assert.doesNotMatch(skill, /4\. \*\*Git policy:\*\*/, 'the numbered markdown directive belongs to the legacy hub, not the graph-first flow');
   assert.match(skill, /git policy/i, 'init still interviews the git policy');

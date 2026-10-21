@@ -295,7 +295,7 @@ test('npm dry-run package excludes local development state', () => {
       'docs/workflow.md',
       'docs/architecture.md',
       'skills/init/SKILL.md',
-      'templates/_INDEX.md',
+      'templates/bootstrap-skill-graph.md',
       'package.json',
       'README.md',
       'CHANGELOG.md',
