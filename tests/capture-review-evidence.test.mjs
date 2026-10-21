@@ -357,7 +357,7 @@ test('normal and nonzero leaders converge signal-ignoring inherited-pipe descend
       const receipt = await collectReviewEvidence({
         repoRoot: repo,
         evidencePath: EVIDENCE,
-      graphGateArgs: CLEAN_GATE_ARGS,
+        gateCommand: nodeCommand("process.stdout.write('violations: 0')"),
         testCommand: nodeCommand(leader),
         killGraceMs: 50,
         processGroupConvergenceMs: 800,

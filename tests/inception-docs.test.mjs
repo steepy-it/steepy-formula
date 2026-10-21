@@ -68,9 +68,6 @@ test('the inception placement rule states the substance rules', { skip: DOGFOOD_
 });
 
 test('scripts and tests knowledge carry the inception pointers', { skip: DOGFOOD_CHECKPOINT_SKIP }, () => {
-  const hub = statement('scripts-validate-hub-mjs-exits-0-coherent-no-hub-or-1-violations');
-  assert.match(hub, /exits 0 for a coherent hub, no hub, a pre-hub inception run/);
-  assert.match(hub, /never follow a descendant symlink into `\.apex\/work`, `\.apex\/inception`/);
   assert.match(statement('graph-init-after-inception-certifies-scaffold-only'), /empty Markdown document set/);
   assert.match(statement('hermetic-tests-are-never-native-evidence'), /eleven-skill/);
   assert.match(statement('hermetic-tests-are-never-native-evidence'), /native inception acceptance stays NOT RUN/);

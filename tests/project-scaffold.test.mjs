@@ -7,6 +7,7 @@ import {
   linkSync,
   readlinkSync,
   chmodSync,
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -21,9 +22,10 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
+import { bindProjectMount } from '../scripts/sanitize.mjs';
 import {
   applyProjectScaffold,
   classifyProjectArtifact,
@@ -1101,6 +1103,267 @@ test('apply detects a same-byte target identity replacement after staging', () =
   assert.notEqual(statSync(target).ino, originalIno);
   assert.equal(readFileSync(target, 'utf8'), customized);
   assert.equal(snapshot(hubRoot).some((entry) => entry.includes('.steepy-project-scaffold-')), false);
+});
+
+// --- project mounts, aliases and the recursive provenance walk ------------------------------------
+// Planner, sanitize and mount cases carried over from the retired portable composition suite on
+// graph-mode models. Its linter assertions retired with the Markdown hub; the planner/applicator
+// observables (throw messages, conflict objects, byte/mode/mtime file state, link targets) remain.
+
+// A graph-mode scaffold of `m`: plan, assert a clean plan, apply. It writes no `.apex/`.
+function seedGraphHub(m = model()) {
+  const hubRoot = tempHub();
+  const first = planProjectScaffold({ hubRoot, model: m, templatesDir });
+  assert.deepEqual(first.conflicts, []);
+  applyProjectScaffold({ hubRoot, plan: first });
+  return hubRoot;
+}
+
+// Every regular file below `root` with its bytes, permission bits, and mtime. Callers pass a
+// tree without directory symlinks (readFileSync follows a file symlink).
+function fileState(root) {
+  const entries = [];
+  function walk(dir) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name))) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(path);
+      } else {
+        const stat = lstatSync(path);
+        entries.push({
+          path: relative(root, path),
+          bytes: readFileSync(path),
+          mode: stat.mode & 0o777,
+          mtimeMs: stat.mtimeMs,
+        });
+      }
+    }
+  }
+  walk(root);
+  return entries;
+}
+
+test('external project mounts compose scoped paths, replace repair and a zero-write rerun', () => {
+  for (const relativeLinks of [false, true]) {
+    const scoped = model({
+      surfaces: [{ name: 'web', path: 'libs/@rt3-backend', agent: 'web-agent', testCmd: 'npm test' }],
+    });
+    const hubRoot = seedGraphHub(scoped);
+    const outside = tempHub();
+    const names = ['.apex', '.agents', '.claude', '.codex', '.opencode', 'AGENTS.md', 'CLAUDE.md'];
+    try {
+      // A graph-mode scaffold writes no `.apex/`; create the local area so its mount is exercised too.
+      mkdirSync(join(hubRoot, '.apex'));
+      for (const name of names) {
+        const source = join(hubRoot, name);
+        const target = join(outside, name);
+        renameSync(source, target);
+        symlinkSync(relativeLinks ? relative(hubRoot, target) : target, source);
+      }
+      const links = names.map((name) => readlinkSync(join(hubRoot, name)));
+      assert.deepEqual(planProjectScaffold({ hubRoot, model: scoped, templatesDir }).conflicts, [], `relative=${relativeLinks}`);
+
+      // Exercise both atomic replacement of a mounted root file and creation
+      // under a mounted provider. Logical paths remain the public identities.
+      const desired = { ...scoped, description: 'Repaired external project.',
+        resolutions: { 'v1:project-instructions:customized': 'replace',
+          'v1:web-agent-codex:customized': 'replace' } };
+      unlinkSync(join(outside, '.claude/agents/web-agent.md'));
+      chmodSync(join(outside, 'AGENTS.md'), 0o640);
+      const plan = planProjectScaffold({ hubRoot, model: desired, templatesDir });
+      assert.deepEqual(plan.conflicts, []);
+      assert.deepEqual(new Set(plan.operations.map(({ path }) => path)),
+        new Set(['AGENTS.md', '.claude/agents/web-agent.md', '.codex/agents/web-agent.toml']));
+      assert.equal(applyProjectScaffold({ hubRoot, plan }).applied, 3);
+      assert.match(readFileSync(join(outside, 'AGENTS.md'), 'utf8'), /Repaired external project/);
+      assert.equal(lstatSync(join(outside, 'AGENTS.md')).mode & 0o777, 0o640);
+      assert.equal(readFileSync(join(outside, '.claude/agents/web-agent.md'), 'utf8'),
+        plan.operations.find(({ path }) => path === '.claude/agents/web-agent.md').content);
+      assert.deepEqual(names.map((name) => readlinkSync(join(hubRoot, name))), links);
+      const before = fileState(outside);
+      const second = planProjectScaffold({ hubRoot, model: { ...desired, resolutions: {} }, templatesDir });
+      assert.deepEqual(second.operations, []);
+      assert.deepEqual(second.conflicts, []);
+      assert.equal(applyProjectScaffold({ hubRoot, plan: second }).applied, 0);
+      assert.deepEqual(fileState(outside), before);
+    } finally {
+      rmSync(hubRoot, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  }
+});
+
+test('repair refuses two root mounts aliasing the same output before any write', () => {
+  const hubRoot = tempHub();
+  const outside = tempHub();
+  try {
+    const target = join(outside, 'instructions.md');
+    writeFileSync(target, '# User instructions\n');
+    for (const name of ['AGENTS.md', 'CLAUDE.md']) symlinkSync(target, join(hubRoot, name));
+    const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+    assert.deepEqual(plan.conflicts, []);
+    const before = fileState(outside);
+    assert.throws(() => applyProjectScaffold({ hubRoot, plan }), /alias.*physical target/);
+    assert.deepEqual(fileState(outside), before);
+    assert.deepEqual(readdirSync(hubRoot).sort(), ['AGENTS.md', 'CLAUDE.md']);
+  } finally {
+    rmSync(hubRoot, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('instruction and provider mounts into the inception area are symlink conflicts that keep the link', () => {
+  const cases = [
+    { name: 'AGENTS.md', destination: '.apex/inception/private.md' },
+    { name: '.opencode', destination: '.apex/inception' },
+  ];
+  for (const { name, destination } of cases) {
+    const hubRoot = seedGraphHub();
+    try {
+      const target = join(hubRoot, name);
+      rmSync(target, { recursive: true, force: true });
+      put(hubRoot, '.apex/inception/private.md', '# Inception must stay excluded\n');
+      symlinkSync(destination, target);
+
+      assert.throws(() => bindProjectMount(hubRoot, name), {
+        message: `symlink mount ${name} enters excluded .apex/inception`,
+      });
+      const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+      assert.ok(plan.conflicts.some(({ path, reason }) => (
+        (path === name || path.startsWith(`${name}/`)) && reason === 'symlink'
+      )), `${name}: ${JSON.stringify(plan.conflicts)}`);
+      assert.equal(readlinkSync(target), destination);
+    } finally { rmSync(hubRoot, { recursive: true, force: true }); }
+  }
+});
+
+test('provider mount discovery excludes the physical work and inception areas inside its target', () => {
+  for (const area of ['work', 'inception']) {
+    const hubRoot = seedGraphHub();
+    try {
+      put(hubRoot, `.apex/${area}/decoy.md`, `<!-- steepy:generated:${area}-sentinel:v1 -->\n`);
+      rmSync(join(hubRoot, '.claude'), { recursive: true });
+      symlinkSync('.apex', join(hubRoot, '.claude'));
+      const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+      assert.deepEqual(plan.conflicts, [], area);
+      assert.ok(plan.operations.some(({ path }) => path === '.claude/agents/web-agent.md'), area);
+
+      // Control: the same decoy outside the excluded area is walked through the mount.
+      put(hubRoot, `.apex/${area}-control/decoy.md`, `<!-- steepy:generated:${area}-sentinel:v1 -->\n`);
+      assert.deepEqual(planProjectScaffold({ hubRoot, model: model(), templatesDir }).conflicts, [{
+        id: `v1:${area}-sentinel:orphan`,
+        artifactId: `${area}-sentinel`,
+        path: `.claude/${area}-control/decoy.md`,
+        reason: 'orphan',
+        choices: ['abort'],
+      }], area);
+    } finally { rmSync(hubRoot, { recursive: true, force: true }); }
+  }
+});
+
+test('recursive bounded provenance blocks nested adapters and relocated or orphan bootstraps non-destructively', async (t) => {
+  await t.test('nested exact adapter copy is a closed duplicate conflict', () => {
+    const hubRoot = seedGraphHub();
+    try {
+      const canonical = join(hubRoot, '.claude/agents/web-agent.md');
+      const nestedPath = '.claude/agents/nested/copied.md';
+      const nested = join(hubRoot, nestedPath);
+      mkdirSync(dirname(nested), { recursive: true });
+      copyFileSync(canonical, nested);
+      const before = fileState(hubRoot);
+
+      const blocked = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+      assert.deepEqual(blocked.conflicts.find(({ path }) => path === nestedPath), {
+        id: 'v1:web-agent-claude:duplicate',
+        artifactId: 'web-agent-claude',
+        path: nestedPath,
+        reason: 'duplicate',
+        choices: ['abort'],
+      });
+      assert.deepEqual(previewProjectScaffold(blocked), []);
+      assert.deepEqual(fileState(hubRoot), before, 'planning and preview must be read-only');
+
+      rmSync(join(hubRoot, '.claude/agents/nested'), { recursive: true });
+      const cleanBefore = fileState(hubRoot);
+      const clean = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+      assert.deepEqual(previewProjectScaffold(clean), []);
+      assert.deepEqual(clean.conflicts, []);
+      assert.deepEqual(applyProjectScaffold({ hubRoot, plan: clean }), { applied: 0, paths: [] });
+      assert.deepEqual(fileState(hubRoot), cleanBefore);
+    } finally { rmSync(hubRoot, { recursive: true, force: true }); }
+  });
+
+  await t.test('relocated exact project bootstrap blocks its canonical recreate operation', () => {
+    const hubRoot = seedGraphHub();
+    try {
+      const canonicalPath = '.agents/skills/portable-demo-bootstrap/SKILL.md';
+      const relocatedPath = '.agents/skills/archive/portable-demo-bootstrap/SKILL.md';
+      const canonical = join(hubRoot, canonicalPath);
+      const relocated = join(hubRoot, relocatedPath);
+      mkdirSync(dirname(relocated), { recursive: true });
+      renameSync(canonical, relocated);
+      const before = fileState(hubRoot);
+
+      const blocked = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+      assert.deepEqual(blocked.conflicts.find(({ path }) => path === relocatedPath), {
+        id: 'v1:project-bootstrap:wrong-target',
+        artifactId: 'project-bootstrap',
+        path: relocatedPath,
+        reason: 'wrong-target',
+        choices: ['abort'],
+      });
+      assert.equal(blocked.operations.some(({ artifactId }) => artifactId === 'project-bootstrap'), false);
+      assert.deepEqual(previewProjectScaffold(blocked), []);
+      assert.deepEqual(fileState(hubRoot), before);
+
+      renameSync(relocated, canonical);
+      rmSync(join(hubRoot, '.agents/skills/archive'), { recursive: true });
+      const cleanBefore = fileState(hubRoot);
+      const clean = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+      assert.deepEqual(previewProjectScaffold(clean), []);
+      assert.deepEqual(clean.conflicts, []);
+      assert.deepEqual(applyProjectScaffold({ hubRoot, plan: clean }), { applied: 0, paths: [] });
+      assert.deepEqual(fileState(hubRoot), cleanBefore);
+    } finally { rmSync(hubRoot, { recursive: true, force: true }); }
+  });
+
+  await t.test('nested generated bootstrap with unknown identity is a closed orphan conflict', () => {
+    const hubRoot = seedGraphHub();
+    try {
+      const orphanPath = '.agents/skills/nested/ghost/SKILL.md';
+      put(hubRoot, orphanPath, '<!-- steepy:generated:ghost-bootstrap:v1 -->\n# ghost\n');
+      const before = fileState(hubRoot);
+      const blocked = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+      assert.deepEqual(blocked.conflicts.find(({ path }) => path === orphanPath), {
+        id: 'v1:ghost-bootstrap:orphan',
+        artifactId: 'ghost-bootstrap',
+        path: orphanPath,
+        reason: 'orphan',
+        choices: ['abort'],
+      });
+      assert.deepEqual(previewProjectScaffold(blocked), []);
+      assert.deepEqual(fileState(hubRoot), before);
+    } finally { rmSync(hubRoot, { recursive: true, force: true }); }
+  });
+
+  await t.test('nested symlink decoy is never followed as generated provenance', () => {
+    const hubRoot = seedGraphHub();
+    const outside = mkdtempSync(join(tmpdir(), 'steepy-project-provenance-symlink-'));
+    try {
+      const mirror = join(outside, 'copied.md');
+      copyFileSync(join(hubRoot, '.claude/agents/web-agent.md'), mirror);
+      const decoy = join(hubRoot, '.claude/agents/nested/copied.md');
+      mkdirSync(dirname(decoy), { recursive: true });
+      symlinkSync(mirror, decoy);
+      const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
+      assert.deepEqual(plan.operations, []);
+      assert.deepEqual(plan.conflicts, []);
+    } finally {
+      rmSync(hubRoot, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
 });
 
 test('a genuinely live repository lock owner cannot be stolen and contention writes no scaffold output', async () => {
