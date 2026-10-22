@@ -60,15 +60,15 @@ async function withDogfoodGraph(fn) {
   }
 }
 
-test('the dogfood export is the repo graph: head r22, B4-clean, chain intact', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
+test('the dogfood export is the repo graph: head r23, B4-clean, chain intact', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
   withDogfoodGraph(async (port) => {
     const validation = await validateGraph(port, { projectId: PROJECT });
     assert.equal(validation.ok, true, `migrated graph must validate clean: ${validation.violations.map((v) => v.message).join('; ')}`);
     assert.deepEqual(validation.violations, []);
 
     const chain = await readChain(port, { projectId: PROJECT });
-    assert.equal(chain.headRevision, qid('revision:r22'));
-    assert.equal(chain.revisions.length, 22);
+    assert.equal(chain.headRevision, qid('revision:r23'));
+    assert.equal(chain.revisions.length, 23);
     const verdict = await verifyChain(port, { projectId: PROJECT });
     assert.equal(verdict.ok, true, `the Revision chain must replay clean: ${JSON.stringify(verdict.violations)}`);
 
@@ -305,8 +305,7 @@ test('the local-areas rule is served everywhere and the Markdown-hub leftovers a
       'rule:surface-wide-rules-live-in-the-core-a-leaf', 'rule:form-is-opt-in-and', 'rule:card-but',
       'rule:templates-scripts-new-surface-mjs-a-shape-change',
       'rule:templates-the-steepy-hub-version-n-stamp-is-not-a-placeholder-copy-verbatim-a-routing-row-shape-change',
-      'rule:skills-repair-mode-stays-non-destructive-create-only-append', 'check:scripts-node-test-tests-validate-hub-test-mjs',
-      'term:routing-table', 'term:mini-routing-table', 'term:anti-orphan-check', 'term:e2e-smoke']) {
+      'rule:skills-repair-mode-stays-non-destructive-create-only-append', 'check:scripts-node-test-tests-validate-hub-test-mjs']) {
       assert.equal(byId.get(qid(retired))?.properties?.status, 'superseded', `${retired} must be superseded at r22`);
       assert.ok(edgesOf.some((edge) => edge.type === 'SUPERSEDES' && edge.toId === qid(retired)), `${retired} has a replacement`);
     }
@@ -323,6 +322,25 @@ test('the local-areas rule is served everywhere and the Markdown-hub leftovers a
     assert.match(byId.get(qid('rule:unrouted-owning-surface-halts-cross-cutting-ignored')).properties.statement, /never halts the run[\s\S]*`CONTEXT_SURFACE_IGNORED`/);
     for (const term of ['hub', 'standard', 'repair-mode', 'dogfood-test', 'fixture', 'adapter']) {
       assert.ok(byId.get(qid(`term:${term}`))?.properties?.ext_v1_definition, `term:${term} carries a definition`);
+    }
+  }));
+
+// undefined-terms removal (r23): a Term that carried no definition was a bare slug — every one of
+// them, active or retired, is removed with its edges, so every Term left defines itself.
+test('every Term carries a definition; the bare-slug terms are removed (r23)', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
+  withDogfoodGraph(async (port) => {
+    const curated = await withTransaction(port, (tx) => tx.listNodes({ namespace: 'curated' }));
+    const terms = curated.filter((node) => node.type === 'Term');
+    assert.ok(terms.length >= 40, `the defined vocabulary stays, got ${terms.length} terms`);
+    for (const term of terms) {
+      assert.ok(term.properties.ext_v1_definition, `${term.id} must carry a definition`);
+    }
+    const ids = new Set(curated.map((node) => node.id));
+    for (const removed of ['term:surface', 'term:drift', 'term:routing-table', 'term:e2e-smoke', 'term:implementer-status']) {
+      assert.ok(!ids.has(qid(removed)), `${removed} is removed at r23`);
+    }
+    for (const kept of ['term:hub', 'term:dogfood-test', 'term:gear', 'term:goal-contract']) {
+      assert.equal(curated.find((node) => node.id === qid(kept))?.properties?.status, 'active', `${kept} stays active`);
     }
   }));
 
@@ -365,7 +383,7 @@ test('the migrated governance is present: surfaces, agents, skills, terms, rules
     assert.equal(graphInit.properties.status, 'superseded', 'skill:graph-init must be superseded, not active');
 
     // glossary vocabulary
-    for (const term of ['gear', 'goal-contract', 'loop-ledger', 'keep-discard', 'verifier', 'verdict-artifact', 'routing-table', 'surface']) {
+    for (const term of ['gear', 'goal-contract', 'loop-ledger', 'keep-discard', 'verifier']) {
       assert.ok(has(`term:${term}`), `term:${term} must be migrated`);
     }
 
@@ -406,7 +424,7 @@ test('the ported write-backs are promoted into the canonical graph (v0.8.0–v0.
     ]) {
       assert.ok(has(rule), `${rule} must be promoted`);
     }
-    for (const term of ['term:context-manifest', 'term:artifact-first-completion', 'term:resource-usage-ledger', 'term:implementer-status']) {
+    for (const term of ['term:context-manifest', 'term:artifact-first-completion', 'term:resource-usage-ledger']) {
       assert.ok(has(term), `${term} must be promoted`);
     }
 
