@@ -119,9 +119,9 @@ Two drive modes decide who pushes the button between phases: **manual** (default
 
 A **next-step router** baked into the generated bootstrap skill detects where a task already sits in the chain (no spec? spec but no plan? plan but unimplemented?) and recommends the next command. The four commands remain independently usable — the router is advisory.
 
-Fresh brainstorm derives coverage and gear from your request, stable routed rules and source—not
-historical specs or logs. It follows the actual single standard or modular core plus matching leaves,
-recording each match rather than guessing filenames. Regular review needs only criteria, the compact
+Fresh brainstorm derives coverage and gear from your request, graph-resolved rules and source—not
+historical specs or logs. It orients through `steepy-formula context resolve`, recording each match
+rather than guessing filenames. Regular review needs only criteria, the compact
 task index and diff, including for a proposed version bump; the bump/PR decision remains human.
 
 Manual handoffs authorize exact paths, including both sides when resuming publication: plan adds

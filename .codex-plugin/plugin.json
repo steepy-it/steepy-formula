@@ -25,7 +25,7 @@
     "category": "workflow",
     "capabilities": [
       "graph-first governed init",
-      "mode-aware coherence gate",
+      "graph coherence gate",
       "gear-based chain"
     ],
     "brandColor": "#1B3149",

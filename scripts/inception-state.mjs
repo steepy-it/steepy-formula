@@ -39,7 +39,8 @@ export const INCEPTION_GITIGNORE = `${INCEPTION_AREA}/.gitignore`;
 export const INCEPTION_GITIGNORE_BYTES = '*\n';
 export const RUN_DESCRIPTOR_PATH = `${INCEPTION_AREA}/run.json`;
 // Formula: the committed engine binding is the only hub marker. A repository that still carries a
-// Markdown hub is in the migrate state, refused by `migrateRefusal` before any command runs.
+// steepy-apex `.apex/` area is in the migrate state: every CLI command and `startRun` refuse it
+// through `migrateRefusal`; the evidence collector refuses before it begins a capture.
 export const GRAPH_BINDING_PATH = '.formula/config.json';
 export const RESUME_NOTES_DIR = `${INCEPTION_AREA}/resume-notes`;
 export const ABANDONED_DIR = `${INCEPTION_AREA}/abandoned`;

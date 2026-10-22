@@ -2184,7 +2184,7 @@ export function main(argv = process.argv.slice(2)) {
     return 1;
   }
 
-  // The migrate state (G5, P7): a hub that still carries a steepy-apex Markdown hub is
+  // The migrate state (G5, P7): a hub root that still carries a steepy-apex `.apex/` area is
   // refused in every mode, preview included, before the model is read, any stdout line,
   // or any scaffold write. Planning stays read-only and never refuses; applyProjectScaffold does.
   const refusal = migrateRefusal(values.hub);

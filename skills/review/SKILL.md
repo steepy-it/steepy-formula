@@ -340,9 +340,9 @@ node <engine-root>/scripts/capture-review-evidence.mjs --repo-root . --evidence 
 ```
 
 The coherence gate is the capture's final command: the script's built-in gate runs
-`steepy-formula graph validate` (a repo without `steepy-formula` on PATH runs
-`node <engine-root>/scripts/formula/cli.mjs graph validate` with the same real `--project <id>`
-when the hub-mode declaration echoed one), labeled `coherence-gate`. Pass no gate flag.
+`steepy-formula graph validate` through the packaged CLI (`node <engine-root>/scripts/formula/cli.mjs`,
+never a PATH lookup) from the repo root, so the project id resolves from the committed
+`.formula/config.json` binding (or `STEEPY_PROJECT`), labeled `coherence-gate`. Pass no gate flag.
 
 For Gear 4 append `--verifier-command '<exact verifier command>'`. The script always runs the
 surface test, then the optional goal verifier, then the coherence gate; it atomically replaces stale

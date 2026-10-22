@@ -111,11 +111,11 @@ Use your harness's [command syntax](docs/installation.md#first-run-and-troublesh
 
 1. `/steepy-formula:init` - Initialize steepy-formula in your repo. Graph-first: a pre-flight engine gate, a short interview, then the local `.formula/work/` area for gitignored specs/plans, project instructions, per-surface agents, the project bootstrap skill, a root `CLAUDE.md`, and the committed `.formula/config.json` project binding. No markdown hub is ever created: the engine is provisioned and verified before anything is written, the interview confirms Surfaces, Components, and Rules (Rules are never invented from stack detection), and the initial graph lands as one promotion scenario applied only at your explicit confirmation. It closes with `graph validate` + `context resolve` green.
 2. On an existing codebase, run `/steepy-formula:discovery` next: a seeded interview fills the canonical graph from the code you already have through a typed promotion scenario — each proposal backed by `file:line` evidence, nothing written without your confirmation.
-3. Arriving from steepy-apex — your repo already carries an `.apex/` Markdown hub? `/steepy-formula:graph-migrate` walks it into the graph (extraction → preview → approval → cutover → archive) instead of init.
+3. Arriving from steepy-apex — your repo still carries an `.apex/` area? `/steepy-formula:graph-migrate` walks a Markdown hub into the graph (extraction → preview → approval → cutover → archive), or discards leftover local state after your confirmation, and removes `.apex/` — instead of init.
 4. Run `/steepy-formula:check` to verify coherence, then give your agent any task. The generated bootstrap skill declares the hub mode, resolves the task's context from the graph, and classifies it — coverage verdict + gear — before touching code.
 5. Resolve context anytime with the CLI: `steepy-formula context resolve --project <id> --path <task-path>` emits `context.json` + `context.md` — the navigation map the AI reads. That's where the rules stay honest from now on.
 
-Starting from an idea or a prototype? Run `/steepy-formula:inception` first. It ends by pointing to `/steepy-formula:init` and `/steepy-formula:discovery`. In graph mode that first init is certified against the completed run (the exact scaffold operations, with the stable knowledge landing through the graph's initialization promotion), and discovery imports the run's accepted decisions once, as typed graph candidates. See the [inception guide](docs/inception.md).
+Starting from an idea or a prototype? Run `/steepy-formula:inception` first. It ends by pointing to `/steepy-formula:init` and `/steepy-formula:discovery`. That first init is certified against the completed run (the exact scaffold operations, with the stable knowledge landing through the graph's initialization promotion), and discovery imports the run's accepted decisions once, as typed graph candidates. See the [inception guide](docs/inception.md).
 
 Upgrading from an earlier version? Read [Upgrading an existing hub](docs/installation.md#upgrading-an-existing-hub) first.
 
@@ -129,7 +129,7 @@ Claude Code syntax is shown below; see the [installation guide](docs/installatio
 |---|---|
 | [`/steepy-formula:inception`](docs/inception.md) | Turn an idea and its materials into a verified first version before the hub exists. |
 | `/steepy-formula:init` | Graph-first init — pre-flight engine + credentials gate, stack/topology detection as proposals, Surface/Component/Rule interview, the initial promotion scenario applied at your confirmation, then disk-minimal scaffolding (work area, project instructions, per-surface agents, bootstrap skill, `CLAUDE.md`); no markdown hub. |
-| `/steepy-formula:graph-migrate` | Migrate a steepy-apex `.apex/` hub into the graph — extraction, preview, approval, transactional write, cutover, archive closure. |
+| `/steepy-formula:graph-migrate` | Migrate a steepy-apex `.apex/` hub into the graph — extraction, preview, approval, transactional write, cutover, archive closure — or clean up a leftover `.apex/` that holds no hub; either way `.apex/` is removed. |
 | `/steepy-formula:discovery` | Populate/refresh stable knowledge from your codebase via a seeded interview — typed candidates promoted into the canonical graph; each proposal is an item card with `file:line` evidence and a write-back preview; re-runnable, additive + diff-gated. After inception, import its decisions once. |
 | `/steepy-formula:check` | Run the coherence gate on demand — `steepy-formula graph validate` on the canonical graph — and report any drift. |
 | `/steepy-formula:new-surface` | Add one surface through a human-approved promotion (Surface + Check with its `ext_v1_command` test command) plus its specialist agent. |
@@ -150,7 +150,7 @@ steepy-formula ships a `steepy-formula` bin with three command families over the
 | `steepy-formula graph` | `init`, `validate`, `status`, `refresh`, `export`, `backup`, `restore`, `migrate-schema` | Provision the local engine, validate graph invariants + the Revision chain, report project state, refresh repository topology, and manage backup/restore/schema. |
 | `steepy-formula context` | `resolve --path <p>... \| --target <id>...` | Resolve deterministic, explainable context (layers, budget, inclusion traces) for task paths or explicit graph targets. |
 | `steepy-formula promotion` | `create`, `preview`, `apply`, `discard` | Map a typed candidates file (terms/rules/decisions) into a draft promotion scenario (`create` — nothing is applied), inspect the typed diff, apply it after an explicit human confirmation, or discard it. |
-| `steepy-formula hub-mode` | — (top level) | Declare this repo's documentation-hub mode — `graph` (engine reachable + initialized), `migrate` (a steepy-apex `.apex/_INDEX.md` is present; next: `graph-migrate`), or `none` (next: `init`) — with one evidence line; always exit 0: a declaration for reports and skill prose, which never re-implements the detection. |
+| `steepy-formula hub-mode` | — (top level) | Declare this repo's documentation-hub mode — `graph` (engine reachable + initialized, no `.apex/`), `migrate` (a steepy-apex `.apex/` area is present, with or without a Markdown hub — it wins over `graph`; next: `graph-migrate`), or `none` (next: `init`) — with one evidence line; always exit 0: a declaration for reports and skill prose, which never re-implements the detection. |
 
 Every read command refuses an unsupported schema version (exit 1); `graph migrate-schema` is the explicit recovery path. The full exit-code table prints with the CLI usage — run `steepy-formula` with no arguments to see it.
 
@@ -189,7 +189,7 @@ steepy-formula never commits or pushes without your say-so:
 
 ## Keeping the docs honest
 
-The coherence gate runs at `check`/`review` time on every harness — the plugin wires no end-of-turn gate — and the migration hint reaches you through `steepy-formula hub-mode` and the generated bootstrap at the start of a task: a repository still carrying a steepy-apex `.apex/` hub reports `migrate` and is pointed at `/steepy-formula:graph-migrate`.
+The coherence gate runs at `check`/`review` time on every harness — the plugin wires no end-of-turn gate — and the migration hint reaches you through `steepy-formula hub-mode` and the generated bootstrap at the start of a task: a repository still carrying a steepy-apex `.apex/` area reports `migrate` and is pointed at `/steepy-formula:graph-migrate`.
 
 The canonical gate is the graph: `steepy-formula graph validate` checks the portable invariants and replays the Revision chain to detect any out-of-band write. Run `/steepy-formula:check` any time you want the gate on demand.
 
@@ -221,8 +221,8 @@ Everything runs on your machine. steepy-formula runs Node.js scripts from the pl
 
 What it touches:
 
-- It writes the gitignored `.formula/work/` local work area and a root `CLAUDE.md` into the target repo — graph-first init creates no other `.apex/` files, except the `.formula/init-provenance.json` certificate when it follows a complete inception run (whose own state lives under `.formula/inception/`).
-- It writes the **committed** `.formula/config.json` project binding at the repo root — the project id every command resolves when `--project`/`STEEPY_PROJECT` is absent; `.formula/` stays gitignored as `.formula/*` with the `!.formula/config.json` exception (a bare `.formula/` pattern would hide the binding too: Git cannot re-include a file inside an ignored directory).
+- It writes the gitignored `.formula/work/` local work area and a root `CLAUDE.md` into the target repo — graph-first init writes nothing under `.apex/`; its only other local file is the `.formula/init-provenance.json` certificate when it follows a complete inception run (whose own state lives under `.formula/inception/`).
+- It writes the **committed** `.formula/config.json` project binding at the repo root — the project id every command resolves when `--project`/`STEEPY_PROJECT` is absent. `graph init` also writes a create-only `.formula/.gitignore` (`*`, `!.gitignore`, `!config.json`) that keeps every other `.formula/` file local; a root `.gitignore` that ignores `.formula/` must do so as `.formula/*` with the `!.formula/config.json` exception (a bare `.formula/` pattern would hide the binding too: Git cannot re-include a file inside an ignored directory).
 - It writes Claude Code agent and skill artifacts into the target repo during initialization (`/steepy-formula:init`), along with the managed `AGENTS.md` project instructions and the Codex and OpenCode specialist adapters.
 - It provisions a local ArcadeDB container and creates one database per project for the Stable Knowledge Graph.
 - Other command families have their own effects: workflow controllers run your tests, Git, and supported harness subprocesses; see the [Command-family effects matrix](docs/architecture.md#command-family-effects-matrix) — filesystem reads–writes–subprocesses–temporary state–providers/network — before granting trust.
@@ -249,7 +249,7 @@ The graph, context resolution, and coherence gate are language-agnostic and work
 <details>
 <summary><b>Coming from steepy-apex</b></summary>
 
-A repository that still carries a steepy-apex `.apex/` Markdown hub is a one-time migration source: run `/steepy-formula:graph-migrate` to move it into the graph (extraction → preview → approval → cutover → archive). Until then `steepy-formula hub-mode` reports `migrate` and every workflow script refuses to run. After cutover the canonical graph is the single authority — there is no second resolver and no Markdown ↔ graph synchronization.
+A repository that still carries a steepy-apex `.apex/` area is a one-time migration source: run `/steepy-formula:graph-migrate`, which moves a Markdown hub into the graph (extraction → preview → approval → cutover → archive) or, when the area holds only leftover local state, discards it after your confirmation — either way `.apex/` is removed, since formula keeps its own local areas under `.formula/`. Until then `steepy-formula hub-mode` reports `migrate` and every workflow script refuses to run (exit 25). After cutover the canonical graph is the single authority — there is no second resolver and no Markdown ↔ graph synchronization.
 
 </details>
 

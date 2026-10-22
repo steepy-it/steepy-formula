@@ -249,7 +249,7 @@ the later terminal review runs:
   surface `<name>` → `.claude/agents/<name>-agent.md`.
 - **`migrate`** → the repo still carries a pre-graph Markdown hub.
   Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow.
-- **`none`** → no hub exists on either channel: a loop has no governed context to run under —
+- **`none`** → no graph hub exists: a loop has no governed context to run under —
   tell the user to run the `init` skill (invoke it the way your harness invokes skills) first,
   and stop.
 

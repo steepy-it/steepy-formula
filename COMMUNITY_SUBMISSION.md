@@ -28,7 +28,7 @@ steepy-formula governs a repository's stable knowledge in the canonical Stable K
 ## Runtime behavior and safety
 
 - steepy-formula has five native harnesses: Claude Code, Codex, OpenCode, Pi, and DeepSeek Harness.
-- steepy-formula writes the gitignored `.formula/work/` local work area and a root `CLAUDE.md` into the target repo — graph-first init creates no other `.apex/` files.
+- steepy-formula writes the gitignored `.formula/work/` local work area and a root `CLAUDE.md` into the target repo — graph-first init writes nothing under `.apex/`.
 - steepy-formula writes Claude Code agent and skill artifacts into the target repo during initialization.
 - steepy-formula runs Node.js scripts from the plugin package, and runs the graph engine as a local Docker container bound to localhost.
 - Core workflows do not require network access to third-party services; the runtime dependency set is a single pinned package (`neo4j-driver`, Apache-2.0) kept behind the engine adapter.
@@ -64,7 +64,7 @@ final imported package in a repository-capable environment with Node 24, Git, an
 |---|---|---|
 | Positive | Initialize a small disposable Node repository with a working test command and Docker available. | Interview completes; the initial graph promotion is applied at confirmation; managed root, bootstrap, and per-surface agents are generated; check passes. |
 | Positive | Run check on a coherent initialized project. | Reports coherence (`steepy-formula graph validate` green) without changing project files. |
-| Positive | In a repository carrying `.apex/_INDEX.md`, run `hub-mode`. | Reports `migrate` and names `graph-migrate`. |
+| Positive | In a repository carrying `.apex/_INDEX.md` (or any other `.apex/` entry), run `hub-mode`. | Reports `migrate` and names `graph-migrate`. |
 | Positive | Brainstorm a small covered change and approve the resulting spec. | Publishes a READY local spec and the appropriate next-phase handoff. |
 | Positive | Add a new surface to an initialized project. | Registers the surface through a human-approved graph promotion and writes its native specialist adapters. |
 | Negative | Request an autonomous loop without a complete goal or commit authorization. | Refuses autonomous execution and identifies the missing inputs. |

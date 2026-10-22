@@ -3,16 +3,40 @@
 ## Unreleased
 
 **Breaking:** steepy-formula is graph-only. The canonical Stable Knowledge Graph is the single
-stable-knowledge channel; the `legacy` Markdown hub mode is gone.
+stable-knowledge channel; the `legacy` Markdown hub mode is gone, and `.apex/` is steepy-apex
+migration input only.
 
-- A repository carrying `.apex/_INDEX.md` (a steepy-apex Markdown hub) is now the `migrate`
-  state: `steepy-formula hub-mode` reports `migrate` and names the next step, and the workflow
-  scripts (`autopilot.mjs`, `autopilot-context.mjs`, `loop-engineer.mjs`, `project-scaffold.mjs`,
-  `render-claude-md.mjs`, `inception-state.mjs`, `inception-governance.mjs`,
-  `capture-review-evidence.mjs`) refuse with exit 25 while the workflow skills stop, until
-  `graph-migrate` moves the hub into the graph. The graph
-  primitives (`graph`, `context`, `promotion`, `hub-mode`) never refuse. `hub-mode` declares
-  `graph`, `migrate`, or `none`.
+- formula's local areas move from `.apex/` to `.formula/`: the work area is `.formula/work/`
+  (specs, plans, task and loop state), an inception run lives under `.formula/inception/`, and the
+  init provenance receipts are `.formula/init-provenance.json` and
+  `.formula/init-provenance.pending.json`, kept local. Work artifacts, inception runs and loop
+  ledgers left under `.apex/work/` and `.apex/inception/` are not read: `--validate-terminal`,
+  resume and the discovery inception source take the `.formula/` paths only.
+- Any `.apex/` entry — a steepy-apex Markdown hub (`.apex/_INDEX.md`), an old work area, an
+  inception run or receipts, even a dangling link — is now the `migrate` state, and it wins even
+  over a reachable, initialized engine (v1.0.0 reported `graph` there):
+  `steepy-formula hub-mode` reports `migrate`, its evidence line reads `.apex/: absent`, `present (Markdown hub)` or
+  `present (no Markdown hub)`, and it names `graph-migrate` as the next step. Every workflow
+  entry point refuses with exit 25 and one message naming `graph-migrate` before any stdout line,
+  write, spawn or engine connection — the CLIs `autopilot.mjs`, `autopilot-context.mjs`,
+  `loop-engineer.mjs`, `project-scaffold.mjs`, `render-claude-md.mjs`, `inception-state.mjs`,
+  `inception-governance.mjs`, `capture-review-evidence.mjs`, `capture-inception-evidence.mjs`,
+  `task-results.mjs`, `reviewer-response.mjs` and `structural-promotion.mjs`, plus the library
+  writers `collectReviewEvidence`, `collectInceptionEvidence`, `applyProjectScaffold`,
+  `runConductor` and `runLoopController` — while the workflow skills stop. The graph primitives
+  (`graph`, `context`, `promotion`, `hub-mode`) never refuse. `hub-mode` declares `graph`,
+  `migrate`, or `none`.
+- `graph-migrate` is the one way out of `.apex/`. A new Step 0 declares the hub mode and picks
+  the path from its evidence: a Markdown hub provisions and binds the engine (`graph init`; an
+  existing `.formula/config.json` wins) before the extraction, and leftover local state takes a
+  cleanup path that names what is discarded and removes `.apex/` only after an explicit answer.
+  The closure archives the whole area and never restores its work area, inception run or
+  receipts; `.formula/work/` is created fresh. The extractor skips leftover `work/` and
+  `inception/` files before name-based recognition, so a `glossary.md` or `conventions.md` in
+  there can no longer replace the hub's own.
+- `graph init` writes a create-only `.formula/.gitignore` (`*`, `!.gitignore`, `!config.json`)
+  beside the committed binding, so every other `.formula/` file stays local whatever the root
+  `.gitignore` says, and echoes it on an `ignore:` line.
 - The generated bootstrap and `AGENTS.md` navigation changed: right after the hub-mode
   declaration they stop on `migrate` (run `graph-migrate`) and on `none` (run `init`). A
   bootstrap or `AGENTS.md` rendered by v1.0.0 is an earlier rendering, so scaffold repair
@@ -27,9 +51,15 @@ stable-knowledge channel; the `legacy` Markdown hub mode is gone.
   harness; `scripts/new-surface.mjs`; the legacy-only templates `templates/_INDEX.md`,
   `templates/routing-row.md`, `templates/surface-standard.md`, and
   `templates/surface-standard-core.md`; the legacy channel of `render-claude-md.mjs` (`--mode`
-  accepts only `graph`); the `--routing-index` and `--standard` arguments of
-  `loop-engineer.mjs` (`--graph-target` is the one routing input); the live scaffold canary's
-  `--hub-mode` flag; and the `--no-gate` option of review evidence capture.
+  accepts only `graph` and defaults to it, and the `projectModelFromArgs` export is gone); the
+  `--routing-index` and `--standard` arguments of `loop-engineer.mjs` (`--graph-target` is the one
+  routing input); the live scaffold canary's `--hub-mode` flag; the `--no-gate` option of review
+  evidence capture; the `documents` subcommand and the `writeGovernanceDocuments` export of
+  `inception-governance.mjs` (its input's `documents` must be empty: init certifies no Markdown
+  document); and, in `project-scaffold.mjs`, the `hubMode: legacy` model value, the
+  `renderLegacyClaudeMd`, `renderLegacyClaudeBootstrap` and `renderLegacyClaudeSpecialist`
+  exports, and the silent upgrade of untouched pre-portable renderings, which now classify as
+  conflicts.
 
 ## v1.0.0 (2026-10-21)
 

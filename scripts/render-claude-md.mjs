@@ -3,7 +3,7 @@
 // graph navigation block between `<!-- steepy:start -->` / `<!-- steepy:end -->` markers: init's
 // fresh render and graph-migrate's `--upsert --mode graph` cutover (the upsert replaces the
 // managed block in place and preserves user content outside the markers). `--mode` accepts only
-// `graph`. While the repository still carries a steepy-apex Markdown hub (the `migrate` state) the
+// `graph`. While the repository still carries a steepy-apex `.apex/` area (the `migrate` state) the
 // CLI refuses (exit 25) before any write.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';

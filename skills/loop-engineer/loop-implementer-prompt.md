@@ -16,8 +16,8 @@ Subagent (<surface>-agent):
 
     Goal contract: [GOAL_FILE]
     Owning surface: [SURFACE]
-    Stable routing table: [ROUTING_INDEX]
-    Stable owning standard inventory (ordered):
+    Stable surface context: [ROUTING_INDEX]
+    Stable surface context inventory (ordered):
     [STANDARD_INPUTS]
     Last verifier failure tail: [LAST_FAILURE]
     Prior event-stream digest: [LEDGER_DIGEST]
@@ -30,8 +30,8 @@ Subagent (<surface>-agent):
     goal) — its owning Surface and Components with their paths, its `must`/`should` Rules and
     Terms, and the surface test command carried by its Check's `ext_v1_command`.
 
-    These are the exact role-local capabilities. Read the exact goal first and the stable owning
-    standard inventory as routing context, in exactly the supplied order. The failure tail and digest are inline facts, not authority to
+    These are the exact role-local capabilities. Read the exact goal first and the stable surface
+    context inventory as routing context, in exactly the supplied order. The failure tail and digest are inline facts, not authority to
     locate their source artifacts. Write only the exact report path. Do not explore or enumerate
     `.formula/work/**`; do not locate or read a ledger, event stream, attempt sibling, diff, review,
     spec, plan, or another goal. Ordinary repository source may be read and edited only as needed

@@ -209,8 +209,8 @@ node <engine-root>/scripts/render-claude-md.mjs \
   command the Step 3 interview confirmed — and one `--surface` flag per confirmed surface.
   Keep the equals form shown (`--dev="- ..."`, `--surface="- ..."`, `--description="..."`):
   these values can lead with a dash — the `--dev`/`--surface` list bullets always do — and the
-  renderer's argument parser rejects a space-separated dash-leading value as ambiguous
-  (exit 1, nothing rendered).
+  equals form is the one shape the renderer reads the same way for every flag (a space-separated
+  dash-leading `--description` value is rejected as ambiguous: exit 1, nothing rendered).
   Omit `--description` entirely if the user gave none — do not invent a description. The
   template emits the `## Dev commands` and `## Surfaces` sections unconditionally, so
   dropping these flags renders them empty — the interview data must flow through.

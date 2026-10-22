@@ -66,8 +66,8 @@ const EVENT_FIELDS = Object.freeze({
   RUN_HALTED: Object.freeze(['attempt', 'reason']),
 });
 const EVENT_OPTIONAL_FIELDS = Object.freeze({
-  // Formula adaptation: a graph-hub Gear-4 run records its hub-mode binding; a legacy run omits
-  // both fields, so its RUN_STARTED bytes stay identical to apex.
+  // Formula adaptation: every new Gear-4 run records its hub-mode binding; a ledger written
+  // before formula went graph-only omits both fields and stays readable for terminal validation.
   RUN_STARTED: Object.freeze(['hubMode', 'contextTarget']),
   ATTEMPT_RESERVED: Object.freeze(['expectedParent', 'snapshotDigest']),
   CHILD_COMPLETED: Object.freeze([

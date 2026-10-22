@@ -36,7 +36,7 @@ npm test
 ## What a PR is checked against
 
 1. **Tests pass** — `npm test` is green. Bug fixes add a regression test; features come with tests (this repo is built test-first).
-2. **Knowledge stays coherent** — the canonical graph passes `steepy-formula graph validate`.
+2. **Knowledge stays coherent** — the canonical graph passes `steepy-formula graph validate`. This repo's graph lives only in the maintainers' local engine and checkpoint, so maintainers run this gate; contributors cannot.
 3. **Version gate** — every PR either bumps the plugin version (`node scripts/bump-version.mjs <patch|minor|major>`) and adds a matching `## vX.Y.Z` section to `CHANGELOG.md`, or carries the `no-release` label (docs-only and CI-only changes). CI enforces this.
 
 ## Navigating the code

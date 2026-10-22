@@ -24,7 +24,7 @@ and report any violations.
    |---------------|----------------|
    | `graph` | `steepy-formula graph validate` (step 2) |
    | `migrate` | Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow. |
-   | `none` | No hub — nothing to validate. Tell the user to run the `init` skill (invoke it the way your harness invokes skills) to create one, instead of reporting a coherent hub. |
+   | `none` | No hub — nothing to validate. Stop and tell the user to run the `init` skill (invoke it the way your harness invokes skills) to create one, instead of reporting a coherent hub. |
 
 2. **Validate the graph**
 

@@ -3642,12 +3642,12 @@ test('graph hub mode resolves the exact surface target into the loop work dir an
 
     for (const call of childPrompts(deps.calls)) {
       assert.ok(call, 'graph child prompt exists');
-      assert.ok(call.prompt.includes(`Stable routing table: ${GRAPH_CONTEXT}\n`), 'routing slot binds context.md');
+      assert.ok(call.prompt.includes(`Stable surface context: ${GRAPH_CONTEXT}\n`), 'routing slot binds context.md');
       assert.ok(
-        call.prompt.includes(`Stable owning standard inventory (ordered):\n    - ${GRAPH_CONTEXT}\n`),
+        call.prompt.includes(`Stable surface context inventory (ordered):\n    - ${GRAPH_CONTEXT}\n`),
         'standard inventory binds the same context.md',
       );
-      assert.doesNotMatch(call.prompt, /Stable routing table: \.apex\/_INDEX\.md|\.apex\/standards\//u);
+      assert.doesNotMatch(call.prompt, /Stable routing table|owning standard inventory|\.apex\/_INDEX\.md|\.apex\/standards\//u);
     }
     for (const call of [
       deps.calls.find(({ kind }) => kind === 'runner'),

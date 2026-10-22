@@ -150,8 +150,8 @@ use the shipped `headless` profile: an arbitrary new profile name may have no fr
 A successful graph-first `init` provisions the local engine, lands the initial graph through one
 promotion you confirm, and writes the local `.formula/work/` area, project instructions, the
 specialist adapters, the root `CLAUDE.md`, and the committed `.formula/config.json` binding — it
-never creates a Markdown hub (`.apex/_INDEX.md`). `check` should then report a coherent graph
-(`steepy-formula graph validate`). A repository carrying a steepy-apex `.apex/` hub is routed
+never writes under `.apex/`. `check` should then report a coherent graph
+(`steepy-formula graph validate`). A repository carrying a steepy-apex `.apex/` area is routed
 to `graph-migrate` instead. See [getting started](getting-started.md) for the engine lifecycle,
 [workflow](workflow.md) for subsequent tasks, and [architecture](architecture.md) for command
 effects and adapter boundaries. Pi and DeepSeek have no Steepy deterministic runner for
@@ -161,19 +161,35 @@ Gear-3 autopilot or Gear-4 loops.
 
 After you update the plugin, run `check` in each repository it governs.
 
-### Specialist adapters
+### Local areas move from `.apex/` to `.formula/`
 
-This release ports the steepy-apex v1.2.0 specialist adapter templates: each Claude and OpenCode
-description names its surface and path. The generated provenance stays `v1`, and no earlier rendering
-is recognized, so an adapter written by an earlier version — even an untouched one — is a
-`<agent> <harness> adapter at <path> is customized` conflict that only an explicit `replace`
-resolves. Copy out any hand edits first: `replace` rewrites the adapter to the current rendering.
+formula keeps its local areas under `.formula/`: the work area `.formula/work/` (specs, plans,
+task and loop state), an inception run under `.formula/inception/`, and the init provenance
+receipts `.formula/init-provenance.json`. `.apex/` is steepy-apex migration input only, so any
+`.apex/` entry — even one that holds only a v1.0.0 work area — puts the repository in the
+`migrate` state: `steepy-formula hub-mode` reports `migrate` (it now wins even over an initialized
+graph, which v1.0.0 reported as `graph`), and every workflow script refuses with exit 25.
 
-`check` (`steepy-formula graph validate`) does not inspect adapters, and an `init` re-run only
-reports. Preview the portable scaffold planner with your confirmed project model
+Run `/steepy-formula:graph-migrate`. With a Markdown hub it extracts and cuts over; with only
+leftover local state it names what is discarded and removes `.apex/` after your explicit answer.
+Before that, copy out anything you want to keep: a spec or plan moved into `.formula/work/specs/`
+or `.formula/work/plans/` stays usable, while in-flight run state, an unfinished inception run, and
+loop ledgers under `.apex/work/` do not carry over. Re-run `steepy-formula graph init` once to get
+the create-only `.formula/.gitignore` that keeps every other `.formula/` file local.
+
+### Project instructions and bootstrap
+
+The generated bootstrap and the `AGENTS.md` navigation now stop on `migrate` and on `none` right
+after the hub-mode declaration. A bootstrap or `AGENTS.md` rendered by v1.0.0 is an earlier
+rendering, so the planner reports `v1:project-bootstrap:customized` and
+`v1:project-instructions:customized` — each is customized until an explicit `replace` resolves it.
+Copy out any hand edits first: `replace` rewrites the file to the current rendering.
+
+`check` (`steepy-formula graph validate`) does not inspect generated files, and an `init` re-run
+only reports. Preview the portable scaffold planner with your confirmed project model
 (`node <engine-root>/scripts/project-scaffold.mjs --hub . --model <model.json>`), set `replace` for
-each listed adapter conflict in the model's `resolutions`, then apply the zero-conflict plan with
-`--apply`. A steepy-apex hub is migrated with `/steepy-formula:graph-migrate`.
+each listed conflict in the model's `resolutions`, then apply the zero-conflict plan with
+`--apply`.
 
 ### In-flight runs and stored formats
 
@@ -181,8 +197,8 @@ each listed adapter conflict in the model's `resolutions`, then apply the zero-c
   it halts on resume. Finish it manually or start a fresh run.
 - **A graph stored under an unsupported schema version** makes every read command refuse with
   exit 1; `steepy-formula graph migrate-schema` is the explicit recovery path.
-- **A steepy-apex `.apex/` Markdown hub** is migrated once with `/steepy-formula:graph-migrate`;
-  `init` never repairs or rewrites it.
+- **A steepy-apex `.apex/` area** is handled once with `/steepy-formula:graph-migrate`, which
+  removes it; `init` never repairs or rewrites it.
 
 The [changelog](../CHANGELOG.md) lists every change by version.
 

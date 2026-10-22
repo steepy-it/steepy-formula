@@ -83,10 +83,11 @@ more reason every port stays bound to `127.0.0.1`.
      `promotion apply` (interactive confirm) → `graph validate` + `context resolve` green.
 3. *(optional, existing codebase)* **`/steepy-formula:discovery`** — a seeded interview fills
    the graph from your code through a typed promotion scenario — every proposal confirmed by you.
-4. Arriving from steepy-apex — your repo already has an `.apex/` Markdown hub?
-   **`/steepy-formula:graph-migrate`** walks it into the graph instead (extraction → preview →
-   approval → transactional apply → validate → cutover → archive); init itself does not
-   migrate a steepy-apex hub.
+4. Arriving from steepy-apex — your repo still has an `.apex/` area?
+   **`/steepy-formula:graph-migrate`** walks a Markdown hub into the graph instead (extraction →
+   preview → approval → transactional apply → validate → cutover → archive), or discards leftover
+   local state after your confirmation, and removes `.apex/`; init itself does not migrate a
+   steepy-apex hub.
 
 From here on, give your agent any task: the generated bootstrap skill declares the hub mode
 (and stops in `migrate` or `none`, pointing at `graph-migrate` or `init`), resolves the task's
@@ -200,3 +201,4 @@ routing, same revision head — and their own promotions continue the chain from
 | `promotion apply` exit 20 | scenario stale (head moved) | recreate the scenario against the new head |
 | `promotion apply` exit 21 | no confirmation given | answer the interactive prompt (`y`/`yes`) or pass `--yes` deliberately |
 | `graph status` shows `staleness: stale` | repo topology changed since the last refresh | `steepy-formula graph refresh --project <id> --root .` |
+| a workflow script exits 25; `hub-mode` reports `migrate` | the repo still carries a steepy-apex `.apex/` area (a Markdown hub or leftover local state) | run `/steepy-formula:graph-migrate`, which migrates or discards it and removes `.apex/` |

@@ -273,7 +273,7 @@ function managedDelta(before, after, path, model) {
     return { managedBefore: before.slice(start, limit), managedAfter: after.slice(prefix.length, after.length - suffix.length) };
   }
   // First init may append a block to an unmarked root, or adopt an unmarked CLAUDE.md
-  // import exactly as the public planner does. A destructive repair of malformed/legacy
+  // import exactly as the public planner does. A destructive repair of malformed/customized
   // roots is still an ordinary planner operation, but cannot be certified as an
   // init-only addition to a completed application.
   if (after.startsWith(before)) return { managedBefore: '', managedAfter: after.slice(before.length) };

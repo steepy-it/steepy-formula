@@ -1495,7 +1495,8 @@ test('loop-engineer: Step 1 mode none routes to the init skill', () => {
   const text = readFileSync(join(skillsDir, 'loop-engineer', 'SKILL.md'), 'utf8');
   const step1 = sectionBetween(text, '### Step 1', '### Step 2');
   const noneBranch = sectionBetween(step1, '- **`none`**', 'If the declared mode');
-  assert.match(noneBranch, /no hub exists on either channel/);
+  assert.match(noneBranch, /no graph hub exists/);
+  assert.doesNotMatch(noneBranch, /either channel/, 'there is one channel, the graph');
   assert.match(noneBranch, /run the `init` skill[\s\S]{0,80}first,?\s+and stop/i);
 });
 

@@ -26,4 +26,4 @@ migration, promotion), and native installation/canaries. Reports that matter mos
 - crafted repo content (hub docs, `package.json`) that makes a plugin script execute unintended commands
 - a plugin script or workflow refusal leaving a repository in a state that cannot be recovered
 
-Anything that needs no privacy (crashes, wrong output, lint false positives) is a regular bug — use the bug report template instead.
+Anything that needs no privacy (crashes, wrong output, false graph-validate findings) is a regular bug — use the bug report template instead.

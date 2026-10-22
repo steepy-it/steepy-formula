@@ -165,7 +165,7 @@ that pending publication. It is not an execution retry.
 ### Step 0 — Classify the starting state
 
 First declare the hub mode: run `steepy-formula hub-mode` and quote its `mode:` line — `graph`,
-`migrate`, or `none`, each printed with one `evidence:` line. If it reports `migrate`, Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow. The `inception-state.mjs` helper also refuses
+`migrate`, or `none`, each printed with one `evidence:` line. On `migrate`: Stop and tell the user to run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other workflow. The `inception-state.mjs` helper also refuses
 every command in the migrate state (exit 25), so nothing is classified or started there.
 
 Then run `classify` without `--maturity` first:

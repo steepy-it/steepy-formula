@@ -18,8 +18,8 @@ Subagent (reviewer):
     Goal contract: [GOAL_FILE]
     Controller-bound whole-branch diff: [DIFF_FILE]
     Controller ledger projection: [LEDGER_FILE]
-    Stable routing table: [ROUTING_INDEX]
-    Stable owning standard inventory (ordered):
+    Stable surface context: [ROUTING_INDEX]
+    Stable surface context inventory (ordered):
     [STANDARD_INPUTS]
     Report path: <controller-supplied report path>
 

@@ -334,7 +334,7 @@ test('README and linked guides document install paths and release safety notes',
 
   for (const required of [
     'writes the gitignored `.formula/work/` local work area',
-    'graph-first init creates no other `.apex/` files',
+    'graph-first init writes nothing under `.apex/`',
     'writes Claude Code agent and skill artifacts',
     'runs Node.js scripts from the plugin package',
     'Core workflows do not require network access to third-party services; the runtime dependency set is a single pinned package (`neo4j-driver`, Apache-2.0) kept behind the engine adapter.',
@@ -498,7 +498,7 @@ test('architecture release-evidence inventory matches the validator closed exclu
   assert.match(row[1], /no documentation directory or path family is excluded/i);
 });
 
-test('RELEASE.md smoke test uses local gitignored apex work artifacts', () => {
+test('RELEASE.md smoke test uses the local gitignored .formula work artifacts', () => {
   const release = readFileSync(join(root, 'RELEASE.md'), 'utf8');
 
   for (const required of [
@@ -793,7 +793,7 @@ test('COMMUNITY_SUBMISSION.md contains marketplace review copy and safety disclo
     'five native harnesses',
     'Command-family effects matrix',
     'writes the gitignored `.formula/work/` local work area',
-    'graph-first init creates no other `.apex/` files',
+    'graph-first init writes nothing under `.apex/`',
     'writes Claude Code agent and skill artifacts',
     'runs Node.js scripts from the plugin package',
     'Core workflows do not require network access to third-party services; the runtime dependency set is a single pinned package (`neo4j-driver`, Apache-2.0) kept behind the engine adapter.',
@@ -895,6 +895,10 @@ test('manifest descriptions are graph-only and identical across every carrier', 
   for (const [label, value] of Object.entries(marketplaceForms)) {
     assert.equal(value, marketplaceForm, `${label} must carry the marketplace description`);
     assert.doesNotMatch(value, /legacy|Markdown hub|mode-aware/i, label);
+  }
+  // The Codex interface capability chips are user-facing copy too.
+  for (const capability of readJson('.codex-plugin/plugin.json').interface.capabilities) {
+    assert.doesNotMatch(capability, /legacy|Markdown hub|mode-aware/i, `.codex-plugin interface capability '${capability}'`);
   }
 });
 
@@ -1004,4 +1008,38 @@ test('CHANGELOG.md records the graph-only break under Unreleased, above v1.0.0, 
   assert.match(entry, /OpenCode[^\n]*`\.formula\/config\.json`/);
   assert.match(entry, /generated bootstrap and `AGENTS\.md` navigation[\s\S]*`migrate`[\s\S]*`graph-migrate`[\s\S]*`none`[\s\S]*`init`[\s\S]*`customized`/);
   assert.match(entry, /allowlist sentence/);
+  // The local areas leave .apex/, any .apex/ is the migrate state, and every entry point refuses.
+  assert.match(entry, /`\.formula\/work\/`[\s\S]*`\.formula\/inception\/`[\s\S]*`\.formula\/init-provenance\.json`/);
+  assert.match(entry, /Any `\.apex\/` entry[\s\S]*wins even\s+over a reachable, initialized engine/);
+  for (const entryPoint of ['`capture-inception-evidence.mjs`', '`task-results.mjs`', '`reviewer-response.mjs`', '`structural-promotion.mjs`', '`applyProjectScaffold`', '`runLoopController`']) {
+    assert.ok(entry.includes(entryPoint), `the Unreleased entry must list ${entryPoint} among the refusing entry points`);
+  }
+  assert.match(entry, /`graph init` writes a create-only `\.formula\/\.gitignore`/);
+  for (const removed of ['`writeGovernanceDocuments`', '`hubMode: legacy`', '`renderLegacyClaudeMd`', '`projectModelFromArgs`']) {
+    assert.ok(entry.includes(removed), `the Unreleased entry must name the removal of ${removed}`);
+  }
+});
+
+test('formula never names a local area under .apex/ outside migration input and upgrade history', () => {
+  // The work area, inception runs and init provenance receipts live under `.formula/`; `.apex/` is
+  // steepy-apex migration input only. Only the migration engine, the graph-migrate skill, and the
+  // upgrade/history docs may still name the old local paths.
+  const allowed = new Set([
+    'scripts/formula/core/migrate-markdown.mjs',
+    'skills/graph-migrate/SKILL.md',
+    'docs/installation.md',
+    'CHANGELOG.md',
+    'RELEASE.md',
+  ]);
+  const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });
+  assert.equal(listed.status, 0, listed.stderr);
+  const oldArea = /\.apex\/(?:work|inception|init-provenance)|'\.apex', '(?:work|inception)'/;
+  const offenders = [];
+  for (const file of listed.stdout.split('\0').filter(Boolean)) {
+    if (file.startsWith('tests/') || allowed.has(file) || /\.(?:png|jpg|ico|woff2?)$/.test(file)) continue;
+    let text;
+    try { text = readFileSync(join(root, file), 'utf8'); } catch { continue; }
+    if (oldArea.test(text)) offenders.push(file);
+  }
+  assert.deepEqual(offenders, [], 'these files still name a formula local area under .apex/');
 });
