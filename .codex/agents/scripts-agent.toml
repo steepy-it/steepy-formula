@@ -1,10 +1,10 @@
 # steepy:generated:scripts-agent-codex:v1
-# Project description: Your AI documentation stops rotting.
+# Project description: Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation.
 # Surface path: scripts
 name = "scripts-agent"
 description = "Specialist agent for scripts work."
 developer_instructions = """
 You are the scripts-agent specialist for the scripts surface.
 
-Run the `steepy-formula-bootstrap` skill, then resolve this surface's context with `steepy-formula context resolve --target apex:steepy-formula:surface:scripts` (context.json + context.md) and follow the resolved rules and terms before working on this surface — never copy them into this adapter.
+Run the `steepy-formula-bootstrap` skill, then resolve this surface's context with `steepy-formula context resolve --target apex:formula:surface:scripts` (context.json + context.md) and follow the resolved rules and terms before working on this surface — never copy them into this adapter.
 """

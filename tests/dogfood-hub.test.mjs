@@ -577,7 +577,7 @@ test('the portable scaffold self-apply: AGENTS.md spine, CLAUDE.md import channe
   assert.match(agents, /<!-- steepy:managed:project-instructions:v1:start -->/);
   assert.match(agents, /<!-- steepy:managed:project-instructions:v1:end -->/);
   assert.match(agents, /^# steepy-formula$/m, 'the spine title carries the fork identity');
-  assert.match(agents, /^Your AI documentation stops rotting\.$/m);
+  assert.match(agents, /^Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation\.$/m);
   assert.match(agents, /## Development commands/);
   assert.match(agents, /- `npm test`/);
   assert.match(agents, /## Confirmed surfaces/);
@@ -610,20 +610,20 @@ test('the portable scaffold self-apply: AGENTS.md spine, CLAUDE.md import channe
     assert.match(openCode, /^mode: subagent$/m, `${s}: opencode adapter uses the native thin syntax`);
     assert.match(openCode, new RegExp(`^# ${s}-agent$`, 'm'));
     assert.match(openCode, new RegExp(`steepy:generated:${s}-agent-opencode:v1`));
-    assert.match(openCode, /steepy-formula context resolve --target apex:steepy-formula:surface:/,
+    assert.match(openCode, new RegExp(`steepy-formula context resolve --target apex:formula:surface:${s}\``),
       `${s}: the opencode adapter points at the resolver`);
     const codex = readFileSync(join(repoRoot, '.codex', 'agents', `${s}-agent.toml`), 'utf8');
     assert.match(codex, new RegExp(`^name = "${s}-agent"$`, 'm'));
     assert.match(codex, /developer_instructions = """/);
     assert.match(codex, new RegExp(`steepy:generated:${s}-agent-codex:v1`));
-    assert.match(codex, /steepy-formula context resolve --target apex:steepy-formula:surface:/,
+    assert.match(codex, new RegExp(`steepy-formula context resolve --target apex:formula:surface:${s}\``),
       `${s}: the codex adapter points at the resolver`);
     const claudeAgent = readFileSync(join(repoRoot, '.claude', 'agents', `${s}-agent.md`), 'utf8');
     assert.match(claudeAgent, new RegExp(`^name: ${s}-agent$`, 'm'));
     assert.match(claudeAgent, new RegExp(`steepy:generated:${s}-agent-claude:v1`));
     assert.match(claudeAgent, new RegExp(`specialist agent for the \`${s}\` surface at \`${s}\`\\.`),
       `${s}: the claude adapter declares its surface`);
-    assert.match(claudeAgent, /steepy-formula context resolve --target apex:steepy-formula:surface:/,
+    assert.match(claudeAgent, new RegExp(`steepy-formula context resolve --target apex:formula:surface:${s}\``),
       `${s}: the claude adapter points at the resolver`);
   }
 });
