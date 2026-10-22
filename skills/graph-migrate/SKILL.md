@@ -1,17 +1,19 @@
 ---
 name: graph-migrate
-description: Migrate a legacy Markdown Hub into the Stable Knowledge Graph — drive the G1 extraction, review the proposed graph in the native Explorer and the typed promotion diff, obtain explicit full or curated approval, apply the migration as ONE transaction, validate the graph and resolver behavior, then archive the legacy Hub at cutover and remove the archive only after a validated signed export exists. Never re-implements core logic.
+description: Move a repository out of the steepy-apex `.apex/` area — extract its Markdown Hub into the Stable Knowledge Graph (drive the G1 extraction, review the typed promotion diff, obtain explicit full or curated approval, apply ONE transaction, validate, archive at cutover and remove the archive only after a validated signed export exists), or, when the area holds only leftover local state, discard it after explicit confirmation. Either way `.apex/` is gone at the end. Never re-implements core logic.
 user-invocable: true
 ---
 
 # graph-migrate
 
-Migrate a legacy Markdown Hub into the Stable Knowledge Graph for this project: drive the G1
+Move this repository out of the steepy-apex `.apex/` area. formula keeps nothing there — its own
+local areas live under `.formula/` — so any `.apex/` puts the repository in the `migrate` state
+and every workflow refuses until it is gone. When the area carries a Markdown Hub: drive the G1
 extraction, review the proposed graph in the native Explorer and the typed promotion diff, obtain
 the human's explicit approval (full or curated), land the approved nodes and edges in ONE
 transactional promotion, validate the resulting graph and resolver behavior, then close out the
-legacy Hub with the archive-then-remove closure. The procedure below maps 1:1 to spec §13 steps
-6–10.
+area with the archive-then-remove closure. Step 0 declares the mode and picks the path; Steps
+6–10 map 1:1 to spec §13 steps 6–10.
 
 > **Engine root:** this skill's base directory is `<engine-root>/skills/graph-migrate/`; engine
 > scripts live two levels up, at `<engine-root>/scripts/`. Resolve them relative to the base
@@ -23,10 +25,62 @@ bin) and namespace every invocation `steepy-formula`. The G1 engine
 (`scripts/formula/core/migrate-markdown.mjs`) has no CLI wrapper — the agent side drives its
 `migrateMarkdown` port directly (the seam is recorded in Step 6). This procedure is prose + gates,
 it never re-implements core logic. All paths resolve relative to the repo root the human selected
-(default: the current working directory). Read the routing table in `.apex/_INDEX.md` when the
-procedure says so.
+(default: the current working directory).
 
 ## Procedure
+
+### Step 0 — Declare the hub mode, choose the path, provision the engine
+
+Declare the hub mode first — `graph`, `migrate`, or `none`, printed with one `evidence:` line:
+
+```bash
+steepy-formula hub-mode
+```
+
+Decide from the first matching row, top to bottom. The evidence line's `.apex/:` field is the only
+input for the path choice — this prose never probes the area's contents itself:
+
+| Declaration | Meaning | Action |
+|---|---|---|
+| `graph` | No `.apex/` area is left | Nothing to migrate: report it and **STOP**. |
+| `none` | No `.apex/` area and no initialized graph | Stop and tell the user to run the `init` skill (invoke it the way your harness invokes skills). **STOP**. |
+| `migrate` with `.apex/: present (no Markdown hub)` | Only leftover local state: an old work area, an inception run, provenance receipts | Take the cleanup path below; Steps 6–10 do not run. |
+| `migrate` with `.apex/: present (Markdown hub)` | A steepy-apex Markdown Hub to extract | Provision and bind the engine below, then run Steps 6–10. |
+
+**Provision and bind the engine (Markdown Hub path).** The extraction writes into the project's
+graph, so the engine must answer and the repository must carry its binding before Step 6:
+
+```bash
+steepy-formula graph init [--project <project-id>]
+```
+
+- The project id: an existing `.formula/config.json` binding wins (the `hub-mode` echo reads
+  `project: <id> (config)`); otherwise ask the user for it, one question, and pass it as
+  `--project`. Take the bound id from the `graph init` echo and use it as `<project-id>` in every
+  later step.
+- Credentials resolve ONLY through the F1 secret-provider chain; never pass a credential on the
+  command line.
+- `graph init` writes the committed `.formula/config.json` binding. A mismatched explicit
+  `--project` against an existing binding refuses (exit 3) unless the human decides `--force`.
+- Exit 3, an unreachable engine, or any credential failure: report the diagnostic and **STOP** —
+  nothing is extracted, archived, or removed.
+
+**The cleanup path (no Markdown Hub).** The area holds only formula's old local state, which
+formula now keeps under `.formula/`. Nothing is extracted and the graph is not touched. Before
+asking, name exactly what is discarded:
+
+- the in-flight specs, plans, task and loop state under `.apex/work/`;
+- an inception run under `.apex/inception/` — and with it the one-time inception-source import
+  into discovery;
+- the init provenance receipts `.apex/init-provenance.json` and `.apex/init-provenance.pending.json`.
+
+Tracked files under `.apex/` will show as deletions in `git status`. Ask one explicit question —
+discard now, or stop so the user can copy anything they want to keep first; silence never
+proceeds. On discard: delete the `.apex` entry entirely (a directory, a file, or a link), create
+the `.formula/work/` area per init's Step 4 shape when it is absent, and re-run
+`steepy-formula hub-mode`. `graph` completes the cleanup; `none` means the project has no
+initialized graph yet — tell the user to run the `init` skill. On stop: report that every workflow
+keeps refusing until `.apex/` is gone.
 
 ### Step 6 — Run the G1 extraction and inspect the proposed graph
 
@@ -36,7 +90,9 @@ Drive the G1 engine agent-side through its `migrateMarkdown` port — the agent-
 migrateMarkdown(port, { hubDir, projectId, rootDir, scenarioId })
 ```
 
-`hubDir` is the legacy hub directory (default: the repo root, whose `.apex/` IS the legacy hub),
+`hubDir` is the legacy hub directory (default: the repo root, whose `.apex/` IS the legacy hub;
+the engine roots the hub's doc graph at `.apex/_INDEX.md` and skips the area's leftover `work/`
+and `inception/` local state),
 `projectId` is the database project the graph lives in, and `scenarioId` defaults to
 `migration-<projectId>`. The call writes the D4 Promotion Scenario and returns the scenario id,
 the full typed operation list, and the extraction candidates with `file:line` provenance. Record
@@ -118,9 +174,11 @@ after the recovery checkpoint exists and the repo's graph-mode disk artifacts ar
 **archive → verify → export → validate the export → regenerate the graph-mode disk artifacts →
 THEN remove the archive.**
 
-1. **Archive** — at cutover the legacy Hub leaves normal reads: move the legacy hub (the repo's
-   `.apex/`) to `.apex-legacy-archive/` at the repo root (the archive-location convention). Normal
-   reads now resolve to the database only.
+1. **Archive** — at cutover the legacy Hub leaves normal reads: move the whole `.apex/` area (the
+   hub plus any leftover work area, inception run, and provenance receipts) to
+   `.apex-legacy-archive/` at the repo root (the archive-location convention). Before the move,
+   tell the user that the area's local state is discarded with the archive and never restored, so
+   they can copy anything they want to keep. Normal reads now resolve to the database only.
 2. **Verify** — re-run Step 9's gates (`graph validate` + `context resolve` on representative
    paths) with the hub archived, proving the database is the single source of normal reads.
 3. **Export** — write the recovery checkpoint, the signed export:
@@ -138,14 +196,11 @@ steepy-formula graph restore --project <project-id> --port memory --from <file>
 The artifact is imported into a fresh in-memory port and re-validated (`graph validate` + chain
 replay); exit 0 only when clean. A validated signed export now exists: the recovery checkpoint.
 5. **Regenerate the graph-mode disk artifacts** — replace the steepy-apex disk artifacts with the
-   graph-mode ones, rendered from the same graph-mode templates init's Step 4 uses (never the
-   legacy templates — the regenerated set must be genuinely graph-mode, with no
-   `.apex/standards/` pointers left behind):
+   graph-mode ones, rendered from the graph-mode templates (never the legacy templates — the
+   regenerated set must be genuinely graph-mode, with no `.apex/standards/` pointers left behind).
+   The archived `work/`, `inception/`, and provenance receipts are formula's old local state and
+   are never restored:
 
-   - **Stage the work area** — `.apex/work/` is in-flight local work, not hub content: stage it
-     aside (e.g. `.apex-work-staging/`) before the archive move above — if it already moved into
-     the archive with the hub, move `.apex-legacy-archive/work/` back out to the staging path —
-     and restore it in the last bullet below.
    - **Bootstrap skill** — write `.claude/skills/<projectName>-bootstrap/SKILL.md` from
      `<engine-root>/templates/bootstrap-skill-graph.md` with every `{{projectName}}` replaced by
      the actual project name, replacing the existing file (the steepy-apex `<project>-bootstrap`
@@ -163,14 +218,15 @@ replay); exit 0 only when clean. A validated signed export now exists: the recov
 
    - **Remove the superseded bootstrap skill** — delete the old
      `.claude/skills/steepy-apex-bootstrap/` directory if present.
-   - **Restore the work area** — re-create `.formula/work/specs/` and `.formula/work/plans/` plus
-     `.formula/work/.gitignore` (exactly `*` then `!.gitignore`) from the staged copy, or fresh per
-     init's Step 4 shape when nothing was staged.
+   - **Create the work area** — create `.formula/work/specs/` and `.formula/work/plans/` plus
+     `.formula/work/.gitignore` (exactly `*` then `!.gitignore`) fresh, per init's Step 4 shape.
 
    Any failure in this sub-step keeps the archive in place (the same fallback rule as the rest of
    the closure) and the human is told why.
 6. **Then remove the archive** — delete `.apex-legacy-archive/` ONLY now. If any gate in this
-   closure fails, the archive stays in place (it is the fallback) and the human is told why.
+   closure fails, the archive stays in place (it is the fallback) and the human is told why. With
+   the archive gone no `.apex/` is left: re-run `steepy-formula hub-mode`, which must declare
+   `graph`.
 
 When the closure completes, report the head revision, the applied operations count, the validated
 export path, the regenerated disk artifacts, and that the archive was removed.

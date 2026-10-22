@@ -463,13 +463,14 @@ async function scanHub(fs, hubDir, rootDir) {
   for (const file of apexFiles) {
     const rel = toPosix(base, file);
     if (rel === '.apex/_INDEX.md') continue;
+    // Leftover local areas (an old work area, an inception run) are never hub content, whatever
+    // their file names: they are excluded before any name-based recognition.
+    if (rel.startsWith('.apex/work/') || rel.startsWith('.apex/inception/')) continue;
     const name = basename(file);
     if (name === 'conventions.md') {
       docs.conventions = file;
     } else if (name === 'glossary.md') {
       docs.glossary = file;
-    } else if (rel.startsWith('.apex/work/')) {
-      continue; // workflow artifacts are not legacy-hub content
     } else if (rel.startsWith('.apex/standards/')) {
       docs.standards.push(file);
     } else if (rel.startsWith('.apex/decisions/')) {

@@ -8,7 +8,7 @@
 // invented).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { cp, mkdtemp, readdir, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -507,6 +507,32 @@ test('an unrouted agent Rule is emitted unscoped, never silently lost and never 
 
 // ----------------------------------------------------------------------------------------------
 // structured errors and programmer-error hygiene (binding 5)
+test('leftover local areas inside .apex/ are never hub content, whatever their file names', async () => {
+  // A v1 repository can carry an old work area or inception run beside its hub. Their Markdown is
+  // local state: a `glossary.md` or `conventions.md` in there must not replace the hub's own.
+  const hub = await mkdtemp(join(tmpdir(), 'apex-migrate-leftovers-'));
+  try {
+    await cp(GOOD_HUB, hub, { recursive: true });
+    for (const [rel, text] of [
+      ['.apex/work/specs/glossary.md', '# Glossary\n\n- **Work term** — a spec draft term.\n'],
+      ['.apex/inception/project/conventions.md', '# Conventions\n\n- Inception drafts must never become hub rules.\n'],
+      ['.apex/inception/project/constraints.md', '# Constraints\n\n- A project document.\n'],
+    ]) {
+      await mkdir(dirname(join(hub, rel)), { recursive: true });
+      await writeFile(join(hub, rel), text);
+    }
+    const result = await migrateOnce(hub, 'good-hub', 'migrate-leftovers');
+    assert.equal(result.meta.recognized.terms, 2, 'only the hub glossary\'s terms');
+    assert.equal(result.meta.recognized.rules, 3, 'only the hub\'s own rules');
+    assert.deepEqual(result.meta.skipped, [], 'local areas are excluded, not reported as skipped hub docs');
+    for (const candidate of result.candidates) {
+      assert.doesNotMatch(candidate.file ?? '', /^\.apex\/(work|inception)\//, `${candidate.id} came from a local area`);
+    }
+  } finally {
+    await rm(hub, { recursive: true, force: true });
+  }
+});
+
 test('structured failures: missing hub, hub without _INDEX, hub with no candidates', async () => {
   const missing = await withPort((port) =>
     migrateMarkdown(port, { hubDir: join(tmpdir(), 'does-not-exist-apex-migrate'), projectId: 'proj', scenarioId: 's' }),

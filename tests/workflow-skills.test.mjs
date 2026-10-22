@@ -2635,6 +2635,36 @@ test('graph-migrate: the §13 steps 6-10 procedure is present with one subsectio
   assert.ok(first !== -1 && last !== -1 && first < last, 'Step 6 must precede Step 10 in the procedure');
 });
 
+test('graph-migrate: Step 0 declares the hub mode, picks the path from its evidence, and binds the engine', () => {
+  const text = readFileSync(join(skillsDir, 'graph-migrate', 'SKILL.md'), 'utf8');
+  const step0 = sectionBetween(text, '### Step 0 —', '### Step 6');
+  assert.match(step0, /steepy-formula hub-mode/, 'Step 0 declares the hub mode first');
+  assert.ok(step0.replace(/\s+/g, ' ').includes('`graph`, `migrate`, or `none`'), 'Step 0 uses the exact mode list');
+  assert.match(step0, /`graph`[^\n]*Nothing to migrate[^\n]*STOP/, 'graph: nothing to migrate');
+  assert.match(step0, /`none`[^\n]*`init` skill[^\n]*STOP/, 'none: route to init');
+  assert.match(step0, /`\.apex\/: present \(no Markdown hub\)`[^\n]*cleanup path/, 'leftover state takes the cleanup path');
+  assert.match(step0, /`\.apex\/: present \(Markdown hub\)`[^\n]*Provision and bind the engine/, 'a hub is extracted after provisioning');
+  assert.match(step0, /never probes the area's contents itself/, 'the path choice reads only the evidence line');
+  assert.doesNotMatch(step0, /exists?\b[^\n]*_INDEX\.md|_INDEX\.md[^\n]*exists?\b/, 'the prose never probes _INDEX.md itself');
+  assert.match(step0, /steepy-formula graph init \[--project <project-id>\]/, 'Step 0 provisions the engine');
+  assert.match(step0, /existing `\.formula\/config\.json` binding wins/, 'an existing binding decides the project id');
+  assert.match(step0, /exit 3[\s\S]{0,120}STOP/i, 'a failed provisioning stops before anything moves');
+});
+
+test('graph-migrate: the cleanup path names what is discarded and needs an explicit answer', () => {
+  const text = readFileSync(join(skillsDir, 'graph-migrate', 'SKILL.md'), 'utf8');
+  const cleanup = sectionBetween(text, '**The cleanup path (no Markdown Hub).**', '### Step 6');
+  for (const named of ['`.apex/work/`', '`.apex/inception/`', 'inception-source import', '`.apex/init-provenance.json`', '`.apex/init-provenance.pending.json`']) {
+    assert.ok(cleanup.includes(named), `the cleanup path names ${named}`);
+  }
+  assert.match(cleanup, /deletions in `git status`/, 'tracked files show as deletions');
+  assert.match(cleanup, /silence never\s+proceeds/, 'an explicit answer is required');
+  assert.match(cleanup, /delete the `\.apex` entry entirely/, 'the whole area goes');
+  assert.match(cleanup, /`\.formula\/work\/` area per init's Step 4 shape/, 'the new work area follows init');
+  assert.match(cleanup, /re-run\s+`steepy-formula hub-mode`/, 'the cleanup re-declares the mode');
+  assert.match(cleanup, /Nothing is extracted and the graph is not touched/, 'cleanup never writes the graph');
+});
+
 test('graph-migrate: encodes the archive-then-remove closure and the no-dual-authority rule', () => {
   const text = readFileSync(join(skillsDir, 'graph-migrate', 'SKILL.md'), 'utf8');
   assert.match(text, /archive/i, 'step 10 must archive the legacy hub at cutover');
@@ -2682,10 +2712,15 @@ test('graph-migrate: cutover regenerates the graph-mode disk artifacts between e
     /\.claude\/skills\/steepy-apex-bootstrap/,
     'the superseded steepy-apex bootstrap skill directory must be named for removal'
   );
+  assert.doesNotMatch(
+    text,
+    /\.apex-work-staging|Restore the work area/,
+    'formula\'s old local state is never staged or restored: it leaves with the archive'
+  );
   assert.match(
     text,
-    /\.apex-work-staging/,
-    'the .formula/work/ staging path must be named so in-flight work survives the archive move'
+    /whole `\.apex\/` area[\s\S]{0,400}discarded with the archive and never restored/,
+    'the archive step must take the whole area and tell the user its local state is discarded'
   );
   assert.match(
     text,
