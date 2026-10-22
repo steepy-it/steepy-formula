@@ -977,47 +977,28 @@ test('contributor guide, GitHub templates, and the workflow-chain caption name t
   assert.match(chain, />graph validate gate → PR</);
 });
 
-test('CHANGELOG.md records the graph-only break under Unreleased, above v1.0.0, without picking a version', () => {
+test('CHANGELOG.md ships the graph-only product as v1.0.0, with no Unreleased entry', () => {
   const changelog = readFileSync(join(root, 'CHANGELOG.md'), 'utf8');
-  const unreleased = changelog.search(/^## Unreleased$/m);
+  assert.doesNotMatch(changelog, /^## Unreleased$/m, 'the graph-only product ships as v1.0.0, not under Unreleased');
+  assert.doesNotMatch(changelog, /\*\*Breaking:\*\*/, 'v1.0.0 is the first public release: it breaks nothing');
   const v100 = changelog.indexOf('## v1.0.0 (');
-  assert.ok(unreleased >= 0, 'CHANGELOG.md must carry a "## Unreleased" heading');
-  assert.ok(unreleased < v100, '"## Unreleased" must sit above "## v1.0.0"');
-  const entry = changelog.slice(unreleased, v100);
+  assert.ok(v100 >= 0, 'CHANGELOG.md must carry a "## v1.0.0" heading');
+  assert.equal(changelog.search(/^## /m), v100, '"## v1.0.0" must be the first entry');
+  // Normalized so the assertions do not depend on where the entry wraps.
+  const entry = changelog.slice(v100).replace(/\s+/g, ' ');
 
-  assert.match(entry, /\*\*Breaking:\*\*/);
-  assert.match(entry, /graph-only/);
-  assert.match(entry, /`\.apex\/_INDEX\.md`[\s\S]*`(?:steepy-formula )?hub-mode` reports `migrate`[\s\S]*exit 25[\s\S]*`graph-migrate`/);
-  for (const removed of [
-    '`scripts/validate-hub.mjs`',
-    'Stop hook',
-    '`hooks/`',
-    '`scripts/new-surface.mjs`',
-    // Split so this suite never reads as a consumer of a retired template source
-    // (tests/template.test.mjs scans tests/ for the literal paths).
-    ...[['_IN', 'DEX.md'], ['routing', '-row.md'], ['surface-standard', '.md'], ['surface-standard', '-core.md']]
-      .map(([prefix, suffix]) => `\`templates/${prefix}${suffix}\``),
-    '`render-claude-md.mjs`',
-    '`--routing-index`',
-    '`--standard`',
-    '`--hub-mode`',
-    '`--no-gate`',
-  ]) {
-    assert.ok(entry.includes(removed), `the Unreleased entry must name the removal of ${removed}`);
-  }
-  assert.match(entry, /OpenCode[^\n]*`\.formula\/config\.json`/);
-  assert.match(entry, /generated bootstrap and `AGENTS\.md` navigation[\s\S]*`migrate`[\s\S]*`graph-migrate`[\s\S]*`none`[\s\S]*`init`[\s\S]*`customized`/);
-  assert.match(entry, /allowlist sentence/);
-  // The local areas leave .apex/, any .apex/ is the migrate state, and every entry point refuses.
+  assert.match(entry, /single stable-knowledge channel; there is no Markdown hub mode/);
+  assert.match(entry, /`steepy-formula hub-mode`: `graph`, `migrate`, or `none`/);
+  assert.match(entry, /Any `\.apex\/` entry[^.]*`\.apex\/_INDEX\.md`[\s\S]*is the `migrate` state, even over a reachable, initialized engine/);
+  assert.match(entry, /exit 25 and one message naming `graph-migrate`/);
+  assert.match(entry, /graph primitives \(`graph`, `context`, `promotion`, `hub-mode`\) never refuse/);
+  assert.match(entry, /`graph-migrate` is the one way out of `\.apex\/`/);
+  assert.match(entry, /the plugin ships no hooks/);
+  assert.match(entry, /OpenCode registers project hub agents only when the project carries the `\.formula\/config\.json` graph binding/);
   assert.match(entry, /`\.formula\/work\/`[\s\S]*`\.formula\/inception\/`[\s\S]*`\.formula\/init-provenance\.json`/);
-  assert.match(entry, /Any `\.apex\/` entry[\s\S]*wins even\s+over a reachable, initialized engine/);
-  for (const entryPoint of ['`capture-inception-evidence.mjs`', '`task-results.mjs`', '`reviewer-response.mjs`', '`structural-promotion.mjs`', '`applyProjectScaffold`', '`runLoopController`']) {
-    assert.ok(entry.includes(entryPoint), `the Unreleased entry must list ${entryPoint} among the refusing entry points`);
-  }
   assert.match(entry, /`graph init` writes a create-only `\.formula\/\.gitignore`/);
-  for (const removed of ['`writeGovernanceDocuments`', '`hubMode: legacy`', '`renderLegacyClaudeMd`', '`projectModelFromArgs`']) {
-    assert.ok(entry.includes(removed), `the Unreleased entry must name the removal of ${removed}`);
-  }
+  assert.doesNotMatch(entry, /`\.apex\/work\/`/, 'v1.0.0 keeps its work area under .formula/');
+  assert.doesNotMatch(entry, /v1\.0\.0 reported|rendered by v1\.0\.0/, 'v1.0.0 is not compared with an earlier v1.0.0');
 });
 
 test('formula never names a local area under .apex/ outside migration input and upgrade history', () => {
@@ -1028,7 +1009,6 @@ test('formula never names a local area under .apex/ outside migration input and 
     'scripts/formula/core/migrate-markdown.mjs',
     'skills/graph-migrate/SKILL.md',
     'docs/installation.md',
-    'CHANGELOG.md',
     'RELEASE.md',
   ]);
   const listed = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' });

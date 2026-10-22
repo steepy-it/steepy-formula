@@ -161,27 +161,28 @@ Gear-3 autopilot or Gear-4 loops.
 
 After you update the plugin, run `check` in each repository it governs.
 
-### Local areas move from `.apex/` to `.formula/`
+### Local areas live under `.formula/`
 
 formula keeps its local areas under `.formula/`: the work area `.formula/work/` (specs, plans,
 task and loop state), an inception run under `.formula/inception/`, and the init provenance
 receipts `.formula/init-provenance.json`. `.apex/` is steepy-apex migration input only, so any
-`.apex/` entry — even one that holds only a v1.0.0 work area — puts the repository in the
-`migrate` state: `steepy-formula hub-mode` reports `migrate` (it now wins even over an initialized
-graph, which v1.0.0 reported as `graph`), and every workflow script refuses with exit 25.
+`.apex/` entry — a Markdown hub, or only leftover local state such as a work area — puts the
+repository in the `migrate` state: `steepy-formula hub-mode` reports `migrate`, even over an
+initialized graph, and every workflow script refuses with exit 25.
 
 Run `/steepy-formula:graph-migrate`. With a Markdown hub it extracts and cuts over; with only
 leftover local state it names what is discarded and removes `.apex/` after your explicit answer.
 Before that, copy out anything you want to keep: a spec or plan moved into `.formula/work/specs/`
 or `.formula/work/plans/` stays usable, while in-flight run state, an unfinished inception run, and
-loop ledgers under `.apex/work/` do not carry over. Re-run `steepy-formula graph init` once to get
-the create-only `.formula/.gitignore` that keeps every other `.formula/` file local.
+loop ledgers under `.apex/work/` do not carry over. If `.formula/.gitignore` is missing, re-run
+`steepy-formula graph init` once: it writes that create-only file, which keeps every other
+`.formula/` file local.
 
 ### Project instructions and bootstrap
 
-The generated bootstrap and the `AGENTS.md` navigation now stop on `migrate` and on `none` right
-after the hub-mode declaration. A bootstrap or `AGENTS.md` rendered by v1.0.0 is an earlier
-rendering, so the planner reports `v1:project-bootstrap:customized` and
+The generated bootstrap and the `AGENTS.md` navigation stop on `migrate` and on `none` right
+after the hub-mode declaration. A bootstrap or `AGENTS.md` from an earlier rendering, without
+those stops, is not the current rendering, so the planner reports `v1:project-bootstrap:customized` and
 `v1:project-instructions:customized` — each is customized until an explicit `replace` resolves it.
 Copy out any hand edits first: `replace` rewrites the file to the current rendering.
 

@@ -1965,8 +1965,8 @@ test('parseProjectInstructions recognizes only the graph spine navigation', () =
   assert.ok(agents.includes(GRAPH_NAVIGATION));
   assert.equal(parseProjectInstructions(agents.replace(GRAPH_NAVIGATION, markdownHubNavigation)), null);
 
-  // The v1.0.0 graph navigation (no migrate/none stops) is an earlier rendering: it no
-  // longer parses either, so a repair classifies it `customized` (P11).
+  // The earlier graph navigation (no migrate/none stops) is not the current rendering: it
+  // no longer parses either, so a repair classifies it `customized` (P11).
   const priorGraphNavigation = 'For every task, use the `portable-demo-bootstrap` skill first. '
     + 'If that skill is unavailable, run `steepy-formula hub-mode` and quote the `mode:` line, '
     + 'then resolve the task context with `steepy-formula context resolve --path <task-path>` '
