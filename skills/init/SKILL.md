@@ -169,10 +169,13 @@ Only now — gate green, interview confirmed — write the disk-minimal harness 
 
 - The portable project scaffold — generated through the common planner, never hand-copied from a
   template (the new-surface scaffolder is not invoked here either; the planner owns the scaffold).
-  Serialize the confirmed Project model — `projectName`, `description`, `devCommands`, the
-  complete `surfaces` list (`name`/`path`/`agent`/`testCmd`), `resolutions: {}`, and
-  `hubMode: 'graph'` (a scaffold commits to a hub channel) — to a planner-model JSON file,
-  preview it, and apply only a zero-conflict plan:
+  Serialize the confirmed Project model — `projectName`, `projectId` (the project id confirmed
+  in Step 3, the `.formula/config.json` binding), `description`, `devCommands`, the complete
+  `surfaces` list (`name`/`path`/`agent`/`testCmd`), `resolutions: {}`, and `hubMode: 'graph'`
+  (a scaffold commits to a hub channel) — to a planner-model JSON file, preview it, and apply
+  only a zero-conflict plan. `projectName` names the documents and the bootstrap skill;
+  `projectId` qualifies the specialists' surface targets (`apex:<projectId>:surface:<name>`), so
+  they resolve against the bound graph even when the two differ:
 
   ```bash
   node <engine-root>/scripts/project-scaffold.mjs --hub <repo-root> --model <planner-model-json>
@@ -192,35 +195,16 @@ Only now — gate green, interview confirmed — write the disk-minimal harness 
   is no routing table in graph mode. In graph mode the bootstrapped navigation names
   `steepy-formula hub-mode` (declare the hub mode) and `steepy-formula context resolve` (load
   the resolved task context) — orientation walks the graph, never a markdown index.
-- `CLAUDE.md` at the repo root, via the renderer (graph navigation variant), carrying the
-  interview results — never a hollow shell:
-
-```bash
-node <engine-root>/scripts/render-claude-md.mjs \
-  --hub <repo-root> \
-  --project <projectName> \
-  --description="<one-line description>" \
-  --dev="- test (<surface>): \`<testCmd>\`" \
-  --surface="- <name> (<path>)" \
-  --mode graph
-```
-
-  Pass one `--dev` flag per confirmed dev command — at minimum one per per-surface test
-  command the Step 3 interview confirmed — and one `--surface` flag per confirmed surface.
-  Keep the equals form shown (`--dev="- ..."`, `--surface="- ..."`, `--description="..."`):
-  these values can lead with a dash — the `--dev`/`--surface` list bullets always do — and the
-  equals form is the one shape the renderer reads the same way for every flag (a space-separated
-  dash-leading `--description` value is rejected as ambiguous: exit 1, nothing rendered).
-  Omit `--description` entirely if the user gave none — do not invent a description. The
-  template emits the `## Dev commands` and `## Surfaces` sections unconditionally, so
-  dropping these flags renders them empty — the interview data must flow through.
-
-  If `CLAUDE.md` already exists, ask the user to choose: **insert/refresh the managed steepy
-  block only** (`--upsert --mode graph` — idempotent, leaves the rest of the file untouched),
-  **overwrite** (the fresh-create command above), or **skip**. Record which action you took.
-  On the first post-complete init this renderer step is skipped: the planner's certified
-  `CLAUDE.md` import operation is the whole certified change, and a renderer write would be
-  application drift outside the certified operations.
+- `CLAUDE.md` at the repo root is the planner's own `claude-import` operation: the managed
+  `@AGENTS.md` import block, so Claude loads the AGENTS.md spine the same plan writes. The
+  planner is the only `CLAUDE.md` writer — no renderer runs after the apply, and `CLAUDE.md` is
+  never written by hand. The preview already classifies an existing file: an absent file is
+  created, unmarked user content is kept with the managed block appended, an unmanaged
+  `@AGENTS.md` import is adopted, a current block is a no-op, and a retired `steepy:start`
+  navigation channel is a `customized` conflict resolved like any other, only through its
+  emitted choices. On the first post-complete init this import operation is part
+  of the certified change, and any other `CLAUDE.md` write would be application drift outside the
+  certified operations.
 
 #### Post-complete certification (conditional)
 
@@ -253,6 +237,7 @@ the returned completion Ref, never placeholder digests:
   "completion": { "path": "<returned completion path>", "bytes": 1, "sha256": "<returned digest>" },
   "projectModel": {
     "projectName": "project-slug",
+    "projectId": "project-id",
     "description": "confirmed description or empty string",
     "devCommands": ["npm test"],
     "surfaces": [{ "name": "web", "path": "apps/web", "agent": "web-agent", "testCmd": "npm test" }],
@@ -343,7 +328,7 @@ console.log(JSON.stringify(applyProjectScaffold({ hubRoot: repoRoot, plan })));
 ```
 
 After the retained apply succeeds, create the `.formula/work/` area as above (a reserved area of
-inception snapshots, never drift), skip the `CLAUDE.md` renderer, and close the certificate:
+inception snapshots, never drift), and close the certificate:
 
 ```bash
 node <engine-root>/scripts/inception-governance.mjs finish --repo-root <repo-root>
@@ -488,8 +473,8 @@ Step 1's decision table routes here; nothing in this step scaffolds or mutates t
 
 List every artifact created — the `.formula/work/` area (the structural input
 `.formula/work/init-structural.json` included, local and gitignored), the per-surface agent
-files, the bootstrap skill, and `CLAUDE.md` (created, block-inserted, or skipped — state
-which), and on the first post-complete init the receipts `.formula/init-provenance.pending.json` and
+files, the bootstrap skill, and `CLAUDE.md` (the planner's `claude-import` operation: created,
+block appended, import adopted, replaced, or already current — state which), and on the first post-complete init the receipts `.formula/init-provenance.pending.json` and
 `.formula/init-provenance.json` — plus the head revision and the approved Rules (or none). The scaffolded graph starts
 with only the interviewed skeleton: run the `discovery` skill (invoke it the way your harness
 invokes skills; in graph mode its graph channel populates the graph, not markdown docs) to

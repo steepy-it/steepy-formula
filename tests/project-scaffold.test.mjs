@@ -275,6 +275,30 @@ test('normalizer enforces exact safe values, unique surfaces, and single-line fi
   }), /resolution.*current conflict/i);
 });
 
+test('an explicit projectId qualifies the adapter surface targets; absent, projectName stays the id', () => {
+  const adapters = ['web-agent-claude', 'web-agent-codex', 'web-agent-opencode'];
+  const unbound = normalizeProjectModel(model());
+  assert.equal(Object.hasOwn(unbound, 'projectId'), false, 'a v1 model keeps its exact normalized shape');
+  for (const adapter of adapters) {
+    assert.ok(renderProjectArtifact(adapter, unbound, templatesDir).includes(graphStandardOrientation('web')));
+  }
+
+  const bound = normalizeProjectModel(model({ projectId: 'demo-graph' }));
+  assert.equal(bound.projectId, 'demo-graph');
+  for (const adapter of adapters) {
+    const text = renderProjectArtifact(adapter, bound, templatesDir);
+    assert.match(text, /context resolve --target apex:demo-graph:surface:web`/, `${adapter} targets the bound graph`);
+    assert.doesNotMatch(text, /apex:portable-demo:surface:/, `${adapter} never qualifies with the display name`);
+    assert.match(text, /`portable-demo-bootstrap` skill/, `${adapter} keeps the display-named bootstrap`);
+  }
+  const plan = planProjectScaffold({ hubRoot: tempHub(), model: model({ projectId: 'demo-graph' }), templatesDir });
+  assert.ok(plan.operations.some(({ path }) => path === '.agents/skills/portable-demo-bootstrap/SKILL.md'));
+  assert.equal(validateProjectScaffoldPlan(plan), plan);
+
+  assert.throws(() => normalizeProjectModel(model({ projectId: 'Demo' })), /projectId/);
+  assert.throws(() => normalizeProjectModel(model({ projectId: '' })), /projectId/);
+});
+
 test('the declared hub mode is a required single-value vocabulary (graph) on the Project model', () => {
   const { hubMode, ...withoutMode } = model();
   assert.equal(hubMode, 'graph');

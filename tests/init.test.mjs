@@ -96,8 +96,6 @@ test('init drives the engine: detect-stack proposals, the structural helper, pre
     'promotion apply',
     'graph validate',
     'context resolve',
-    'render-claude-md.mjs',
-    '--mode graph',
     'project-scaffold.mjs',
     'ext_v1_command',
   ]) {
@@ -119,27 +117,22 @@ test('init hard gate — never invents Rules from stack detection', () => {
     'zero approved Rules must mean zero Rules carried');
 });
 
-test('init Step 4 renders CLAUDE.md carrying the interview data (formula graph channel)', () => {
+test('init Step 4 leaves CLAUDE.md to the planner\'s claude-import operation, never a renderer write', () => {
+  // A whole-file render-claude-md.mjs write after the planner apply replaced the managed
+  // `@AGENTS.md` import with the retired `steepy:start` navigation document, so Claude no longer
+  // loaded the AGENTS.md spine. The planner is the only CLAUDE.md writer.
   const text = skill();
   const step4 = sectionBetween(text, '### Step 4', '### Step 5');
-
-  // the render invocation carries the interview results — never a hollow shell
-  for (const flag of ['--hub <repo-root>', '--project <projectName>', '--description', '--dev', '--surface', '--mode graph']) {
-    assert.ok(step4.includes(flag), `the render invocation must pass '${flag}'`);
-  }
-
-  // Node's parseArgs rejects a space-separated option value that leads with a dash ('argument
-  // is ambiguous', exit 1) — the documented list-bullet values must ride the equals form.
-  assert.match(step4, /--dev="- test \(<surface>\)/, 'the --dev example must use the equals form (its value leads with a dash)');
-  assert.match(step4, /--surface="- <name> \(<path>\)"/, 'the --surface example must use the equals form (its value leads with a dash)');
-  assert.match(step4, /--description="/, 'the --description example must use the equals form (its value may lead with a dash)');
-  assert.doesNotMatch(step4, /--dev "|--surface "|--description "/,
-    'the space-separated dash-value form fails parseArgs verbatim and must never return');
-  assert.match(step4, /one `--dev` flag per confirmed dev command/, 'every confirmed dev command flows into ## Dev commands');
-  assert.match(step4, /one `--surface` flag per confirmed surface/, 'every confirmed surface flows into ## Surfaces');
-  assert.match(step4, /never a hollow shell/, 'the hollow-shell failure mode is guarded in prose');
-  assert.match(step4, /interview data must flow through/, 'the unconditional template sections are named as the reason');
-  assert.match(step4, /--upsert --mode graph/, 'an existing CLAUDE.md offers the idempotent managed-block upsert');
+  const flat = step4.replace(/\s+/g, ' ');
+  assert.match(flat, /`CLAUDE\.md` at the repo root is the planner's own `claude-import` operation/,
+    'CLAUDE.md is named as the planner operation');
+  assert.match(flat, /managed `@AGENTS\.md` import block/, 'the channel imports the AGENTS.md spine');
+  assert.match(flat, /The planner is the only `CLAUDE\.md` writer/, 'no second writer exists');
+  assert.match(flat, /retired `steepy:start` navigation channel is a `customized` conflict/,
+    'a retired navigation channel resolves only through the emitted conflict choices');
+  assert.doesNotMatch(text, /render-claude-md/, 'init never invokes the CLAUDE.md renderer');
+  assert.doesNotMatch(text, /--upsert/, 'init offers no renderer upsert');
+  assert.doesNotMatch(text, /\*\*overwrite\*\*/, 'init offers no whole-file overwrite of CLAUDE.md');
 });
 
 // Task 18 (apex v0.9.4 C4 pointers): init keeps its graph-first prose, but the
@@ -156,6 +149,8 @@ test('init Step 4 generates the portable scaffold through project-scaffold.mjs; 
     'preview must precede apply',
   );
   assert.match(step4, /hubMode: 'graph'/, 'the planner model commits to the graph hub channel');
+  assert.match(step4.replace(/\s+/g, ' '), /`projectId` qualifies the specialists' surface targets \(`apex:<projectId>:surface:<name>`\)/,
+    'the planner model carries the bound project id for the adapter targets');
   assert.match(step4, /\.agents\/skills\/<projectName>-bootstrap\/SKILL\.md/,
     'the canonical project bootstrap path is named');
   assert.match(step4, /specialist adapter triads/, 'the per-surface specialist triads are planner-generated');
@@ -300,14 +295,14 @@ test('init prepares the graph-mode governance after zero-conflict preview and be
   const input = jsonBlockAfter(text, '#### Governance input shape');
   assert.deepEqual(Object.keys(input), ['schema', 'runId', 'completion', 'projectModel', 'documents']);
   assert.equal(input.schema, 'steepy-inception-governance-input/v1');
-  assert.deepEqual(Object.keys(input.projectModel), ['projectName', 'description', 'devCommands', 'surfaces', 'resolutions', 'hubMode']);
+  assert.deepEqual(Object.keys(input.projectModel), ['projectName', 'projectId', 'description', 'devCommands', 'surfaces', 'resolutions', 'hubMode']);
   assert.equal(input.projectModel.hubMode, 'graph');
   assert.deepEqual(input.documents, []);
   const flat = text.replace(/\s+/g, ' ');
   assert.match(flat, /Graph mode certifies no Markdown hub document/);
   assert.match(flat, /\.formula\/work\/init\/.*governance-input\.json/);
   assert.match(flat, /never write this input inside the completed run/i);
-  assert.match(flat, /renderer step is skipped/i);
+  assert.match(flat, /any other `CLAUDE\.md` write would be application drift/i);
   assert.match(flat, /\.formula\/` is a reserved area of inception snapshots/);
 });
 
