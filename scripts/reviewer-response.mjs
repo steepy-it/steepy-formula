@@ -3,6 +3,7 @@ import { closeSync, fsyncSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { openWorkPathFd, readWorkPath, parseWorkPath, writeWorkPath } from './work-paths.mjs';
 import { decodeReviewerResponse } from '../adapters/reviewer-response.mjs';
 import { reviewPhaseContext } from './autopilot-context.mjs';
@@ -324,6 +325,12 @@ export function verifyImplementReviews(root, { planPath, indexPath, runId, attem
 export function main(argv) {
   const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'state', 'action', 'run-id', 'attempt', 'iteration', 'task', 'report', 'issues', 'format', 'plan', 'task-result-index', 'previous-state', 'resume-final', 'execution'].map((name) => [name, { type: 'string' }])) });
   const root = resolve(values['repo-root'] ?? '.');
+  // The migrate state (G5): refused before any review read or write.
+  const refusal = migrateRefusal(root);
+  if (refusal) {
+    console.error(`reviewer-response: ${refusal.message}`);
+    return refusal.code;
+  }
   const state = values.state;
   let result;
   if (values.action === 'begin') result = beginReview(root, state, { runId: values['run-id'], attempt: Number(values.attempt), iteration: Number(values.iteration), task: values.task, report: values.report, issues: values.issues, format: values.format ?? 'text', plan: values.plan ?? null, index: values['task-result-index'] ?? null,

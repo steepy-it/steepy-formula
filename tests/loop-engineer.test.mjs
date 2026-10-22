@@ -3723,9 +3723,9 @@ test('graph refusals happen before runner, verifier, or machine state', async ()
     },
     {
       // Routing comes only from the graph: a complete, readable Markdown-hub routing pair on
-      // disk is never consulted.
+      // disk is never consulted — the controller refuses the migrate state outright.
       name: 'Markdown-hub routing pair without a graph target',
-      code: 'INVALID_ROUTING',
+      code: 'MIGRATE_REQUIRED',
       resolves: 0,
       edit(options, repo) {
         mkdirSync(join(repo, '.apex', 'standards'), { recursive: true });

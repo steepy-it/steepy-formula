@@ -81,6 +81,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { userInfo } from 'node:os';
 import { buildQualifiedId, isValidProjectId, parseQualifiedId, validateQualifiedId } from './formula/core/ids.mjs';
+import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { EXTENSION_NAMESPACE_PREFIX, RULE_STRENGTHS } from './formula/core/ontology.mjs';
 import { createScenario, inspectScenario, PROMOTION_ERROR_CODES } from './formula/core/promotion.mjs';
 import { ACTOR_TYPES, isActorType } from './formula/core/revision.mjs';
@@ -644,6 +645,15 @@ export async function main(argv = process.argv.slice(2)) {
     return usageError('exactly one non-empty <scenarioId> positional is required.');
   }
   const [scenarioId] = positionals;
+
+  // The migrate state (G5): a repository that still carries a steepy-apex hub is refused before
+  // the input read or any engine connection; the helper drafts for init, new-surface and
+  // discovery, never for graph-migrate.
+  const refusal = migrateRefusal(process.cwd());
+  if (refusal) {
+    console.error(`steepy structural-promotion: ${refusal.message}`);
+    return refusal.code;
+  }
 
   let structural;
   try {

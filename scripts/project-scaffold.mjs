@@ -2128,6 +2128,10 @@ function applyProjectScaffoldWithActiveLock({ root, plan, checkpoint }) {
 
 export function applyProjectScaffold({ hubRoot, plan, checkpoint, lockLease }) {
   if (typeof hubRoot !== 'string' || hubRoot.length === 0) throw new TypeError('hubRoot must be a path');
+  // The migrate state (G5): the write path refuses for direct library callers too, before the
+  // plan is checked, any lock or any scaffold write; the error carries the exit on `exitCode`.
+  const refusal = migrateRefusal(resolve(hubRoot));
+  if (refusal) throw Object.assign(new Error(refusal.message), { exitCode: refusal.code });
   if (checkpoint !== undefined && typeof checkpoint !== 'function') {
     throw new TypeError('checkpoint must be a function');
   }
@@ -2182,7 +2186,7 @@ export function main(argv = process.argv.slice(2)) {
 
   // The migrate state (G5, P7): a hub that still carries a steepy-apex Markdown hub is
   // refused in every mode, preview included, before the model is read, any stdout line,
-  // or any scaffold write. The planner library itself never refuses.
+  // or any scaffold write. Planning stays read-only and never refuses; applyProjectScaffold does.
   const refusal = migrateRefusal(values.hub);
   if (refusal) {
     process.stderr.write(`project-scaffold: ${refusal.message}\n`);

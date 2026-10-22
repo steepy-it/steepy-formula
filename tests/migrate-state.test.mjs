@@ -20,6 +20,9 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
+import { collectInceptionEvidence } from '../scripts/capture-inception-evidence.mjs';
+import { runLoopController } from '../scripts/loop-engineer.mjs';
+import { applyProjectScaffold } from '../scripts/project-scaffold.mjs';
 import { PROJECT, buildSeed } from './helpers/graph-seed.mjs';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -79,6 +82,27 @@ const REFUSING_SCRIPTS = [
       '--repo-root', root, '--evidence', '.apex/work/tasks/demo/evidence-report.md',
       '--test-command', 'touch ran-surface-test', '--gate-command', 'true',
     ],
+  },
+  // The inception evidence collector refuses before the capture is begun or its check spawns.
+  {
+    script: 'scripts/capture-inception-evidence.mjs',
+    prefix: 'steepy capture-inception-evidence',
+    args: (root) => ['--repo-root', root, '--cycle', 'cycle-0001', '--check', 'check-1', '--unit', 'unit-1'],
+  },
+  // The autopilot task-result and reviewer-response helpers refuse before any work-area read or write.
+  {
+    script: 'scripts/task-results.mjs',
+    args: (root) => ['--repo-root', root, '--action', 'inspect', '--state', '.apex/work/tasks/topic/task-1-execution-1.json'],
+  },
+  {
+    script: 'scripts/reviewer-response.mjs',
+    args: (root) => ['--repo-root', root, '--action', 'inspect', '--state', '.apex/work/tasks/topic/review-1.json'],
+  },
+  // The structural draft helper refuses from the cwd before its input read or any engine connection.
+  {
+    script: 'scripts/structural-promotion.mjs',
+    prefix: 'steepy structural-promotion',
+    args: () => ['--project', 'demo-project', '--port', 'memory', '--input', 'structural.json', 'init-demo-project'],
   },
 ];
 
@@ -195,3 +219,48 @@ for (const { script, args, prefix, label } of REFUSING_SCRIPTS) {
     assert.deepEqual(treeSnapshot(root), before, 'the refusal precedes any filesystem write');
   });
 }
+
+// --- library entry points that write refuse too (G5) ------------------------------------------------
+// A direct library caller must not bypass the CLI refusal: each rejects with the shared message
+// (under the module's own error prefix) before any read of its other inputs, and the temp repo
+// stays byte-identical.
+
+async function assertLibraryRefuses(call, check) {
+  const root = migrateStateRepo();
+  const before = treeSnapshot(root);
+  await assert.rejects(() => call(root), (error) => {
+    check(error);
+    return true;
+  });
+  assert.deepEqual(treeSnapshot(root), before, 'the refusal precedes any filesystem write');
+}
+
+test('migrate state: collectInceptionEvidence refuses with exitCode 25 before the capture is begun', async () => {
+  await assertLibraryRefuses(
+    (root) => collectInceptionEvidence({ repoRoot: root, cycle: 'cycle-0001', check: 'check-1', unit: 'unit-1' }),
+    (error) => {
+      assert.equal(error.message, MIGRATE_REFUSAL_MESSAGE);
+      assert.equal(error.exitCode, MIGRATE_REFUSAL_EXIT);
+    },
+  );
+});
+
+test('migrate state: applyProjectScaffold refuses with exitCode 25 before the plan is checked', async () => {
+  await assertLibraryRefuses(
+    async (root) => applyProjectScaffold({ hubRoot: root, plan: {} }),
+    (error) => {
+      assert.equal(error.message, MIGRATE_REFUSAL_MESSAGE);
+      assert.equal(error.exitCode, MIGRATE_REFUSAL_EXIT);
+    },
+  );
+});
+
+test('migrate state: runLoopController refuses with MIGRATE_REQUIRED before its dependency checks', async () => {
+  await assertLibraryRefuses(
+    (root) => runLoopController('.apex/work/loops/2026-10-21-topic/goal.md', { repoRoot: root }),
+    (error) => {
+      assert.equal(error.code, 'MIGRATE_REQUIRED');
+      assert.equal(error.message, `loop controller [MIGRATE_REQUIRED]: ${MIGRATE_REFUSAL_MESSAGE}`);
+    },
+  );
+});

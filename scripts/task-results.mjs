@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
+import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { readWorkPath, writeWorkPath, parseWorkPath } from './work-paths.mjs';
 import { observeSource, validateSourceObservation, changedSourcePaths, assertSourceContinuation, assertSourcePath } from './source-observation.mjs';
 
@@ -375,6 +376,12 @@ export function verifyTaskResults(root, { indexPath, expectedTasks, checkCurrent
 export function main(argv) {
   const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'action', 'state', 'run-id', 'attempt', 'task', 'execution', 'role', 'report', 'plan', 'previous-state', 'parent-state', 'format', 'task-result-index', 'states', 'expected-tasks'].map((name) => [name, { type: 'string' }])) });
   const root = resolve(values['repo-root'] ?? '.');
+  // The migrate state (G5): refused before any task-result read or write.
+  const refusal = migrateRefusal(root);
+  if (refusal) {
+    console.error(`task-results: ${refusal.message}`);
+    return refusal.code;
+  }
   let result;
   if (values.action === 'begin') result = beginTask(root, values.state, { runId: values['run-id'], attempt: Number(values.attempt), task: values.task,
     execution: Number(values.execution), role: values.role, report: values.report, planPath: values.plan, previousState: values['previous-state'] ?? null, parentState: values['parent-state'] ?? values['previous-state'] ?? null, format: values.format ?? 'text' });

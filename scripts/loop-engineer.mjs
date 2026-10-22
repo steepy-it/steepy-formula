@@ -1476,10 +1476,14 @@ function assertPolicyDependencies(options) {
 
 export async function runLoopController(goalPath, options = {}) {
   assertPlainObject(options, 'controller options');
-  assertDependencies(options);
-  if (options.startOnly !== true) assertPolicyDependencies(options);
   const repoRoot = options.repoRoot;
   if (typeof repoRoot !== 'string' || repoRoot.length === 0) fail('INVALID_INPUT', 'repoRoot is required');
+  // The migrate state (G5): direct callers are refused like the CLI, before the dependency
+  // checks, the goal read, graph resolution or any loop state.
+  const refusal = migrateRefusal(repoRoot);
+  if (refusal) fail('MIGRATE_REQUIRED', refusal.message);
+  assertDependencies(options);
+  if (options.startOnly !== true) assertPolicyDependencies(options);
 
   let goalBytes;
   try {

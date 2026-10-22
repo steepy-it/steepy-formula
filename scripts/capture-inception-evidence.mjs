@@ -6,6 +6,7 @@ import { closeSync, fsyncSync, writeSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { MIGRATE_REFUSAL_EXIT, migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { beginCapture, finishCapture } from './inception-state.mjs';
 import { openPublicationOutput, validateId, validatePath } from './inception-protocol.mjs';
 import { writeAllSync } from './write-all.mjs';
@@ -78,6 +79,9 @@ export async function collectInceptionEvidence(options = {}) {
   for (const key of Object.keys(options)) if (!['repoRoot', 'cycle', 'check', 'unit', 'purpose', 'platform', 'writeToFd', 'closeFd', 'killGraceMs', 'processGroupConvergenceMs', 'streamSettlementMs', 'fault'].includes(key)) throw new Error(`unknown capture option: ${key}`);
   const { repoRoot, cycle, check, unit, purpose = 'check', platform = process.platform, writeToFd = writeSync, closeFd = closeSync, killGraceMs = 500, processGroupConvergenceMs = 1000, streamSettlementMs = 1500, fault } = options;
   if (platform !== 'linux' && platform !== 'darwin') throw new Error(`unsupported platform for process-group capture: ${platform}`);
+  // The migrate state (G5): refused before the capture is begun, any descriptor write or the spawn.
+  const refusal = migrateRefusal(resolve(repoRoot ?? process.cwd()));
+  if (refusal) throw Object.assign(new Error(refusal.message), { exitCode: refusal.code });
   const begun = beginCapture(repoRoot, { cycle, check, unit, purpose });
   if (begun.recovery) {
     if (begun.recovery.outcome === 'incomplete') throw new Error('capture remains incomplete; no command was rerun');
@@ -123,6 +127,6 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const result = await collectInceptionEvidence({ repoRoot: values['repo-root'], cycle: values.cycle, check: values.check, unit: values.unit, purpose: values.purpose });
     console.log(JSON.stringify(result)); return 0;
-  } catch (error) { console.error(`steepy capture-inception-evidence: ${error.message}`); return 1; }
+  } catch (error) { console.error(`steepy capture-inception-evidence: ${error.message}`); return error?.exitCode === MIGRATE_REFUSAL_EXIT ? MIGRATE_REFUSAL_EXIT : 1; }
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main();
