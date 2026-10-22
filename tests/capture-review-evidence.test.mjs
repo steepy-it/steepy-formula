@@ -19,6 +19,7 @@ import {
   collectReviewEvidence,
   RECEIPT_EXCERPT_BYTES,
 } from '../scripts/capture-review-evidence.mjs';
+import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
 import { classifyWorkPath } from '../scripts/work-paths.mjs';
 import { buildSeed, PROJECT } from './helpers/graph-seed.mjs';
 
@@ -459,6 +460,28 @@ test('a new collection replaces stale evidence instead of merging history', asyn
     assert.doesNotMatch(report, /first-run-only/u);
     assert.match(report, /second-run-only/u);
     assert.equal((report.match(/^# Review evidence$/gmu) ?? []).length, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('the library refuses a migrate-state repository before any evidence write or command spawn', async () => {
+  const repo = fixture();
+  try {
+    mkdirSync(join(repo, '.apex'));
+    writeFileSync(join(repo, '.apex', '_INDEX.md'), '# Markdown Hub\n');
+    await assert.rejects(() => collectReviewEvidence({
+      repoRoot: repo,
+      evidencePath: EVIDENCE,
+      testCommand: 'touch ran-surface-test',
+      graphGateArgs: CLEAN_GATE_ARGS,
+    }), (error) => {
+      assert.equal(error.message, MIGRATE_REFUSAL_MESSAGE);
+      assert.equal(error.exitCode, MIGRATE_REFUSAL_EXIT);
+      return true;
+    });
+    assert.equal(existsSync(join(repo, 'ran-surface-test')), false, 'the test command never ran');
+    assert.equal(existsSync(join(repo, EVIDENCE)), false, 'no evidence artifact was written');
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

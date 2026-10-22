@@ -9,6 +9,7 @@ import {
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { MIGRATE_REFUSAL_EXIT, migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { assertSafeHubRoot, assertSafeLine } from './sanitize.mjs';
 import {
   openWorkPathFd,
@@ -390,6 +391,11 @@ export async function collectReviewEvidence({
     throw new Error(`unsupported platform for process-group capture: ${platform}`);
   }
   const root = assertSafeHubRoot(repoRoot);
+  // The migrate state (G5): a repository that still carries a Markdown hub is refused before
+  // the evidence path or commands are checked, any evidence write, or any spawn. The error
+  // carries the dedicated exit on `exitCode` so the CLI exits 25 and direct callers can tell it apart.
+  const refusal = migrateRefusal(root);
+  if (refusal) throw Object.assign(new Error(refusal.message), { exitCode: refusal.code });
   const evidence = parseWorkPath(evidencePath, 'work-output', 'evidence').path;
   const test = safeCommand(testCommand, 'test command');
   const verifier = verifierCommand === undefined
@@ -535,7 +541,7 @@ export async function main(argv = process.argv.slice(2)) {
     return 0;
   } catch (error) {
     console.error(`steepy capture-review-evidence: ${error.message}`);
-    return 1;
+    return error?.exitCode === MIGRATE_REFUSAL_EXIT ? MIGRATE_REFUSAL_EXIT : 1;
   }
 }
 

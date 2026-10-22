@@ -8,8 +8,9 @@ stable-knowledge channel; the `legacy` Markdown hub mode is gone.
 - A repository carrying `.apex/_INDEX.md` (a steepy-apex Markdown hub) is now the `migrate`
   state: `steepy-formula hub-mode` reports `migrate` and names the next step, and the workflow
   scripts (`autopilot.mjs`, `autopilot-context.mjs`, `loop-engineer.mjs`, `project-scaffold.mjs`,
-  `render-claude-md.mjs`, `inception-state.mjs`, `inception-governance.mjs`) refuse with exit 25
-  while the workflow skills stop, until `graph-migrate` moves the hub into the graph. The graph
+  `render-claude-md.mjs`, `inception-state.mjs`, `inception-governance.mjs`,
+  `capture-review-evidence.mjs`) refuse with exit 25 while the workflow skills stop, until
+  `graph-migrate` moves the hub into the graph. The graph
   primitives (`graph`, `context`, `promotion`, `hub-mode`) never refuse. `hub-mode` declares
   `graph`, `migrate`, or `none`.
 - The generated bootstrap and `AGENTS.md` navigation changed: right after the hub-mode

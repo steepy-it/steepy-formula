@@ -25,7 +25,7 @@ import { PROJECT, buildSeed } from './helpers/graph-seed.mjs';
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const cliPath = join(repoRoot, 'scripts', 'formula', 'cli.mjs');
 
-// The workflow scripts that refuse in the migrate state, one row each (Tasks 4–10 extend it):
+// The workflow scripts that refuse in the migrate state, one row each:
 //   { script: 'scripts/<name>.mjs', args: (root) => [...argv after the script path], prefix?, label? }
 // `root` is the fresh migrate-state temp repo, also the subprocess cwd. The expected stderr prefix
 // defaults to the script's basename without `.mjs` (the scripts' own `<name>: …` diagnostic
@@ -69,6 +69,17 @@ const REFUSING_SCRIPTS = [
   // The project planner refuses after its arg parse and before it reads the model, so no model
   // file needs to exist; `--apply` proves the refusal precedes any scaffold write.
   { script: 'scripts/project-scaffold.mjs', args: (root) => ['--hub', root, '--model', 'model.json', '--apply'] },
+  // The review evidence collector refuses before its evidence write or any command spawn: the
+  // sentinel test command would otherwise create `ran-surface-test`. Its diagnostics carry the
+  // `steepy ` prefix.
+  {
+    script: 'scripts/capture-review-evidence.mjs',
+    prefix: 'steepy capture-review-evidence',
+    args: (root) => [
+      '--repo-root', root, '--evidence', '.apex/work/tasks/demo/evidence-report.md',
+      '--test-command', 'touch ran-surface-test', '--gate-command', 'true',
+    ],
+  },
 ];
 
 // --- temp fixtures -----------------------------------------------------------------------------
