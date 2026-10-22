@@ -201,7 +201,7 @@ import { PROMOTION_ERROR_CODES, applyPromotion, discardScenario, inspectScenario
 import { SCENARIO_ASSEMBLY_ERROR_CODES, assembleScenario } from './core/scenario-assembly.mjs';
 import { detectHubMode, portEngineFacts } from './core/hub-mode.mjs';
 import { LEGACY_AREA } from './core/markdown-hub.mjs';
-import { adoptProjectBinding, readProjectConfig } from './core/project-config.mjs';
+import { adoptProjectBinding, ensureFormulaGitignore, readProjectConfig } from './core/project-config.mjs';
 
 const EXIT = {
   OK: 0,
@@ -591,6 +591,8 @@ async function cmdInit({ projectId, projectSource, force }) {
       : adoption.action === 'written'
         ? '  binding:   written .formula/config.json'
         : '  binding:   unchanged (.formula/config.json)';
+  // The local areas under `.formula/` stay ignored even when the root `.gitignore` names nothing.
+  const ignoreLine = `  ignore:    ${ensureFormulaGitignore(process.cwd())} .formula/.gitignore`;
 
   markProjectEchoed();
   const lines = [
@@ -603,6 +605,7 @@ async function cmdInit({ projectId, projectSource, force }) {
       ? `  topology:   ${detection.workspaces.length} workspaces, ${detection.packages.length} packages (${detection.detector})`
       : `  topology:   not detected (${detection.code})`,
     bindingLine,
+    ignoreLine,
   ];
   console.log(lines.join('\n'));
   return EXIT.OK;

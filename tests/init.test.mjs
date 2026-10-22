@@ -254,8 +254,8 @@ test('init never scaffolds a markdown hub', () => {
   const text = skill();
   const step4 = sectionBetween(text, '### Step 4', '### Step 5');
   assert.doesNotMatch(text, /_INDEX\.md/, 'init never names the Markdown index');
-  assert.match(step4.replace(/\s+/g, ' '), /init never creates hub documents; `\.apex\/` holds only `work\/`, `inception\/` and the init provenance receipts/,
-    'the scaffolding step states what .apex/ may hold');
+  assert.match(step4.replace(/\s+/g, ' '), /init never creates hub documents and never writes under `\.apex\/`; `\.formula\/` holds the committed binding plus the local `work\/`, `inception\/` and the init provenance receipts/,
+    'the scaffolding step states that formula\'s local areas live under .formula/, never .apex/');
   assert.doesNotMatch(text, /new-surface\.mjs/, 'the planner generates the scaffold, not the new-surface scaffolder');
   assert.doesNotMatch(text, /\{\{gitPolicyDirective\}\}/, 'git policy is a graph Rule candidate, not a markdown placeholder');
 });

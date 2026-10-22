@@ -3098,7 +3098,7 @@ test('init and inception: migrate state stops before any scaffolding or run', ()
   assert.match(init, /\| `hub-mode` reports `migrate` \|/);
   assert.doesNotMatch(init, /No legacy fallback/i);
   assert.match(init, /No fallback is offered\./);
-  assert.match(init, /init never creates hub documents; `\.apex\/` holds only `work\/`, `inception\/` and the init provenance receipts/);
+  assert.match(init, /init never creates hub documents and never writes under `\.apex\/`; `\.formula\/` holds the committed binding plus the local `work\/`, `inception\/` and the init provenance receipts/);
   assert.match(init, /no `documents` step exists/);
   const inception = readFileSync(join(skillsDir, 'inception', 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
   assert.match(inception, /neither a graph binding `\.formula\/config\.json` nor an unmigrated steepy-apex hub/);

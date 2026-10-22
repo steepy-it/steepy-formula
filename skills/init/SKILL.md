@@ -55,7 +55,10 @@ steepy-formula graph init [--project <project-id>]
   **committed** repository artifact. When `.formula/` is gitignored, ignore it as `.formula/*`
   (replacing a bare `.formula/` directory pattern) and add the `!.formula/config.json` exception
   so the binding is shared: Git cannot re-include a file inside an ignored directory. Confirm with
-  `git check-ignore .formula/config.json`, which must print nothing.
+  `git check-ignore .formula/config.json`, which must print nothing. `graph init` also writes
+  `.formula/.gitignore` (create-only: `*`, `!.gitignore`, `!config.json`), so the local areas
+  under `.formula/` — work, an inception run, the provenance receipts, secrets — stay ignored even
+  when the root `.gitignore` names nothing.
 - A mismatched explicit `--project` (or `STEEPY_PROJECT`) against a committed config refuses
   up front (**exit 3**, before any engine work) unless `--force` rewrites the binding, echoing
   old → new. Re-pointing the shared binding is always the human's explicit `--force` decision.
@@ -358,9 +361,9 @@ are projected out; new app files, lockfiles, configs and unrelated provider file
 observable. Never revisit detection or the interview while a receipt is pending; continue with
 Step 5 from the retained structural input.
 
-**No hub documents:** init never creates hub documents; `.apex/` holds only `work/`,
-`inception/` and the init provenance receipts — the graph is the hub. Do not create
-`.apex/specs/`, `.apex/plans/`, or any specs/plans sub-index files.
+**No hub documents:** init never creates hub documents and never writes under `.apex/`;
+`.formula/` holds the committed binding plus the local `work/`, `inception/` and the init
+provenance receipts — the graph is the hub. Do not create specs/plans sub-index files.
 
 ### Step 5 — Build the initialization promotion scenario (nothing applied)
 

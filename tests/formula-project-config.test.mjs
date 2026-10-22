@@ -13,19 +13,24 @@
 //   adoptProjectBinding    the D3-adoption matrix: no-config write (explicit or fallback
 //                          source), matching-config no-op, explicit-source mismatch refusal,
 //                          --force rewrite carrying previousId for the old -> new echo
+//   ensureFormulaGitignore create-only `.formula/.gitignore` keeping everything but the binding
+//                          local, whatever the root `.gitignore` says
 //
 // Error discipline (core-module standard of hub-mode.mjs): `Error` on data conditions
 // (operational — the CLI maps them to exit 3), `TypeError` on programmer error (closed input
 // keys, mis-shaped arguments).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  FORMULA_GITIGNORE,
   PROJECT_SOURCES,
   adoptProjectBinding,
+  ensureFormulaGitignore,
   readProjectConfig,
   validateProjectConfig,
   writeProjectConfig,
@@ -306,4 +311,37 @@ test('the repo .gitignore carries the !.formula/config.json exception directly a
   assert.notEqual(ignoredAt, -1, '.formula/* stays ignored (secrets.json etc.)');
   assert.equal(lines.indexOf('.formula/'), -1, 'a bare .formula/ pattern would hide the binding too');
   assert.equal(lines[ignoredAt + 1], '!.formula/config.json', 'the binding file is the immediate exception');
+});
+
+// --- ensureFormulaGitignore: the local areas stay local ---------------------------------------------
+
+test('ensureFormulaGitignore writes the exact three-line body once, then keeps whatever is there', () => {
+  const root = tempDir('steepy-config-ignore-');
+  assert.equal(FORMULA_GITIGNORE, '*\n!.gitignore\n!config.json\n');
+  assert.equal(ensureFormulaGitignore(root), 'written');
+  assert.equal(readFileSync(join(root, '.formula', '.gitignore'), 'utf8'), FORMULA_GITIGNORE);
+  writeFileSync(join(root, '.formula', '.gitignore'), '*\n!.gitignore\n!config.json\n!shared.json\n');
+  assert.equal(ensureFormulaGitignore(root), 'kept');
+  assert.equal(readFileSync(join(root, '.formula', '.gitignore'), 'utf8'), '*\n!.gitignore\n!config.json\n!shared.json\n', 'never rewritten');
+});
+
+test('ensureFormulaGitignore: with no root .gitignore, Git sees only the binding and the ignore file', () => {
+  const root = tempDir('steepy-config-ignore-git-');
+  const git = (...args) => spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  assert.equal(git('init', '-q').status, 0);
+  writeProjectConfig(root, 'acme-web');
+  ensureFormulaGitignore(root);
+  for (const local of ['.formula/init-provenance.json', '.formula/init-provenance.pending.json', '.formula/secrets.json', '.formula/work/specs/topic.md', '.formula/inception/run.json']) {
+    mkdirSync(join(root, local, '..'), { recursive: true });
+    writeFileSync(join(root, local), '{}\n');
+  }
+  const status = git('status', '--porcelain', '--untracked-files=all');
+  assert.equal(status.status, 0, status.stderr);
+  assert.deepEqual(status.stdout.trim().split('\n').sort(), ['?? .formula/.gitignore', '?? .formula/config.json']);
+});
+
+test('ensureFormulaGitignore validates its root like the other writers', () => {
+  for (const root of [undefined, null, 42, '']) {
+    assert.throws(() => ensureFormulaGitignore(root), TypeError, `root ${JSON.stringify(root)}`);
+  }
 });

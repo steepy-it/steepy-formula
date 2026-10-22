@@ -37,6 +37,7 @@ import { isValidProjectId } from './ids.mjs';
 
 const CONFIG_DIR = '.formula';
 const CONFIG_FILE = 'config.json';
+const GITIGNORE_FILE = '.gitignore';
 
 const VALIDATE_CONTEXT_KEYS = ['path'];
 const ADOPT_INPUT_KEYS = ['root', 'requested', 'requestedSource', 'force'];
@@ -151,6 +152,28 @@ export function writeProjectConfig(root, projectId) {
     throw new Error(`writeProjectConfig: cannot write '${configPath}': ${error?.message ?? String(error)}`);
   }
   return normalized;
+}
+
+// --- the self-contained ignore file ---------------------------------------------------------------
+
+// Everything under `.formula/` stays local except the committed binding and this file itself —
+// the work area, an inception run, the init provenance receipts, secrets and engine state —
+// whatever the repository's root `.gitignore` says.
+export const FORMULA_GITIGNORE = '*\n!.gitignore\n!config.json\n';
+
+// Create-only: writes `.formula/.gitignore` when absent and never rewrites an existing one (a
+// repository may have tuned it). Returns 'written' or 'kept'.
+export function ensureFormulaGitignore(root) {
+  requireRoot(root, 'ensureFormulaGitignore');
+  const ignorePath = join(root, CONFIG_DIR, GITIGNORE_FILE);
+  mkdirSync(join(root, CONFIG_DIR), { recursive: true });
+  try {
+    writeFileSync(ignorePath, FORMULA_GITIGNORE, { flag: 'wx' });
+    return 'written';
+  } catch (error) {
+    if (error?.code === 'EEXIST') return 'kept';
+    throw new Error(`ensureFormulaGitignore: cannot write '${ignorePath}': ${error?.message ?? String(error)}`);
+  }
 }
 
 // --- adoption --------------------------------------------------------------------------------------
