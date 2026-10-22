@@ -27,7 +27,7 @@ test('the graph defines every inception term', { skip: DOGFOOD_CHECKPOINT_SKIP }
     assert.ok(definition(term), `term:${term} must be promoted`);
   }
   assert.match(definition('inception-run'), /handoff[\s\S]*workflow envelope/i);
-  assert.match(definition('run-descriptor'), /\.apex\/inception\/run\.json[\s\S]*inception-state\.mjs/);
+  assert.match(definition('run-descriptor'), /\.formula\/inception\/run\.json[\s\S]*inception-state\.mjs/);
   assert.match(definition('decision-register'), /DR-n/);
   assert.match(definition('effect-log'), /append-only[\s\S]*intent[\s\S]*outcome[\s\S]*workflow event log/i);
   assert.match(definition('inception-checkpoint'), /immutable[\s\S]*digest[\s\S]*non-blocking checkpoint/i);
@@ -49,11 +49,11 @@ test('the inception placement rule states the substance rules', { skip: DOGFOOD_
   const rule = statement('inception-is-a-pre-hub-run-outside-the-chain');
   assert.deepEqual(appliesTo('inception-is-a-pre-hub-run-outside-the-chain'), ['surface:project']);
   assert.match(rule, /not a gear[\s\S]*outside the chain[\s\S]*headless/i);
-  assert.match(rule, /`\.apex\/inception\/`/);
+  assert.match(rule, /`\.formula\/inception\/`/);
   assert.match(rule, /own `\.gitignore` \(`\*`\) written first/);
   assert.match(rule, /stable links into it are errors/);
-  assert.match(rule, /`\.apex\/inception\/run\.json`[\s\S]*`scripts\/inception-state\.mjs`/);
-  assert.match(rule, /`\.apex\/inception\/abandoned\/<run-id>\/`[\s\S]*deletes nothing/i);
+  assert.match(rule, /`\.formula\/inception\/run\.json`[\s\S]*`scripts\/inception-state\.mjs`/);
+  assert.match(rule, /`\.formula\/inception\/abandoned\/<run-id>\/`[\s\S]*deletes nothing/i);
   assert.match(rule, /never creates hub knowledge/i);
   assert.match(rule, /inception → `init` → `discovery` \(inception source\) → gears/);
   assert.match(rule, /single human approval[\s\S]*digests[\s\S]*never self-approves/i);
@@ -64,7 +64,7 @@ test('the inception placement rule states the substance rules', { skip: DOGFOOD_
   const source = statement('discovery-inception-source-lands-through-one-graph-promotion');
   assert.match(source, /`verified`[\s\S]*`rule`[\s\S]*`unverified`[\s\S]*design choice[\s\S]*`future`[\s\S]*never a rule, a spec, or a started task/);
   assert.match(source, /accepted or rejected with a reason/);
-  assert.match(source, /Candidate text never names `\.apex\/inception\/`/);
+  assert.match(source, /Candidate text never names `\.formula\/inception\/`/);
 });
 
 test('scripts and tests knowledge carry the inception pointers', { skip: DOGFOOD_CHECKPOINT_SKIP }, () => {

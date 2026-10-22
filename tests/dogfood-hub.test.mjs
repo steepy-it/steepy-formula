@@ -60,15 +60,15 @@ async function withDogfoodGraph(fn) {
   }
 }
 
-test('the dogfood export is the repo graph: head r21, B4-clean, chain intact', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
+test('the dogfood export is the repo graph: head r22, B4-clean, chain intact', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
   withDogfoodGraph(async (port) => {
     const validation = await validateGraph(port, { projectId: PROJECT });
     assert.equal(validation.ok, true, `migrated graph must validate clean: ${validation.violations.map((v) => v.message).join('; ')}`);
     assert.deepEqual(validation.violations, []);
 
     const chain = await readChain(port, { projectId: PROJECT });
-    assert.equal(chain.headRevision, qid('revision:r21'));
-    assert.equal(chain.revisions.length, 21);
+    assert.equal(chain.headRevision, qid('revision:r22'));
+    assert.equal(chain.revisions.length, 22);
     const verdict = await verifyChain(port, { projectId: PROJECT });
     assert.equal(verdict.ok, true, `the Revision chain must replay clean: ${JSON.stringify(verdict.violations)}`);
 
@@ -129,7 +129,7 @@ test('the v0.10.0 surface-scoped rules are promoted on their owning surfaces', {
     }
     const workLink = await resolveContext(port, { projectId: PROJECT, targets: [qid('surface:tests')] });
     const rule = workLink.context.rules.find((r) => r.id === qid('rule:stable-docs-never-link-concrete-work-artifacts'));
-    assert.match(rule.properties.statement, /never links to concrete `\.apex\/work\/\*\*` artifacts/);
+    assert.match(rule.properties.statement, /never links to concrete `\.formula\/work\/\*\*` artifacts/);
   }));
 
 // v0.11.0 port (r19): the work-path confinement knowledge and the superseded review-architecture
@@ -148,7 +148,7 @@ test('the v0.11.0 work-path knowledge is promoted and the review-capture rule su
     const workPathRule = scripts.context.rules.find((r) => r.id === qid('rule:work-path-io-rides-the-capability-primitive'));
     assert.ok(workPathRule, 'the work-path I/O Rule must resolve for its owning scripts surface');
     assert.match(workPathRule.properties.statement, /zero bytes read or written outside the repository/);
-    assert.match(workPathRule.properties.statement, /canonical `\.apex\/work\/specs\/` source spec/);
+    assert.match(workPathRule.properties.statement, /canonical `\.formula\/work\/specs\/` source spec/);
 
     const term = byPath.context.terms.find((t) => t.id === qid('term:work-path-capability'));
     assert.match(term.properties.ext_v1_definition, /rejects — never normalizes — alias forms/);
@@ -256,7 +256,7 @@ test('the graph-only rule is promoted and the Markdown-hub rules are out of cont
     }
     const graphOnly = served.get(qid('rule:formula-is-graph-only-a-steepy-apex-hub-is-migration-input-only'));
     assert.ok(graphOnly, 'the graph-only rule must be served');
-    assert.match(graphOnly.properties.statement, /`\.apex\/_INDEX\.md`[\s\S]*`migrate`[\s\S]*`graph-migrate`/);
+    assert.match(graphOnly.properties.statement, /any `\.apex\/` entry exists[\s\S]*`migrate`[\s\S]*`graph-migrate`/);
     assert.match(graphOnly.properties.statement, /the coherence gate is `steepy-formula graph validate`/);
 
     const curated = await withTransaction(port, (tx) => tx.listNodes({ namespace: 'curated' }));
@@ -280,6 +280,50 @@ test('the graph-only rule is promoted and the Markdown-hub rules are out of cont
     }
     assert.doesNotMatch(byId.get(qid('term:code-rendered-agent-rendered-template')).properties.ext_v1_definition,
       /legacy|new-surface\.mjs|surface-standard|_INDEX\.md|routing-row/);
+  }));
+
+// formula-local-areas promotion (r22): formula's local areas live under `.formula/`, any `.apex/` is
+// the migrate state, the graph-only rule is served and verified on every surface it replaced rules on,
+// and the rules and terms left over from the Markdown hub model are retired or rewritten.
+test('the local-areas rule is served everywhere and the Markdown-hub leftovers are retired (r22)', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
+  withDogfoodGraph(async (port) => {
+    const curated = await withTransaction(port, (tx) => tx.listNodes({ namespace: 'curated' }));
+    const byId = new Map(curated.map((node) => [node.id, node]));
+    const edgesOf = await withTransaction(port, (tx) => tx.listEdges({ namespace: 'curated' }));
+    const graphOnlyId = qid('rule:formula-is-graph-only-a-steepy-apex-hub-is-migration-input-only');
+    const graphOnly = byId.get(graphOnlyId);
+    assert.match(graphOnly.properties.statement, /local areas under `\.formula\/`[\s\S]*any `\.apex\/` entry exists[\s\S]*even over an initialized graph[\s\S]*exit 25/);
+    for (const surface of ['project', 'scripts', 'skills', 'templates']) {
+      const resolved = await resolveContext(port, { projectId: PROJECT, targets: [qid(`surface:${surface}`)] });
+      assert.equal(resolved.ok, true, JSON.stringify(resolved));
+      assert.ok(resolved.context.rules.some((rule) => rule.id === graphOnlyId), `the graph-only rule is served on ${surface}`);
+    }
+    assert.ok(edgesOf.some((edge) => edge.type === 'VERIFIED_BY' && edge.fromId === graphOnlyId && edge.toId === qid('check:scripts-migrate-state-refusal')),
+      'the graph-only rule is verified by the migrate-state check');
+
+    for (const retired of ['rule:scripts-decision-block-stdout-payload-instead-and', 'rule:a-table-of-sub-areas-zero-matches-load-the-core-only',
+      'rule:surface-wide-rules-live-in-the-core-a-leaf', 'rule:form-is-opt-in-and', 'rule:card-but',
+      'rule:templates-scripts-new-surface-mjs-a-shape-change',
+      'rule:templates-the-steepy-hub-version-n-stamp-is-not-a-placeholder-copy-verbatim-a-routing-row-shape-change',
+      'rule:skills-repair-mode-stays-non-destructive-create-only-append', 'check:scripts-node-test-tests-validate-hub-test-mjs',
+      'term:routing-table', 'term:mini-routing-table', 'term:anti-orphan-check', 'term:e2e-smoke']) {
+      assert.equal(byId.get(qid(retired))?.properties?.status, 'superseded', `${retired} must be superseded at r22`);
+      assert.ok(edgesOf.some((edge) => edge.type === 'SUPERSEDES' && edge.toId === qid(retired)), `${retired} has a replacement`);
+    }
+
+    const legacy = /\.apex\/(?:work|inception|init-provenance)|declared mode|_INDEX\.md|routing-row|new-surface\.mjs|surface standards, conventions/;
+    // Only the nodes that define migration input may name the Markdown hub's own files.
+    const migrationInput = new Set([graphOnlyId, qid('term:hub'), qid('term:standard')]);
+    for (const node of curated.filter((n) => n.properties.status === 'active' && !migrationInput.has(n.id))) {
+      for (const value of Object.values(node.properties)) {
+        if (typeof value === 'string') assert.doesNotMatch(value, legacy, `${node.id} still names a retired local area or Markdown-hub mechanism`);
+      }
+    }
+    assert.match(byId.get(qid('rule:durable-decisions')).properties.statement, /Stable Knowledge Graph through a human-gated promotion scenario/);
+    assert.match(byId.get(qid('rule:unrouted-owning-surface-halts-cross-cutting-ignored')).properties.statement, /never halts the run[\s\S]*`CONTEXT_SURFACE_IGNORED`/);
+    for (const term of ['hub', 'standard', 'repair-mode', 'dogfood-test', 'fixture', 'adapter']) {
+      assert.ok(byId.get(qid(`term:${term}`))?.properties?.ext_v1_definition, `term:${term} carries a definition`);
+    }
   }));
 
 test('the migrated graph serves representative context (by path and by target)', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
