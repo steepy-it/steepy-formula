@@ -80,7 +80,7 @@ function captureSpawnEvidence() {
   if (!capturePath) return;
   const manifestPath = manifestPathFromPrompt();
   const specName = prompt.match(/spec at ([^\s]+)\./)?.[1]?.split('/').at(-1)?.replace(/\.md$/, '') ?? 'topic';
-  const taskDir = join(process.cwd(), '.apex', 'work', 'tasks', specName);
+  const taskDir = join(process.cwd(), '.formula', 'work', 'tasks', specName);
   const evidence = {
     phase,
     prompt,
@@ -89,7 +89,7 @@ function captureSpawnEvidence() {
     descriptor,
     manifestPath,
     manifestExists: Boolean(manifestPath && existsSync(join(process.cwd(), manifestPath))),
-    planExists: existsSync(join(process.cwd(), '.apex', 'work', 'plans', `${specName}.md`)),
+    planExists: existsSync(join(process.cwd(), '.formula', 'work', 'plans', `${specName}.md`)),
     ledgerExists: existsSync(join(taskDir, 'ledger.md')),
     resultIndexExists: existsSync(join(taskDir, 'task-result-index.md')),
     branchDiffExists: existsSync(join(taskDir, 'branch-diff.txt')),
@@ -104,7 +104,7 @@ function materializePhaseArtifacts() {
   const specPath = manifest.required.find((entry) => entry.purpose === 'approved specification')?.path
     ?? manifest.onDemand.find((entry) => entry.purpose === 'upstream context if the task brief is insufficient')?.path;
   const specName = specPath?.split('/').at(-1)?.replace(/\.md$/, '') ?? 'topic';
-  const taskDir = join(process.cwd(), '.apex', 'work', 'tasks', specName);
+  const taskDir = join(process.cwd(), '.formula', 'work', 'tasks', specName);
   if (phase === 'plan') {
     const planPath = join(process.cwd(), manifest.outputs[0]);
     mkdirSync(dirname(planPath), { recursive: true });
@@ -122,22 +122,22 @@ function materializePhaseArtifacts() {
     if (!process.env.FAKE_HARNESS_RESULT_INDEX_TEXT) {
       const states = [];
       for (const id of taskIds) {
-        const state = `.apex/work/tasks/${specName}/task-${id}-execution-1`;
+        const state = `.formula/work/tasks/${specName}/task-${id}-execution-1`;
         if (!existsSync(`${state}-baseline.json`)) {
           beginTask(process.cwd(), state, { runId: manifest.runId, attempt: manifest.attempt, task: id,
-            execution: 1, role: 'implementer', report: `.apex/work/tasks/${specName}/task-${id}-report.md`, planPath,
+            execution: 1, role: 'implementer', report: `.formula/work/tasks/${specName}/task-${id}-report.md`, planPath,
             parentState: states.at(-1) ?? null });
           if (id === taskIds[0] && process.env.FAKE_HARNESS_WORK_FILES === '1') {
             writeFileSync('tracked.txt', 'implemented\n'); writeFileSync('brand-new.txt', 'created by the implementer\n');
           }
-          const report = `.apex/work/tasks/${specName}/task-${id}-report.md`;
+          const report = `.formula/work/tasks/${specName}/task-${id}-report.md`;
           writeFileSync(report, 'Synthetic implementation report.\n');
           const result = recordTaskResult(process.cwd(), state, `status: DONE\nartifact: ${report}\nsignals: tdd:red-green\n`);
           if (!result.accepted) throw new Error(`synthetic task result rejected: ${result.reason}`);
         }
         states.push(state);
       }
-      projectTaskResults(process.cwd(), { indexPath: `.apex/work/tasks/${specName}/task-result-index.md`, states });
+      projectTaskResults(process.cwd(), { indexPath: `.formula/work/tasks/${specName}/task-result-index.md`, states });
     }
     if (process.env.FAKE_HARNESS_SKIP_BRANCH_DIFF !== '1') {
       writeFileSync(join(taskDir, 'branch-diff.txt'), 'diff --git a/a b/a\n+fake implementation\n');
@@ -310,8 +310,8 @@ function switchBranchIfAsked() {
 // not native reviewer compliance or a production task-state reducer.
 function taskResumeScenario() {
   const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
-  const resultPath = '.apex/work/tasks/topic/task-result-index.md';
-  const ledgerPath = '.apex/work/tasks/topic/ledger.md';
+  const resultPath = '.formula/work/tasks/topic/task-result-index.md';
+  const ledgerPath = '.formula/work/tasks/topic/ledger.md';
   for (const path of [ledgerPath, resultPath]) {
     if (!manifest.onDemand.some((entry) => entry.path === path && entry.available === existsSync(path))) {
       throw new Error(`missing explicit resume capability: ${path}`);
@@ -319,8 +319,8 @@ function taskResumeScenario() {
   }
   const taskDir = dirname(resultPath);
   const tracePath = join(taskDir, 'scenario-trace.txt');
-  const planPath = '.apex/work/plans/topic.md';
-  // Every write stays under .apex/work, so recorded source snapshots remain current.
+  const planPath = '.formula/work/plans/topic.md';
+  // Every write stays under .formula/work, so recorded source snapshots remain current.
   const execute = (id, execution, previousState = null, parentState = null) => {
     const state = `${taskDir}/task-${id}-execution-${execution}`;
     const report = `${taskDir}/task-${id}-report.md`;
@@ -333,7 +333,7 @@ function taskResumeScenario() {
   };
   if (!existsSync(ledgerPath)) {
     writeFileSync(ledgerPath, 'Task 1: complete\nTask 2: complete\n');
-    writeFileSync(resultPath, '<!-- steepy-workflow: v1\nphase: implement\nstatus: DRAFT\nnext: review\nsource: .apex/work/plans/topic.md\nconsumed-by: none\n-->\n# Results\n');
+    writeFileSync(resultPath, '<!-- steepy-workflow: v1\nphase: implement\nstatus: DRAFT\nnext: review\nsource: .formula/work/plans/topic.md\nconsumed-by: none\n-->\n# Results\n');
     const first = execute('1', 1);
     const second = execute('2', 1, null, first);
     projectTaskResults(process.cwd(), { indexPath: resultPath, states: [first, second] });
@@ -385,8 +385,8 @@ function approveTask(manifest, dir, task, iteration = 1) {
 }
 function materializeReviewGates(manifest, specName) {
   if (process.env.FAKE_HARNESS_SKIP_REVIEW_GATE === '1') return;
-  const dir = `.apex/work/tasks/${specName}`;
-  const plan = `.apex/work/plans/${specName}.md`, indexPath = `${dir}/task-result-index.md`;
+  const dir = `.formula/work/tasks/${specName}`;
+  const plan = `.formula/work/plans/${specName}.md`, indexPath = `${dir}/task-result-index.md`;
   let index = readFileSync(indexPath, 'utf8');
   let route;
   try { route = reviewPhaseContext(readFileSync(plan, 'utf8'), index); }
@@ -449,14 +449,14 @@ function materializeReviewGates(manifest, specName) {
 
 function finalApprovedResumeScenario() {
   const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
-  const dir = '.apex/work/tasks/topic', trace = `${dir}/final-resume-trace.txt`;
+  const dir = '.formula/work/tasks/topic', trace = `${dir}/final-resume-trace.txt`;
   if (!existsSync(trace)) {
     materializePhaseArtifacts();
     writeFileSync(trace, 'implementation-and-final-review\n');
     append(phase, 'BLOCKED', correlated('synthetic interruption after final approval, before DONE'));
     return 1;
   }
-  const options = { planPath: '.apex/work/plans/topic.md', indexPath: `${dir}/task-result-index.md`, runId: manifest.runId, attempt: manifest.attempt };
+  const options = { planPath: '.formula/work/plans/topic.md', indexPath: `${dir}/task-result-index.md`, runId: manifest.runId, attempt: manifest.attempt };
   const retainedApproval = captureRetainedApproval(process.cwd(), options);
   if (process.env.FAKE_HARNESS_FINAL_RESUME_MUTATION === '1') writeFileSync('post-approval.js', 'unexpected code change\n');
   // Deliberate malformed-child mode leaves the real conductor to refuse the change.
@@ -470,14 +470,14 @@ function finalApprovedResumeScenario() {
 // synthetic; no product files are executed.
 function steepysiteReceiptScenario() {
   const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
-  const dir = '.apex/work/tasks/topic', state = `${dir}/task-1-execution-1`;
+  const dir = '.formula/work/tasks/topic', state = `${dir}/task-1-execution-1`;
   const indexPath = `${dir}/task-result-index.md`, report = `${dir}/task-1-report.md`;
   const trace = `${dir}/receipt-trace.txt`;
   const paths = ['generation', 'issues'].flatMap((route) => ['page.tsx', 'page.test.tsx']
     .map((file) => `apps/web/app/admin/(protected)/${route}/[id]/${file}`));
   if (!existsSync(`${state}-baseline.json`)) {
     beginTask(process.cwd(), state, { runId: manifest.runId, attempt: manifest.attempt, task: '1',
-      execution: 1, role: 'implementer', report, planPath: '.apex/work/plans/topic.md' });
+      execution: 1, role: 'implementer', report, planPath: '.formula/work/plans/topic.md' });
     appendFileSync(trace, 'implement:1\n');
     for (const path of paths) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, 'corrected decision context\n'); }
     execFileSync('git', ['add', '--', ...paths]); execFileSync('git', ['commit', '-qm', 'fix decision context']);
@@ -492,12 +492,12 @@ function steepysiteReceiptScenario() {
   appendFileSync(trace, 'resume:review-pending\n');
   if (!existsSync(indexPath)) writeFileSync(indexPath, '# Results\n');
   projectTaskResults(process.cwd(), { indexPath, states: [state] });
-  if (/^## Task 2\b/m.test(readFileSync('.apex/work/plans/topic.md', 'utf8'))) {
+  if (/^## Task 2\b/m.test(readFileSync('.formula/work/plans/topic.md', 'utf8'))) {
     const taskReview = approveTask(manifest, dir, '1');
     setReviewReference(process.cwd(), { indexPath, state: taskReview });
     const nextState = `${dir}/task-2-execution-1`, nextReport = `${dir}/task-2-report.md`;
     beginTask(process.cwd(), nextState, { runId: manifest.runId, attempt: manifest.attempt, task: '2',
-      execution: 1, role: 'implementer', report: nextReport, planPath: '.apex/work/plans/topic.md', parentState: state });
+      execution: 1, role: 'implementer', report: nextReport, planPath: '.formula/work/plans/topic.md', parentState: state });
     appendFileSync(trace, 'implement:2\n'); writeFileSync('next-task.ts', 'next task\n');
     writeFileSync(nextReport, 'Synthetic next task report.\n');
     recordTaskResult(process.cwd(), nextState, `status: DONE\nartifact: ${nextReport}\nsignals: none\n`);
@@ -511,8 +511,8 @@ function steepysiteReceiptScenario() {
 
 function receiptContinuationScenario() {
   const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
-  const dir = '.apex/work/tasks/topic', first = `${dir}/task-1-execution-1`;
-  const report = `${dir}/task-1-report.md`, planPath = '.apex/work/plans/topic.md';
+  const dir = '.formula/work/tasks/topic', first = `${dir}/task-1-execution-1`;
+  const report = `${dir}/task-1-report.md`, planPath = '.formula/work/plans/topic.md';
   const indexPath = `${dir}/task-result-index.md`, trace = `${dir}/continuation-trace.txt`;
   const badAncestor = mode === 'receipt-wrong-ancestor';
   if (!existsSync(`${first}-baseline.json`)) {

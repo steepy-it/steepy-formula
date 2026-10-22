@@ -2,7 +2,7 @@
 
 The packaged deterministic controller dispatches this fresh, read-only reviewer over one immutable
 whole-branch evidence set. The controller supplies the exact report path after this template; its
-canonical form is `.apex/work/loops/<slug>/run-<run-id>-review-<review>-report.md`.
+canonical form is `.formula/work/loops/<slug>/run-<run-id>-review-<review>-report.md`.
 
 ```text
 Subagent (reviewer):
@@ -31,7 +31,7 @@ Subagent (reviewer):
     These are the only exact role-local work inputs. Read the goal, diff, and ledger paths exactly
     as supplied. Stable routing inputs are read only in the exact supplied order to check ownership
     and standard conformance.
-    Do not explore or enumerate `.apex/work/**`; do not locate sibling goals, events, ledgers,
+    Do not explore or enumerate `.formula/work/**`; do not locate sibling goals, events, ledgers,
     attempts, reports, diffs, specs, or plans. Ordinary repository source may be read only for a
     concrete named code-review risk; record the risk and exact source inspected in the report.
 

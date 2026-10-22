@@ -25,11 +25,11 @@ for (const phase of ['reconnaissance', 'architecture', 'research', 'approval', '
     assert.deepEqual(f.snapshot(), before);
     f.report('work'); f.finish('work');
     f.put(`${area}/research/unrelated.md`, 'Do not open this report');
-    f.put('.apex/work/unrelated.md', 'Do not inspect work');
+    f.put('.formula/work/unrelated.md', 'Do not inspect work');
     const completed = f.snapshot();
-    const inspected = f.audit(['inspect'], { forbiddenReads: [`${area}/research/unrelated.md`, '.apex/work'] });
+    const inspected = f.audit(['inspect'], { forbiddenReads: [`${area}/research/unrelated.md`, '.formula/work'] });
     assert.equal(inspected.result.phase, phase);
-    assert.equal(f.audit(['resume-check'], { forbiddenReads: [`${area}/research/unrelated.md`, '.apex/work'] }).result.ok, true);
+    assert.equal(f.audit(['resume-check'], { forbiddenReads: [`${area}/research/unrelated.md`, '.formula/work'] }).result.ok, true);
     assert.deepEqual(f.snapshot(), completed);
     const retryInput = f.input({ kind: 'decision', inputs: [], outputs: [{ path: `${area}/project/work.md`, role: 'report' }], allowedPaths: [] });
     f.refuse('unit', 'begin', '--id', 'work', '--input', retryInput);
@@ -185,9 +185,9 @@ for (const git of [false, true]) test(`M07/M09 ${git ? 'Git' : 'no Git'} checkpo
 
 for (const git of [false, true]) test(`M08 complete → init → discovery source verification (${git ? 'Git' : 'no Git'})`, t => {
   const f = fixture(t, { phase: 'verification', git }); f.manual('check', ['app']); f.complete();
-  const completed = f.snapshot(area); const input = governanceInput(f); const inputPath = f.json('.apex/work/init/input.json', input);
+  const completed = f.snapshot(area); const input = governanceInput(f); const inputPath = f.json('.formula/work/init/input.json', input);
   f.run('inception-governance', ['prepare', '--repo-root', f.root, '--input', inputPath]);
-  const model = f.json('.apex/work/init/model.json', input.projectModel);
+  const model = f.json('.formula/work/init/model.json', input.projectModel);
   f.run('project-scaffold', ['--hub', f.root, '--model', join(f.root, model)]);
   f.run('project-scaffold', ['--hub', f.root, '--model', join(f.root, model), '--apply']);
   f.run('inception-governance', ['finish', '--repo-root', f.root]);

@@ -1362,7 +1362,7 @@ syncBuiltinESMExports();
   it('keeps physical ledger boundaries in both task-directory orders', (t) => {
     for (const partialFirst of [true, false]) {
       const result = isolatedCli(t, () => ['--harness', 'opencode', '--no-session-store'], ({ repo }) => {
-        const tasks = join(repo, '.apex', 'work', 'tasks');
+        const tasks = join(repo, '.formula', 'work', 'tasks');
         const first = join(tasks, 'a-ledger');
         const second = join(tasks, 'b-ledger');
         mkdirSync(first, { recursive: true });
@@ -1436,7 +1436,7 @@ describe('headless channel work-path containment', () => {
     writeFileSync(join(outsideSpecDir, 'resource-usage.jsonl'), `${sentinelLine()}\n`);
     writeFileSync(outsideRaw, rawStream([claudeMessage('escaped-raw-content')]));
 
-    const tasksDir = join(repoRoot, '.apex', 'work', 'tasks');
+    const tasksDir = join(repoRoot, '.formula', 'work', 'tasks');
 
     // A fully in-repo spec dir whose data must survive every rejection below.
     const specGood = join(tasksDir, 'spec-good');
@@ -1497,7 +1497,7 @@ describe('headless channel per-spec-dir tolerance (A2)', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'steepy-cost-report-tasks-'));
     t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
 
-    const tasksDir = join(repoRoot, '.apex', 'work', 'tasks');
+    const tasksDir = join(repoRoot, '.formula', 'work', 'tasks');
     const specA = join(tasksDir, 'spec-a');
     mkdirSync(specA, { recursive: true });
     const ledgerLine = JSON.stringify({

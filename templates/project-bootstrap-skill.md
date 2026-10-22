@@ -19,6 +19,6 @@ Use this skill before working on the project.
 
 ## Work-artifact boundary
 
-Do not ordinarily enumerate, search, or read under `.apex/work/**`.
+Do not ordinarily enumerate, search, or read under `.formula/work/**`.
 
 A workflow phase may consume only the exact work inputs named by an accepted handoff. A pathless workflow invocation may perform only bounded workflow-header recovery discovery. Exact paths or a broader work-area scope are permitted only when the user explicitly delimits them. This applies transitively to child agents: only the phase orchestrator interprets a handoff.

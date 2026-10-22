@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: Turn an idea into a local working spec under .apex/work/specs/. Classifies the idea against the resolved graph context, dialogues one question at a time, proposes approaches, and on approval writes the spec as a gitignored work artifact.
+description: Turn an idea into a local working spec under .formula/work/specs/. Classifies the idea against the resolved graph context, dialogues one question at a time, proposes approaches, and on approval writes the spec as a gitignored work artifact.
 user-invocable: true
 ---
 <!-- steepy:manual-handoff:v1:start -->
@@ -36,7 +36,7 @@ outside the repository. Never infer corrections. An explicit malformed or stale 
 without discovery. Supporting `onDemand` inputs are never preloaded; read one only for a concrete
 named missing fact. Stable routing inputs stay outside the envelope and follow bootstrap routing.
 Native invocation spelling comes only from the active harness. No child inherits general
-`.apex/work/**` access; pass only its accepted role paths.
+`.formula/work/**` access; pass only its accepted role paths.
 
 Every new work artifact starts with verdict/contract metadata when that phase requires it, followed
 immediately by this versioned header before the Markdown title:
@@ -133,7 +133,7 @@ Turn an idea into a local working spec informed by the hub. Do not write code or
 1.5. Resolve a CONFLICT (doc-wins, or override) or GAP (explore-first, then brainstorm) verdict.
 2. Understand the idea — grill it against the hub, one question at a time (gear 2–3).
 3. Propose 2–3 approaches.
-4. Present the design as a draft in `.apex/work/specs/` and get approval, section by section (gate).
+4. Present the design as a draft in `.formula/work/specs/` and get approval, section by section (gate).
 5. Finalize the approved draft — fold in the review changes; the header stays `status: DRAFT` until the approval gate passes.
 5.5. Self-review the spec inline — free gate, gear 2 and 3 (Step 5.5).
 6. Validate the graph with `steepy-formula graph validate` (deterministic gate).
@@ -268,11 +268,11 @@ Present 2–3 approaches with trade-offs, lead with your recommendation and reas
 
 ### Step 4 — Present the design (gate)
 
-Write the design into a new spec at its conventional path, `.apex/work/specs/YYYY-MM-DD-<topic>.md`.
+Write the design into a new spec at its conventional path, `.formula/work/specs/YYYY-MM-DD-<topic>.md`.
 Check only target existence first. An existing target requires a stop for an absent path or explicit
 user-delimited revisit scope: no historical body read or overwrite is authorized by fresh entry.
 Within this invocation, continue editing only the draft it created.
-Create `.apex/work/specs/` if it does not exist. After the verdict/contract metadata and before the title, write this workflow header:
+Create `.formula/work/specs/` if it does not exist. After the verdict/contract metadata and before the title, write this workflow header:
 
 ```yaml
 <!-- steepy-workflow: v1
@@ -373,7 +373,7 @@ gates complete leaves the spec `DRAFT`. This fresh producer consumes no historic
 
 Once the user approves the spec, ask one more question: drive `manual` or `autopilot`?
 
-- **`manual`** (default) → acknowledge the choice and state the approved spec's relative path (`.apex/work/specs/<spec-basename>.md`). When the active harness exposes the native plan invocation spelling, emit it; otherwise do not invent one. Then emit this canonical envelope and proceed to Step 8:
+- **`manual`** (default) → acknowledge the choice and state the approved spec's relative path (`.formula/work/specs/<spec-basename>.md`). When the active harness exposes the native plan invocation spelling, emit it; otherwise do not invent one. Then emit this canonical envelope and proceed to Step 8:
 
   ```yaml
   handoff: steepy-formula/v1
@@ -402,7 +402,7 @@ On `autopilot`:
 
    Keep the verdict text and gear unchanged — only turn the one-line comment into this multi-line contract block, so the closing `-->` moves to its own line at the end (`parseContract` reads the contract only when every field sits inside that one HTML comment). `harness` = the current harness. The `budget` field is rejected on fresh and resumed gear-3 contracts; do not author it. Write `log-mode: safe` by default and ask no logging question. Offer `exact` only when the user explicitly requests sensitive exact capture: warn that exact raw logs may contain secrets, write `log-mode: exact`, and state that the conductor will print and record `EXACT_LOGGING`.
 3. Launch the conductor in background: `node <engine-root>/scripts/autopilot.mjs <spec-path>`.
-4. Report the run's status path and live artifacts: `.apex/work/tasks/<spec-basename>/autopilot-status.md`, per-attempt readable `phase-<n>-attempt-<m>.log`, per-attempt raw `phase-<n>-attempt-<m>.raw.jsonl`, and aggregate `phase-<n>.log`. Report the native open/resume reference when supported. The run is no-steer: it halts on anything needing a human, and its branch-only boundary is stop-before-PR (`READY_FOR_PR`). The version-bump/PR decision (review Step 5) stays human, in an interactive session.
+4. Report the run's status path and live artifacts: `.formula/work/tasks/<spec-basename>/autopilot-status.md`, per-attempt readable `phase-<n>-attempt-<m>.log`, per-attempt raw `phase-<n>-attempt-<m>.raw.jsonl`, and aggregate `phase-<n>.log`. Report the native open/resume reference when supported. The run is no-steer: it halts on anything needing a human, and its branch-only boundary is stop-before-PR (`READY_FOR_PR`). The version-bump/PR decision (review Step 5) stays human, in an interactive session.
 
 Drive mode adds nothing to the manual path: no new question is asked at gears 1-2, and answering `manual` changes nothing downstream.
 
@@ -430,7 +430,7 @@ cannot represent one independently testable implementation task. In that opt-in 
 envelope emitted in Step 7, and tell the user the next step is the `plan` skill (invoke it the way
 the active harness invokes skills). On the `manual` drive choice (Step 7), the handoff message must
 state, textually: run the `plan` skill in a NEW session, with the relative path of the plan document
-it will write — by convention `.apex/work/plans/<date>-<topic>.md`, the topic derived from the spec.
+it will write — by convention `.formula/work/plans/<date>-<topic>.md`, the topic derived from the spec.
 Run `plan` in a new session: this phase's context does not serve planning, and every turn of the
 plan phase would pay to carry it forward. Autopilot remains conductor-owned after the blocking spec
 gate.

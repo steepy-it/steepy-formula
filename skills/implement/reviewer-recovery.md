@@ -41,7 +41,7 @@ and schema-authorized receipt parent/previous links grant machine replay only, c
 same task directory; they never authorize work-directory discovery or child report preloading.
 
 The helper creates versioned baseline evidence. Its snapshot covers branch, HEAD, index, tracked
-source files and nonignored untracked source files outside `.apex/work/`, including contents, modes
+source files and nonignored untracked source files outside `.formula/work/`, including contents, modes
 and symlink targets. Work bodies are read only through the exact authorized artifact paths. Gitignored
 files are outside this Git observation; this is not an OS sandbox or a proof of transient writes.
 The two exact review outputs are checked separately; guard state is stored in two exact files

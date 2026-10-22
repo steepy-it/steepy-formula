@@ -12,11 +12,11 @@ import { parseRunDescriptor, verifyComplete } from './inception-state.mjs';
 import { writeAllSync } from './write-all.mjs';
 import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 
-export const GOVERNANCE_PENDING = '.apex/init-provenance.pending.json';
-export const GOVERNANCE_RECEIPT = '.apex/init-provenance.json';
+export const GOVERNANCE_PENDING = '.formula/init-provenance.pending.json';
+export const GOVERNANCE_RECEIPT = '.formula/init-provenance.json';
 const SCHEMA = 'steepy-inception-governance/v1';
 const INPUT_SCHEMA = 'steepy-inception-governance-input/v1';
-const RUN = '.apex/inception/run.json';
+const RUN = '.formula/inception/run.json';
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const render = value => Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
@@ -201,7 +201,7 @@ function checkCompletion(root, receipt, partial) {
   return projection;
 }
 function syncDirectory(path) { const fd = fs.openSync(path, 'r'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); } }
-function stagingBase(receipt) { return `.apex/work/init-provenance/${receipt.id}`; }
+function stagingBase(receipt) { return `.formula/work/init-provenance/${receipt.id}`; }
 function prepareReceipt(receipt) { return { ...receipt, applicationAfter: null, status: 'prepared' }; }
 function ensureDirectory(root, path) {
   validatePath(path);
@@ -362,7 +362,7 @@ export function main(argv = process.argv.slice(2)) {
     const migrate = migrateRefusal(root);
     if (migrate !== null) { console.error(`inception-governance: ${migrate.message}`); return migrate.code; }
     const input = () => {
-      validatePath(values.input); requireThat(values.input.startsWith('.apex/work/'), 'init input must be an exact file in its authorized work scope');
+      validatePath(values.input); requireThat(values.input.startsWith('.formula/work/'), 'init input must be an exact file in its authorized work scope');
       return parseStrictJson(readPublicationFile(root, values.input));
     };
     const receipt = command === 'prepare' ? prepareGovernance(root, input()) : finishGovernance(root);

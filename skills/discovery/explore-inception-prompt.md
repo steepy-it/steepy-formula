@@ -25,12 +25,12 @@ Subagent (explorer):
     `context.md`): the recorded terms and rules, with their node ids, and the surface node ids.
 
     Read exactly the files in [INPUT_PATHS] and [HUB_CONTEXT]. These paths are supplied by
-    discovery; do not infer another run file, a graph target, or a work report. Never list `.apex/inception/` or read anything else under
-    it, never read under `.apex/work/`, and never write to the hub or the codebase.
+    discovery; do not infer another run file, a graph target, or a work report. Never list `.formula/inception/` or read anything else under
+    it, never read under `.formula/work/`, and never write to the hub or the codebase.
 
     Discovery supplies only a successful `verify-complete` receipt's exact `inputPaths` array,
     unchanged: the descriptor, bound approval, approved documents (including the decision register,
-    `.apex/inception/project/decision-register.md`), verified summary and rendered report. No failed
+    `.formula/inception/project/decision-register.md`), verified summary and rendered report. No failed
     or missing gate permits exploration: return BLOCKED without reading source bodies if no
     successful gate supplied these paths. Never follow descriptor/approval refs to raw evidence,
     frozen copies, contracts, captures or other run files; the helper already verified those.
@@ -70,7 +70,7 @@ Subagent (explorer):
       id from [HUB_CONTEXT], `term`, or `decision`). A `future context` card is always a
       `decision`. The interviewer confirms or re-routes it.
 
-    The Proposed doc text never names, cites, or links `.apex/inception/`, and never cites a `DR-n`
+    The Proposed doc text never names, cites, or links `.formula/inception/`, and never cites a `DR-n`
     ID: the graph never points into the inception run.
 
     ## Invent Nothing

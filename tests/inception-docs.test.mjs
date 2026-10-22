@@ -73,10 +73,10 @@ test('scripts and tests knowledge carry the inception pointers', { skip: DOGFOOD
   assert.match(statement('hermetic-tests-are-never-native-evidence'), /native inception acceptance stays NOT RUN/);
 });
 
-test('no curated graph text links into .apex/inception/', { skip: DOGFOOD_CHECKPOINT_SKIP }, () => {
+test('no curated graph text links into .formula/inception/', { skip: DOGFOOD_CHECKPOINT_SKIP }, () => {
   for (const [id, record] of curated) {
     for (const value of Object.values(record.properties ?? {})) {
-      if (typeof value === 'string') assert.doesNotMatch(value, /\]\([^)]*\.apex\/inception\//, `${id} links into the inception area`);
+      if (typeof value === 'string') assert.doesNotMatch(value, /\]\([^)]*\.formula\/inception\//, `${id} links into the inception area`);
     }
   }
 });
@@ -126,7 +126,7 @@ test('architecture doc counts eleven skills, lists the helper, and has the effec
   assert.doesNotMatch(architecture, /\bnine\b/i);
   assert.match(architecture, /registers eleven `steepy-formula-<skill>` commands/);
   assert.match(architecture, /\| `inception-state\.mjs` \|/);
-  assert.match(architecture, /\| Inception \| Writes `\.apex\/inception\/` and the application's files; runs the approved tools \(installs, generators, builds, tests\); may reach official sources and package registries; remote operations only after explicit authorization\. \|/);
+  assert.match(architecture, /\| Inception \| Writes `\.formula\/inception\/` and the application's files; runs the approved tools \(installs, generators, builds, tests\); may reach official sources and package registries; remote operations only after explicit authorization\. \|/);
   assert.doesNotMatch(read('docs', 'installation.md'), /\bnine\b/i);
 });
 
@@ -148,8 +148,8 @@ test('inception guide covers the flow, helper, harnesses, and limits', () => {
   }
   assert.match(guide, /no headless or autopilot mode on any harness/i);
   assert.match(guide, /three sessions[\s\S]*two pauses/i);
-  assert.match(guide, /`\.apex\/inception\/run\.json`/);
-  assert.match(guide, /`\.apex\/inception\/project\/decision-register\.md`/);
+  assert.match(guide, /`\.formula\/inception\/run\.json`/);
+  assert.match(guide, /`\.formula\/inception\/project\/decision-register\.md`/);
   assert.match(guide, /`configured`[\s\S]*`executed`[\s\S]*`succeeded`[\s\S]*`not-executed`[\s\S]*`failed`/);
   assert.match(guide, /`verified`[\s\S]*`unverified`[\s\S]*`future`/);
   assert.match(guide, /`--option=<value>`/);
@@ -185,7 +185,7 @@ test('acceptance protocol covers both scenarios, evidence matrix, and setup rule
   assert.match(doc, /not a review criterion/i);
   assert.match(doc, /Scenario A[\s\S]*empty repository[\s\S]*`init`[\s\S]*`discovery`[\s\S]*inception source/i);
   assert.match(doc, /Scenario B[\s\S]*starter[\s\S]*(design system|prototype)[\s\S]*`init`[\s\S]*`discovery`[\s\S]*inception source/i);
-  assert.match(doc, /`git clone`[\s\S]*without `\.apex\/inception\/` and `\.apex\/work\/`[\s\S]*`steepy-formula graph validate` is clean/i);
+  assert.match(doc, /`git clone`[\s\S]*without `\.formula\/inception\/` and `\.formula\/work\/`[\s\S]*`steepy-formula graph validate` is clean/i);
   assert.doesNotMatch(doc, /validate-hub/);
   assert.match(doc, /interruption[\s\S]*between an effect's intent and its outcome[\s\S]*new session/i);
   assert.ok(doc.includes('| Run | Harness version | Plugin commit | Capabilities | Observed outcome | Observed human approver |'));

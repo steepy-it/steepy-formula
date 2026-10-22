@@ -1,5 +1,5 @@
 // Local ArcadeDB server lifecycle for the Stable Knowledge Graph (spec
-// .apex/work/specs/2026-08-11-stable-knowledge-graph.md §24 "one server, one database per
+// .formula/work/specs/2026-08-11-stable-knowledge-graph.md §24 "one server, one database per
 // project", §28 "the server is bound to localhost"). Task C1.
 //
 // This module owns the CONTAINER, never the data: create / start / stop / status / destroy for a

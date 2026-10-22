@@ -22,7 +22,7 @@ Subagent (<surface>-agent):
     Last verifier failure tail: [LAST_FAILURE]
     Prior event-stream digest: [LEDGER_DIGEST]
     Report path: [REPORT_FILE]
-    Immutable report naming: .apex/work/loops/<slug>/run-<run-id>-attempt-<attempt>-report.md
+    Immutable report naming: .formula/work/loops/<slug>/run-<run-id>-attempt-<attempt>-report.md
 
     The controller binds both routing slots to the graph: both slots
     name the one controller-resolved surface context (`context.md` for
@@ -33,7 +33,7 @@ Subagent (<surface>-agent):
     These are the exact role-local capabilities. Read the exact goal first and the stable owning
     standard inventory as routing context, in exactly the supplied order. The failure tail and digest are inline facts, not authority to
     locate their source artifacts. Write only the exact report path. Do not explore or enumerate
-    `.apex/work/**`; do not locate or read a ledger, event stream, attempt sibling, diff, review,
+    `.formula/work/**`; do not locate or read a ledger, event stream, attempt sibling, diff, review,
     spec, plan, or another goal. Ordinary repository source may be read and edited only as needed
     for this attempt and only inside the goal's blast-radius globs.
 

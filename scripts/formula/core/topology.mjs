@@ -1,5 +1,5 @@
 // Repository topology detection, write and refresh for the Stable Knowledge Graph (spec
-// .apex/work/specs/2026-08-11-stable-knowledge-graph.md §25 "Topology refresh ownership", §4/§5
+// .formula/work/specs/2026-08-11-stable-knowledge-graph.md §25 "Topology refresh ownership", §4/§5
 // (Repository/Workspace/Package and the observed `PART_OF` chain), §21 audit model, §26 actor
 // identity, failure table row "Topology refresh fails").
 //

@@ -46,7 +46,7 @@ Subagent (reviewer):
     outcomes and authoritative artifact references without inlining their detail. In manual drive use
     only those same role-local direct inputs and record the no-manifest degradation. Ordinary
     repository source needed to verify the branch may be read normally, but never enumerate
-    `.apex/work/**` or infer another work artifact from the orchestrator's capability. Validate the
+    `.formula/work/**` or infer another work artifact from the orchestrator's capability. Validate the
     task-result index's canonical grammar and its exact `source-spec`, `criteria`, and `branch-diff`
     metadata; validate the supporting paths and canonical criteria `Source`/`Heading` attribution
     without opening the plan or source spec.
@@ -70,9 +70,9 @@ Subagent (reviewer):
 
     ## Durable findings and response
     Always write complete findings, evidence, minor triage, and Status to
-    `.apex/work/tasks/<plan-basename>/final-review.md` ([FINAL_REVIEW_FILE]). Status is Approved or
+    `.formula/work/tasks/<plan-basename>/final-review.md` ([FINAL_REVIEW_FILE]). Status is Approved or
     Issues Found. If Issues Found, also write the complete actionable set to authoritative
-    `.apex/work/tasks/<plan-basename>/final-review-issues.md` ([FINAL_ISSUE_FILE]); a fix receives that
+    `.formula/work/tasks/<plan-basename>/final-review-issues.md` ([FINAL_ISSUE_FILE]); a fix receives that
     artifact, never inline concern prose. If BLOCKED or NEEDS_CONTEXT, write all detail to
     [FINAL_REVIEW_FILE]. The review is read-only with respect to application code and other repository sources.
     Writing the authorized review and issue artifacts is required and excluded from `changed-paths`.

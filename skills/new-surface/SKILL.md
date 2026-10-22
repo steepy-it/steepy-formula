@@ -49,7 +49,7 @@ Knowledge Graph — no standards doc and no routing table exist.
    structural-promotion helper instead; it works on an initialized graph (ADD operations whose
    target already exists in the stable graph are skipped and reported, so only the genuinely
    new nodes and edges ride the scenario). Write the surface into
-   `.apex/work/new-surface-<surface-name>.json` — a local, gitignored work artifact:
+   `.formula/work/new-surface-<surface-name>.json` — a local, gitignored work artifact:
 
    ```json
    {
@@ -76,7 +76,7 @@ Knowledge Graph — no standards doc and no routing table exist.
    ```bash
    node <engine-root>/scripts/structural-promotion.mjs \
      --project <projectId> --port docker \
-     --input .apex/work/new-surface-<surface-name>.json new-surface-<surface-name>
+     --input .formula/work/new-surface-<surface-name>.json new-surface-<surface-name>
    ```
 
    The helper maps the input into plain ADD operations — the Surface (with `PART_OF` → the

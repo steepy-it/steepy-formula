@@ -10,7 +10,10 @@ docs/brand/
 !.claude/skills/steepy-formula-bootstrap
 
 # Local workflow artifacts must never enter release history.
-/.apex/work/
+/.formula/work/
+
+# A leftover steepy-apex area is migration input, never committed.
+/.apex/
 
 # This repo's own graph checkpoint stays local; dogfood tests skip when it is absent.
 /tests/fixtures/dogfood-export.jsonl

@@ -66,10 +66,10 @@ returned — no Markdown doc is offered, because none exists.
 
 This keeps a run bounded and re-runnable one surface at a time.
 
-If `.apex/inception/run.json` exists, its `schema` is
+If `.formula/inception/run.json` exists, its `schema` is
 `steepy-inception-run/v2`, and its `status` is `complete` (with phase `complete`), also offer the
 **inception source**: import decisions only if Step 2a verifies that completed delivery. Read only
-that one file to check this, and never list `.apex/inception/`. This is a candidate offer, not a
+that one file to check this, and never list `.formula/inception/`. This is a candidate offer, not a
 verified source; do not load approval or document bodies here. Otherwise do not mention the
 inception source; absent, active or blocked runs and an unsupported run format leave ordinary
 discovery available with the user's selected scope. Never migrate or restart a run.
@@ -87,8 +87,8 @@ For each surface selected in Step 1, run this loop:
    to typed candidate kinds) — plus a couple of
    surface-type heuristics (e.g. a UI surface might add "component patterns"). The user picks which
    areas matter for this run, or adds their own.
-2. **Explore.** Ensure `.apex/work/discovery/` exists (create it if absent), then set
-   `[REPORT_FILE] = .apex/work/discovery/YYYY-MM-DD-<surface>.md`. If your harness provides a
+2. **Explore.** Ensure `.formula/work/discovery/` exists (create it if absent), then set
+   `[REPORT_FILE] = .formula/work/discovery/YYYY-MM-DD-<surface>.md`. If your harness provides a
    task/subagent tool, dispatch a fresh subagent per surface using
    `skills/discovery/explore-surface-prompt.md`; otherwise perform the exploration inline in a
    dedicated pass over the same inputs, and state the inline degradation in the run's report (Step 4).
@@ -144,7 +144,7 @@ For each surface selected in Step 1, run this loop:
 5. **Write-back.** The accepted item cards never edit anything directly: they become a typed
    candidates document — the closed schema of `scripts/formula/core/scenario-assembly.mjs`,
    whose wrapper is that schema's only interpreter (kinds `term`/`rule`/`decision`/`readme`;
-   this prose maps nothing itself) — written to `.apex/work/discovery/YYYY-MM-DD-<surface>-candidates.json`
+   this prose maps nothing itself) — written to `.formula/work/discovery/YYYY-MM-DD-<surface>-candidates.json`
    as its `candidates` array:
    - glossary terms → `{kind:'term', term, definition}`
    - conventions / anti-patterns → `{kind:'rule', title, statement, concern, strength,
@@ -184,7 +184,7 @@ For each surface selected in Step 1, run this loop:
 Run this step only when the user chose the inception source in Step 1. It runs right after Step 1
 and before Step 2; the run then continues with Step 2 for the selected surfaces. It turns the
 decisions of a completed inception run into typed graph candidates landed through one promotion
-scenario. Read by exact path only: never list `.apex/inception/` or a directory under it. A stop
+scenario. Read by exact path only: never list `.formula/inception/` or a directory under it. A stop
 in this step ends only the inception source; Step 2, Step 3 and Step 4 still run.
 
 1. **Verify before reading.** Before reading any source approval, document, summary, or report
@@ -203,7 +203,7 @@ in this step ends only the inception source; Step 2, Step 3 and Step 4 still run
    Only after both succeed may the coordinator or explorer read source bodies, and only the exact
    returned `inputPaths`. Do not traverse descriptor or approval refs, append raw evidence, infer
    summary/report paths, or choose an approval by recency. Stop this source if
-   `.apex/inception/project/decision-register.md` is not among the returned `inputPaths`.
+   `.formula/inception/project/decision-register.md` is not among the returned `inputPaths`.
 
    On nonzero exit, `ok: false`, malformed output, missing fields, or a head past the
    initialization revision, stop only the inception source and report the returned reason
@@ -214,8 +214,8 @@ in this step ends only the inception source; Step 2, Step 3 and Step 4 still run
    Step 1; the per-surface interview and Steps 3–4 continue. Keep the complete run and all its
    evidence immutable: no reopen, repeat bootstrap, migration or restart. A refused source is not a
    request to widen the discovery scope.
-2. **Explore.** Ensure `.apex/work/discovery/` exists (create it if absent), then set
-   `[REPORT_FILE] = .apex/work/discovery/YYYY-MM-DD-inception.md`. If your harness provides a
+2. **Explore.** Ensure `.formula/work/discovery/` exists (create it if absent), then set
+   `[REPORT_FILE] = .formula/work/discovery/YYYY-MM-DD-inception.md`. If your harness provides a
    task/subagent tool, dispatch a fresh subagent using `skills/discovery/explore-inception-prompt.md`,
    and always set `model: standard` explicitly. Pass `[INPUT_PATHS]` = exactly the successful gate's
    `inputPaths` array, unchanged — no other run path. Also pass `[REPORT_FILE]` and, as
@@ -249,8 +249,8 @@ in this step ends only the inception source; Step 2, Step 3 and Step 4 still run
    next run's gate still passes and the import starts again (discard a leftover
    `inception-<runId>` draft first with `steepy-formula promotion discard`). Then record the decision
    outcomes (item 6) and write every accepted candidate, verbatim as previewed, into one candidates
-   file `.apex/work/discovery/YYYY-MM-DD-inception-candidates.json` (the Step 2.5 schema). Candidate
-   text never names, cites, or links `.apex/inception/`; the Evidence stays in the interview. Drive
+   file `.formula/work/discovery/YYYY-MM-DD-inception-candidates.json` (the Step 2.5 schema). Candidate
+   text never names, cites, or links `.formula/inception/`; the Evidence stays in the interview. Drive
    the CLI once, with the deterministic scenario id `inception-<runId>`:
 
    ```bash

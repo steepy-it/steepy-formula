@@ -1,5 +1,5 @@
 // Portable graph validator for the Stable Knowledge Graph (spec
-// .apex/work/specs/2026-08-11-stable-knowledge-graph.md "Required graph invariants", §5, §6, §7,
+// .formula/work/specs/2026-08-11-stable-knowledge-graph.md "Required graph invariants", §5, §6, §7,
 // §10, §24). This is the governance heart: `GRAPH_INVALID` (failure table), promotion validation
 // (§11) and schema migration (§27) all decide on the results returned here.
 //

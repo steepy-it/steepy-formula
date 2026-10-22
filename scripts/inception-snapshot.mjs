@@ -19,7 +19,7 @@ export function withApplicationSnapshotLease(root, action) {
 }
 // Formula: `.formula/` holds the graph engine binding and local engine state, written by
 // `graph init` during the first post-complete init; it is never application content.
-const RESERVED = ['.apex/inception', '.apex/work', '.formula', '.git'];
+const RESERVED = ['.formula/inception', '.formula/work', '.formula', '.git'];
 const absentGit = () => ({ present: false, branch: null, head: null, status: [] });
 const identity = stat => `${stat.dev}:${stat.ino}`;
 const within = (path, root) => root === '.' || path === root || path.startsWith(`${root}/`);

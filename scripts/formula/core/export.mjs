@@ -1,5 +1,5 @@
 // Signed export, restore and retention for the Stable Knowledge Graph (spec
-// .apex/work/specs/2026-08-11-stable-knowledge-graph.md §22 "Backup and disaster recovery",
+// .formula/work/specs/2026-08-11-stable-knowledge-graph.md §22 "Backup and disaster recovery",
 // success criteria 9 and 14). This is the "the database can be deleted and rebuilt" guarantee:
 // a portable dump of everything a fresh port needs to reconstruct the same stable state, plus a
 // pure retention decision function so old exports can be pruned deterministically.

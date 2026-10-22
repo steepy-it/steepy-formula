@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Turn a local working spec into a step-by-step implementation plan. Each step names the owning surface and specialist agent and the surface test command; the plan is written into .apex/work/plans/ as a gitignored work artifact.
+description: Turn a local working spec into a step-by-step implementation plan. Each step names the owning surface and specialist agent and the surface test command; the plan is written into .formula/work/plans/ as a gitignored work artifact.
 user-invocable: true
 ---
 <!-- steepy:manual-handoff:v1:start -->
@@ -36,7 +36,7 @@ outside the repository. Never infer corrections. An explicit malformed or stale 
 without discovery. Supporting `onDemand` inputs are never preloaded; read one only for a concrete
 named missing fact. Stable routing inputs stay outside the envelope and follow bootstrap routing.
 Native invocation spelling comes only from the active harness. No child inherits general
-`.apex/work/**` access; pass only its accepted role paths.
+`.formula/work/**` access; pass only its accepted role paths.
 
 Every new work artifact starts with verdict/contract metadata when that phase requires it, followed
 immediately by this versioned header before the Markdown title:
@@ -133,7 +133,7 @@ the goal it chases, with review checkpoints.
 1. Load the spec and resolve the graph context (`context resolve`) (Step 1).
 2. Map files and tasks.
 3. Bind each task to the hub (surface, specialist agent, test command, complexity).
-4. Write the plan into `.apex/work/plans/`.
+4. Write the plan into `.formula/work/plans/`.
 4.5. Self-review the plan inline — free gate, gear 2 and 3 (Step 4.5).
 5. Validate with `steepy-formula graph validate` (deterministic gate).
 6. Human review gate — ask the user to review the written plan before handoff (gear 3).
@@ -169,7 +169,7 @@ straight to Step 7 after any sole consumption repair, without writing another pl
    Exact valid input is accepted. Missing, malformed, stale, wrong-state, or wrong-role input fails
    closed: report the literal defect and stop without discovery or inferred correction.
 2. **Bounded recovery.** Only when no envelope or path was supplied, enumerate the immediate specs
-   directory (`.apex/work/specs/`, no recursion), inspect only bounded `steepy-workflow` headers,
+   directory (`.formula/work/specs/`, no recursion), inspect only bounded `steepy-workflow` headers,
    list candidates whose header is exactly `phase: brainstorm`, `status: READY`, `next: plan` with
    path and compact header metadata, and require user selection even when there is exactly one candidate.
    Never open or read a candidate body. Headerless artifacts are ignored by
@@ -178,7 +178,7 @@ straight to Step 7 after any sole consumption repair, without writing another pl
    binding before continuing.
 
 Do not read the selected spec's verdict or body until that exact binding is accepted.
-Read the verdict artifact (`verdict` + `gear`) only from the accepted `.apex/work/` spec head.
+Read the verdict artifact (`verdict` + `gear`) only from the accepted `.formula/work/` spec head.
 - **Artifact present:** honor its gear.
 - **Artifact present with `gear: 4`:** this task belongs to the autonomous loop; bounce to
   the `loop-engineer` skill and stop.
@@ -186,7 +186,7 @@ Read the verdict artifact (`verdict` + `gear`) only from the accepted `.apex/wor
   that the contract agrees with the conductor-supplied phase manifest already read first. Apply the
   Step 6 autopilot branch below and never ask the user anything.
   An invalid manifest, missing required input, undeclared or unwritable output, or anything else
-  unresolvable is a manifest/output failure: append `<ISO> — plan — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>` to `.apex/work/tasks/<spec-basename>/autopilot-status.md`
+  unresolvable is a manifest/output failure: append `<ISO> — plan — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>` to `.formula/work/tasks/<spec-basename>/autopilot-status.md`
   and exit non-zero.
 - **Artifact absent and this is gear-1/2 work:** recompute the coverage verdict inline (COVERED /
   CONFLICT / GAP with `file:line` evidence → gear). Declare the recomputed
@@ -302,7 +302,7 @@ own reviewer (Step 3.4).
 
 ### Step 4 — Write the local working plan
 
-**Manual drive:** on a fresh run, choose an absent `.apex/work/plans/YYYY-MM-DD-<topic>.md` path;
+**Manual drive:** on a fresh run, choose an absent `.formula/work/plans/YYYY-MM-DD-<topic>.md` path;
 an existing target requires the exact resume capability before reading or overwriting it. On resume,
 retain the accepted `output-plan` path, never recalculate its date. After any verdict/contract metadata and before the title, write:
 
@@ -324,7 +324,7 @@ Then link back to its source spec with a relative work-area link:
 manifest's `outputs` list. Do not recompute the date or filename. Use that actual path in the
 correlated `DONE` marker, and derive the relative source-spec back-link from its location.
 
-Create `.apex/work/plans/` if it does not exist. Do not create a plans sub-index. Plans are local workflow artifacts, not stable hub documentation.
+Create `.formula/work/plans/` if it does not exist. Do not create a plans sub-index. Plans are local workflow artifacts, not stable hub documentation.
 
 ### Step 4.5 — Self-review the plan (free gate)
 
@@ -388,7 +388,7 @@ Never repair a CONSUMED-spec/DRAFT-plan pair or consume an unverified plan.
 
 Autopilot status timestamps must use UTC with three millisecond digits (`YYYY-MM-DDTHH:mm:ss.sssZ`), generated with `new Date().toISOString()`.
 
-**Autopilot:** If `drive: autopilot` is present in the verdict contract (Step 0), the human gate is superseded — this is a non-blocking checkpoint. The plan file is on disk; the human can interrupt the run. Skip the question, do NOT wait, and append `<ISO timestamp> — plan — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <plan path>` to `.apex/work/tasks/<spec-basename>/autopilot-status.md` (spec filename without `.md`; the status file already exists). Step 4.5 self-review and Step 5 `graph validate` still run and still gate.
+**Autopilot:** If `drive: autopilot` is present in the verdict contract (Step 0), the human gate is superseded — this is a non-blocking checkpoint. The plan file is on disk; the human can interrupt the run. Skip the question, do NOT wait, and append `<ISO timestamp> — plan — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <plan path>` to `.formula/work/tasks/<spec-basename>/autopilot-status.md` (spec filename without `.md`; the status file already exists). Step 4.5 self-review and Step 5 `graph validate` still run and still gate.
 
 ### Step 7 — Hand off
 

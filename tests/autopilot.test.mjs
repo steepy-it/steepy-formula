@@ -550,7 +550,7 @@ describe('autopilot conductor loop', () => {
   describe('phasePrompt(phase, specPath)', () => {
     it('names the phase skill and the spec path for every phase, harness-neutrally', () => {
       for (const phase of ['plan', 'implement', 'review']) {
-        const prompt = autopilot.phasePrompt(phase, '/repo/.apex/work/specs/topic.md');
+        const prompt = autopilot.phasePrompt(phase, '/repo/.formula/work/specs/topic.md');
         assert.ok(
           prompt.includes(`steepy-formula '${phase}' skill`),
           `prompt for ${phase} must name the steepy-formula '${phase}' skill, got: ${prompt}`,
@@ -559,7 +559,7 @@ describe('autopilot conductor loop', () => {
           !prompt.includes('/steepy-formula:'),
           `prompt must not hardcode the Claude slash-command syntax, got: ${prompt}`,
         );
-        assert.ok(prompt.includes('/repo/.apex/work/specs/topic.md'));
+        assert.ok(prompt.includes('/repo/.formula/work/specs/topic.md'));
       }
     });
 
@@ -597,9 +597,9 @@ describe('autopilot conductor loop', () => {
       const prompt = autopilot.phasePrompt('review', '/repo/spec.md', {
         runId: '12345678-1234-4234-8234-123456789abc',
         attempt: 3,
-        manifestPath: '.apex/work/tasks/topic/context/phase-review-attempt-3.json',
+        manifestPath: '.formula/work/tasks/topic/context/phase-review-attempt-3.json',
       });
-      assert.match(prompt, /Context manifest: \.apex\/work\/tasks\/topic\/context\/phase-review-attempt-3\.json/);
+      assert.match(prompt, /Context manifest: \.formula\/work\/tasks\/topic\/context\/phase-review-attempt-3\.json/);
       assert.match(prompt, /authoritative input inventory/i);
       assert.doesNotMatch(prompt, /UPSTREAM_BODY_SENTINEL/);
       assert.doesNotMatch(prompt, /\/repo\/spec\.md/, 'manifest mode must not direct a full spec read');
@@ -687,7 +687,7 @@ describe('autopilot conductor loop', () => {
         '2026-08-11T10:00:01.000Z — plan — SPAWNED — run-id=22222222-2222-4222-8222-222222222222 phase=plan attempt=50',
         '2026-08-11T10:00:02.000Z — CONDUCTOR — SPAWNED — run-id=33333333-3333-4333-8333-333333333333 phase=implement attempt=7 display-name=x readable=y raw=z session=pending',
         '2026-08-11T10:00:03.000Z — CONDUCTOR — SPAWNED — run-id=44444444-4444-4444-8444-444444444444 phase=plan attempt=2 display-name=steepy-topic-plan-a2-44444444 readable=phase-1-attempt-2.log raw=phase-1-attempt-2.raw.jsonl session=pending',
-        '2026-08-11T10:00:04.000Z — CONDUCTOR — ARTIFACT_FAILED — run-id=55555555-5555-4555-8555-555555555555 phase=plan attempt=3 manifest=.apex/work/tasks/topic/context/phase-plan-attempt-3.json reason=missing',
+        '2026-08-11T10:00:04.000Z — CONDUCTOR — ARTIFACT_FAILED — run-id=55555555-5555-4555-8555-555555555555 phase=plan attempt=3 manifest=.formula/work/tasks/topic/context/phase-plan-attempt-3.json reason=missing',
         '2026-08-11T10:00:05.000Z — CONDUCTOR — ATTEMPT_RESERVED — run-id=66666666-6666-4666-8666-666666666666 phase=plan attempt=4',
       ].join('\n');
       assert.equal(autopilot.nextPhaseAttempt(status, 'plan'), 5);
@@ -775,7 +775,7 @@ describe('autopilot conductor loop', () => {
     });
 
     it('creates the file and appends one ISO-timestamped protocol line per call', () => {
-      const statusPath = '.apex/work/tasks/unit-create/autopilot-status.md';
+      const statusPath = '.formula/work/tasks/unit-create/autopilot-status.md';
       autopilot.appendStatus(dir, statusPath, 'CONDUCTOR', 'SPAWNED', 'plan → phase-1.log');
       autopilot.appendStatus(dir, statusPath, 'plan', 'DONE', 'plan written');
       const lines = readFileSync(join(dir, statusPath), 'utf8').trim().split('\n');
@@ -785,7 +785,7 @@ describe('autopilot conductor loop', () => {
     });
 
     it('strips control characters from a note instead of throwing', () => {
-      const statusPath = '.apex/work/tasks/unit-controls/autopilot-status.md';
+      const statusPath = '.formula/work/tasks/unit-controls/autopilot-status.md';
       // A child's note can echo terminal escapes; recording the event must never
       // fail — the sanitize gate is defense in depth, not a trust boundary here.
       autopilot.appendStatus(dir, statusPath, 'CONDUCTOR', 'HALTED', 'plan: \u001b[31mred\u001b[0m output');
@@ -797,7 +797,7 @@ describe('autopilot conductor loop', () => {
     });
 
     it('keeps a multi-line note on one line (append-only, one line per event)', () => {
-      const statusPath = '.apex/work/tasks/unit-multiline/autopilot-status.md';
+      const statusPath = '.formula/work/tasks/unit-multiline/autopilot-status.md';
       autopilot.appendStatus(dir, statusPath, 'CONDUCTOR', 'HALTED', 'git failed:\nfatal: not a repo\n');
       const text = readFileSync(join(dir, statusPath), 'utf8');
       assert.equal(text.trim().split('\n').length, 1);
@@ -805,7 +805,7 @@ describe('autopilot conductor loop', () => {
     });
 
     it('appends to an existing ordinary status file without rewriting its bytes', () => {
-      const statusPath = '.apex/work/tasks/unit-append/autopilot-status.md';
+      const statusPath = '.formula/work/tasks/unit-append/autopilot-status.md';
       autopilot.appendStatus(dir, statusPath, 'CONDUCTOR', 'SPAWNED', 'first');
       const first = readFileSync(join(dir, statusPath), 'utf8');
       autopilot.appendStatus(dir, statusPath, 'plan', 'DONE', 'second');
@@ -818,10 +818,10 @@ describe('autopilot conductor loop', () => {
       const repoRoot = join(dir, 'symlink-run');
       const outside = join(dir, 'outside-sentinel');
       writeFileSync(outside, 'SENTINEL\n');
-      mkdirSync(join(repoRoot, '.apex', 'work', 'tasks', 'symlink-run'), { recursive: true });
-      symlinkSync(outside, join(repoRoot, '.apex', 'work', 'tasks', 'symlink-run', 'autopilot-status.md'));
+      mkdirSync(join(repoRoot, '.formula', 'work', 'tasks', 'symlink-run'), { recursive: true });
+      symlinkSync(outside, join(repoRoot, '.formula', 'work', 'tasks', 'symlink-run', 'autopilot-status.md'));
       assert.throws(
-        () => autopilot.appendStatus(repoRoot, '.apex/work/tasks/symlink-run/autopilot-status.md', 'CONDUCTOR', 'HALTED', 'nope'),
+        () => autopilot.appendStatus(repoRoot, '.formula/work/tasks/symlink-run/autopilot-status.md', 'CONDUCTOR', 'HALTED', 'nope'),
         /work path: .*symlink/u,
       );
       assert.equal(readFileSync(outside, 'utf8'), 'SENTINEL\n', 'the outside sentinel must stay untouched');
@@ -898,7 +898,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
     execFileSync('git', ['init', '-q', '-b', repoBranch], { cwd: dir });
     execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
-    writeFileSync(join(dir, '.gitignore'), '.apex/work/\n');
+    writeFileSync(join(dir, '.gitignore'), '.formula/work/\n');
     // A project model pin is committed config, not work in progress: the
     // fresh-run preflight demands a clean tree, so it joins the baseline.
     const trackedPaths = ['.gitignore', '.apex'];
@@ -915,10 +915,10 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
     writeFileSync(join(dir, '.apex', '.gitkeep'), '');
     execFileSync('git', ['add', ...trackedPaths], { cwd: dir });
     execFileSync('git', ['commit', '-q', '-m', 'baseline'], { cwd: dir });
-    mkdirSync(join(dir, '.apex', 'work', 'specs'), { recursive: true });
-    const specPath = join(dir, '.apex', 'work', 'specs', 'topic.md');
+    mkdirSync(join(dir, '.formula', 'work', 'specs'), { recursive: true });
+    const specPath = join(dir, '.formula', 'work', 'specs', 'topic.md');
     writeFileSync(specPath, rawSpec ?? specText(contract));
-    const taskDir = join(dir, '.apex', 'work', 'tasks', 'topic');
+    const taskDir = join(dir, '.formula', 'work', 'tasks', 'topic');
     if (taskResultSeed !== undefined) {
       mkdirSync(taskDir, { recursive: true });
       writeFileSync(join(taskDir, 'autopilot-status.md'), protocolLine
@@ -928,7 +928,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   }
 
   function seedPlanArtifacts(run) {
-    const planPath = join(run.dir, '.apex', 'work', 'plans', 'topic.md');
+    const planPath = join(run.dir, '.formula', 'work', 'plans', 'topic.md');
     mkdirSync(dirname(planPath), { recursive: true });
     writeFileSync(planPath, '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Success criteria:** SC1\n');
     mkdirSync(run.taskDir, { recursive: true });
@@ -938,7 +938,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   // Runs the conductor with the fixture env set and console captured, so the
   // suite output stays pristine even for the halt cases.
   async function drive(run, env = {}, { cliArgs, ...opts } = {}) {
-    const fixtureHome = join(run.dir, '.apex', 'work', 'test-home');
+    const fixtureHome = join(run.dir, '.formula', 'work', 'test-home');
     const vars = {
       HOME: fixtureHome,
       XDG_CONFIG_HOME: join(env.HOME ?? fixtureHome, '.config'),
@@ -986,14 +986,14 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   it('rejects invalid explicit resume capabilities before writing run state or dispatching', async () => {
     const run = makeRun();
     try {
-      const before = readdirSync(join(run.dir, '.apex', 'work'));
-      for (const resumeInputs of [null, 'bad', ['.apex/work/tasks/another/task-1-report.md'],
-        ['.apex/work/tasks/topic/task-99-report.md'], ['.apex/work/tasks/topic/ledger.md']]) {
+      const before = readdirSync(join(run.dir, '.formula', 'work'));
+      for (const resumeInputs of [null, 'bad', ['.formula/work/tasks/another/task-1-report.md'],
+        ['.formula/work/tasks/topic/task-99-report.md'], ['.formula/work/tasks/topic/ledger.md']]) {
         const result = await drive(run, {}, { resumeInputs, commandFor: () => { throw new Error('must not dispatch'); } });
         assert.equal(result.code, 1);
         assert.match(result.err, /resume input/i);
         assert.equal(existsSync(run.taskDir), false);
-        assert.deepEqual(readdirSync(join(run.dir, '.apex', 'work')), before);
+        assert.deepEqual(readdirSync(join(run.dir, '.formula', 'work')), before);
       }
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
@@ -1001,7 +1001,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   it('rechecks resume inputs under the lease before creating run state', async () => {
     const run = makeRun({ taskResultSeed: 2 });
     try {
-      const path = '.apex/work/tasks/topic/task-1-report.md';
+      const path = '.formula/work/tasks/topic/task-1-report.md';
       writeFileSync(join(run.dir, path), 'existing evidence');
       const before = readFileSync(run.statusFile);
       const result = await drive(run, {}, {
@@ -1020,7 +1020,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
     const run = makeRun({ taskResultSeed: 2 });
     const original = fs.lstatSync;
     try {
-      const prefix = '.apex/work/tasks/topic/';
+      const prefix = '.formula/work/tasks/topic/';
       const root = fs.realpathSync(run.dir);
       const aliases = new Map();
       const variants = [];
@@ -1148,7 +1148,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         assert.equal(lockTransitions, 0);
         assert.equal(existsSync(run.taskDir), false, 'status, logs, manifests, and usage must remain absent');
         assert.equal(
-          readdirSync(join(run.dir, '.apex', 'work')).some((name) => name.startsWith('.gear-3-autopilot.lock')),
+          readdirSync(join(run.dir, '.formula', 'work')).some((name) => name.startsWith('.gear-3-autopilot.lock')),
           false,
           'no checkout-lock candidate or generation may be created',
         );
@@ -1473,7 +1473,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
 
   it('builds each phase manifest at artifact readiness and routes the actual descriptor before SPAWNED', async () => {
     const run = makeRun();
-    const capturePath = join(run.dir, '.apex', 'work', 'spawn-capture.jsonl');
+    const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -1511,7 +1511,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
 
       const criteriaPath = join(run.taskDir, 'success-criteria.md');
       const criteriaText = readFileSync(criteriaPath, 'utf8');
-      assert.match(criteriaText, /Source: `\.apex\/work\/specs\/topic\.md`/);
+      assert.match(criteriaText, /Source: `\.formula\/work\/specs\/topic\.md`/);
       assert.match(criteriaText, /Heading: `## Success criteria`/);
       assert.doesNotMatch(criteriaText, /UPSTREAM_BODY_SENTINEL/);
 
@@ -1521,14 +1521,14 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
       assert.equal(routed.length, 3, status);
       const expectedRequired = {
         plan: [
-          '.apex/work/specs/topic.md', '.apex/work/tasks/topic/context/hub-context/context.md',
+          '.formula/work/specs/topic.md', '.formula/work/tasks/topic/context/hub-context/context.md',
         ],
         implement: [
-          '.apex/work/plans/topic.md',
+          '.formula/work/plans/topic.md',
         ],
         review: [
-          '.apex/work/tasks/topic/success-criteria.md', '.apex/work/tasks/topic/task-result-index.md',
-          '.apex/work/tasks/topic/branch-diff.txt', '.apex/work/tasks/topic/context/hub-context/context.md',
+          '.formula/work/tasks/topic/success-criteria.md', '.formula/work/tasks/topic/task-result-index.md',
+          '.formula/work/tasks/topic/branch-diff.txt', '.formula/work/tasks/topic/context/hub-context/context.md',
         ],
       };
       for (const [index, phase] of ['plan', 'implement', 'review'].entries()) {
@@ -1541,22 +1541,22 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         assert.deepEqual(manifest.required.map(({ path }) => path), expectedRequired[phase]);
         if (phase === 'implement') {
           assert.deepEqual(manifest.onDemand.map(({ path, available }) => [path, available]), [
-            ['.apex/work/tasks/topic/context/hub-context/context.md', true],
-            ['.apex/work/tasks/topic/ledger.md', false],
-            ['.apex/work/tasks/topic/task-result-index.md', false],
-            ['.apex/work/specs/topic.md', true],
+            ['.formula/work/tasks/topic/context/hub-context/context.md', true],
+            ['.formula/work/tasks/topic/ledger.md', false],
+            ['.formula/work/tasks/topic/task-result-index.md', false],
+            ['.formula/work/specs/topic.md', true],
           ]);
           assert.deepEqual(manifest.outputs, [
-            '.apex/work/tasks/topic/ledger.md',
-            '.apex/work/tasks/topic/task-result-index.md',
-            '.apex/work/tasks/topic/branch-diff.txt',
-            '.apex/work/tasks/topic/success-criteria.md',
+            '.formula/work/tasks/topic/ledger.md',
+            '.formula/work/tasks/topic/task-result-index.md',
+            '.formula/work/tasks/topic/branch-diff.txt',
+            '.formula/work/tasks/topic/success-criteria.md',
           ]);
         }
         if (phase === 'review') {
           assert.deepEqual(manifest.outputs, [
-            '.apex/work/tasks/topic/evidence-report.md',
-            '.apex/work/tasks/topic/review-report.md',
+            '.formula/work/tasks/topic/evidence-report.md',
+            '.formula/work/tasks/topic/review-report.md',
           ]);
         }
         if (phase !== 'implement') assert.deepEqual(manifest.onDemand, [], `${phase} carries no on-demand hub entries`);
@@ -1565,7 +1565,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         )));
         assert.doesNotMatch(JSON.stringify(manifest), /(?:UPSTREAM|PLAN)_BODY_SENTINEL/);
         assert.match(routed[index], new RegExp(`phase=${phase}.*attempt=1.*tier=${expectedTierByPhase[phase]}`));
-        assert.match(routed[index], new RegExp(`manifest=\\.apex/work/tasks/topic/context/phase-${phase}-attempt-1\\.json`));
+        assert.match(routed[index], new RegExp(`manifest=\\.formula/work/tasks/topic/context/phase-${phase}-attempt-1\\.json`));
         assert.match(routed[index], new RegExp(`manifest-bytes=${statSync(manifestPath).size}(?:\\s|$)`));
         assert.match(routed[index], new RegExp(`model-selection=applied model=${expectedModelByPhase[phase]} evidence=`));
         assert.ok(status.indexOf(routed[index]) < status.indexOf(spawned[index]), status);
@@ -1601,7 +1601,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         requestedModelTier: 'most-capable',
         resolvedModel: 'opus',
         modelSelection: 'applied',
-        manifestPath: '.apex/work/tasks/topic/context/phase-plan-attempt-1.json',
+        manifestPath: '.formula/work/tasks/topic/context/phase-plan-attempt-1.json',
         manifestBytes: statSync(join(run.taskDir, 'context', 'phase-plan-attempt-1.json')).size,
         usage: { inputTokens: 10, outputTokens: 2 },
       });
@@ -1621,7 +1621,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
         requestedModelTier: 'most-capable',
         resolvedModel: 'opus',
         modelSelection: 'applied',
-        manifestPath: '.apex/work/tasks/topic/context/phase-plan-attempt-1.json',
+        manifestPath: '.formula/work/tasks/topic/context/phase-plan-attempt-1.json',
         manifestBytes: statSync(join(run.taskDir, 'context', 'phase-plan-attempt-1.json')).size,
         usage: { inputTokens: 3 },
       });
@@ -1958,7 +1958,7 @@ if (process.argv[2] === '--version') {
     // XDG_CONFIG_HOME must be isolated too, or a developer's real XDG pin
     // leaks into the degraded path once the conductor honors it.
     const emptyHome = mkdtempSync(join(tmpdir(), 'steepy-autopilot-home-'));
-    const capturePath = join(run.dir, '.apex', 'work', 'spawn-capture.jsonl');
+    const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -1997,7 +1997,7 @@ if (process.argv[2] === '--version') {
       join(xdgConfigHome, 'opencode', 'opencode.json'),
       `${JSON.stringify({ model: 'zai-coding-plan/glm-5.3' }, null, 2)}\n`,
     );
-    const capturePath = join(run.dir, '.apex', 'work', 'spawn-capture.jsonl');
+    const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -2040,7 +2040,7 @@ if (process.argv[2] === '--version') {
     // Isolated HOME: the user-global config candidate must not leak into the
     // precedence chain, in either direction (pin or no pin).
     const emptyHome = mkdtempSync(join(tmpdir(), 'steepy-autopilot-home-'));
-    const capturePath = join(run.dir, '.apex', 'work', 'spawn-capture.jsonl');
+    const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -2094,7 +2094,7 @@ if (process.argv[2] === '--version') {
       opencodeConfigText: '// project pin\n{\n  // provider-pinned model\n  "model": "zai-coding-plan/glm-5.3",\n}\n',
     });
     const emptyHome = mkdtempSync(join(tmpdir(), 'steepy-autopilot-home-'));
-    const capturePath = join(run.dir, '.apex', 'work', 'spawn-capture.jsonl');
+    const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -2124,7 +2124,7 @@ if (process.argv[2] === '--version') {
     // Isolate XDG_CONFIG_HOME alongside HOME: a developer's real XDG pin must
     // not leak into this degraded-path assertion either.
     const emptyHome = mkdtempSync(join(tmpdir(), 'steepy-autopilot-home-'));
-    const capturePath = join(run.dir, '.apex', 'work', 'spawn-capture.jsonl');
+    const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -2275,7 +2275,7 @@ if (process.argv[2] === '--version') {
         join(run.taskDir, 'context', 'phase-review-attempt-1.json'), 'utf8',
       ));
       const entry = reviewManifest.required.find(
-        (item) => item.path === '.apex/work/tasks/topic/branch-diff.txt',
+        (item) => item.path === '.formula/work/tasks/topic/branch-diff.txt',
       );
       assert.ok(entry?.available, 'the generated diff must be a satisfied required input');
       assert.equal(entry.bytes, Buffer.byteLength(diff));
@@ -2324,7 +2324,7 @@ if (process.argv[2] === '--version') {
         join(run.taskDir, 'context', 'phase-plan-attempt-1.json'), 'utf8',
       ));
       assert.ok(
-        planManifest.required.some((entry) => entry.path === '.apex/work/tasks/topic/context/hub-context/context.md'),
+        planManifest.required.some((entry) => entry.path === '.formula/work/tasks/topic/context/hub-context/context.md'),
         'the resolved graph context must remain required for the implicated plan surface',
       );
     } finally {
@@ -2361,7 +2361,7 @@ if (process.argv[2] === '--version') {
       const { code } = await drive(run, { FAKE_HARNESS_MODE: 'done' }, {
         resolveHubContext: (request) => ({
           ...fakeResolveHubContext(request),
-          contextPath: '.apex/work/tasks/other/context/hub-context/context.md',
+          contextPath: '.formula/work/tasks/other/context/hub-context/context.md',
         }),
       });
       assert.equal(code, 1);
@@ -2403,7 +2403,7 @@ if (process.argv[2] === '--version') {
 
   it('routes all-mechanical implementation cheaply while enforcing the standard review floor', async () => {
     const run = makeRun({ featureComplexity: 'mechanical' });
-    const capturePath = join(run.dir, '.apex', 'work', 'spawn-capture.jsonl');
+    const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
     const mechanicalPlan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Success criteria:** SC1\n';
     try {
       const { code } = await drive(run, {
@@ -2427,14 +2427,14 @@ if (process.argv[2] === '--version') {
 
   it('rejects an omitted higher-complexity plan task before review spawn', async () => {
     const run = makeRun({ featureComplexity: 'mechanical' });
-    const capturePath = join(run.dir, '.apex', 'work', 'spawn-capture.jsonl');
+    const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
     const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** `scripts`\n- **Complexity:** `design`\n- **Success criteria:** SC2\n';
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
         FAKE_HARNESS_CAPTURE: capturePath,
         FAKE_HARNESS_PLAN_TEXT: plan,
-        FAKE_HARNESS_RESULT_INDEX_TEXT: '# Results\n\n- Task 1: DONE; artifact: .apex/work/tasks/topic/task-1-report.md; changed-paths: none; signals: tdd:red-green\n',
+        FAKE_HARNESS_RESULT_INDEX_TEXT: '# Results\n\n- Task 1: DONE; artifact: .formula/work/tasks/topic/task-1-report.md; changed-paths: none; signals: tdd:red-green\n',
       });
       assert.equal(code, 1);
       const captures = captureEntries(capturePath);
@@ -2449,8 +2449,8 @@ if (process.argv[2] === '--version') {
   for (const [label, resultIndex, reason] of [
     ['malformed', '# Results\n\n- Task one DONE\n', /malformed reviewed task entry/i],
     ['incomplete shorthand', '# Results\n\n- Task 1: DONE\n', /malformed reviewed task entry/i],
-    ['duplicate', '# Results\n\n- Task 1: DONE; artifact: .apex/work/tasks/topic/task-1-report.md; changed-paths: none; signals: none\n- Task 1: DONE; artifact: .apex/work/tasks/topic/task-1-report.md; changed-paths: none; signals: none\n', /duplicate reviewed task id '1'/i],
-    ['unknown', '# Results\n\n- Task 99: DONE; artifact: .apex/work/tasks/topic/task-99-report.md; changed-paths: none; signals: none\n', /unknown reviewed task id '99'/i],
+    ['duplicate', '# Results\n\n- Task 1: DONE; artifact: .formula/work/tasks/topic/task-1-report.md; changed-paths: none; signals: none\n- Task 1: DONE; artifact: .formula/work/tasks/topic/task-1-report.md; changed-paths: none; signals: none\n', /duplicate reviewed task id '1'/i],
+    ['unknown', '# Results\n\n- Task 99: DONE; artifact: .formula/work/tasks/topic/task-99-report.md; changed-paths: none; signals: none\n', /unknown reviewed task id '99'/i],
   ]) {
     it(`rejects ${label} reviewed-task index evidence before review spawn`, async () => {
       const run = makeRun();
@@ -2475,7 +2475,7 @@ if (process.argv[2] === '--version') {
 
   it('rejects a spec without Feature complexity before dispatch', async () => {
     const run = makeRun({ featureComplexity: null });
-    const capturePath = join(run.dir, '.apex', 'work', 'spawn-capture.jsonl');
+    const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
     try {
       const { code } = await drive(run, { FAKE_HARNESS_MODE: 'done', FAKE_HARNESS_CAPTURE: capturePath });
       assert.equal(code, 1);
@@ -2511,7 +2511,7 @@ if (process.argv[2] === '--version') {
       // input is the plan artifact; with it gone the phase halts before any spawn.
       writeFileSync(missing.statusFile, acceptedPhase());
       seedPlanArtifacts(missing);
-      rmSync(join(missing.dir, '.apex', 'work', 'plans', 'topic.md'));
+      rmSync(join(missing.dir, '.formula', 'work', 'plans', 'topic.md'));
       const spawnedBefore = linesWith(statusOf(missing), ' — SPAWNED — ').length;
       const missingResult = await drive(missing, { FAKE_HARNESS_MODE: 'done' });
       assert.equal(missingResult.code, 1);
@@ -3430,7 +3430,7 @@ if (process.argv[2] === '--version') {
       const status = assertProtocolHalt(run, result, before);
       assert.ok(status.startsWith(before));
       assert.equal(status.slice(before.length).trimEnd().split('\n').length, 1, 'only the HALTED line is appended');
-      assert.match(result.err, /\.apex\/work\/tasks\/topic\/context\/phase-plan-attempt-1\.json/);
+      assert.match(result.err, /\.formula\/work\/tasks\/topic\/context\/phase-plan-attempt-1\.json/);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
@@ -3450,7 +3450,7 @@ if (process.argv[2] === '--version') {
       const after = JSON.parse(readFileSync(join(run.taskDir, 'task-2-execution-1-baseline.json')));
       assert.notEqual(before.config.runId, after.config.runId);
       assert.equal(after.config.attempt, 2);
-      assert.equal(after.config.parentState, '.apex/work/tasks/topic/task-1-execution-1');
+      assert.equal(after.config.parentState, '.formula/work/tasks/topic/task-1-execution-1');
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
@@ -3566,7 +3566,7 @@ if (process.argv[2] === '--version') {
       assert.deepEqual(parseTaskResultProjection(beforeIndex).map((entry) => entry.task), ['1', '2']);
       const evidencePaths = ['context/phase-implement-attempt-1.json', 'phase-2-attempt-1.log', 'phase-2-attempt-1.raw.jsonl'];
       const evidence = evidencePaths.map((path) => readFileSync(join(run.taskDir, path), 'utf8'));
-      const resumeInputs = ['task-3-issues.md', 'task-3-review.md'].map((name) => `.apex/work/tasks/topic/${name}`);
+      const resumeInputs = ['task-3-issues.md', 'task-3-review.md'].map((name) => `.formula/work/tasks/topic/${name}`);
       assert.equal((await drive(run, env, {
         cliArgs: ['--resume-input', resumeInputs[0], run.specPath, '--resume-input', resumeInputs[1]],
       })).code, 0);
@@ -4018,7 +4018,7 @@ if (process.argv[2] === '--version') {
   });
 
   describe('checkout generation lease', () => {
-    const lockOf = (run) => join(run.dir, '.apex/work/.gear-3-autopilot.lock');
+    const lockOf = (run) => join(run.dir, '.formula/work/.gear-3-autopilot.lock');
     const ownerOf = (run) => join(lockOf(run), 'owner.json');
     const seed = (run, record = { schemaVersion: 1, pid: process.pid, token: 'dead-generation' }) => {
       mkdirSync(lockOf(run));
@@ -4037,10 +4037,10 @@ if (process.argv[2] === '--version') {
           if (variant === 'malformed') writeFileSync(ownerOf(run), '{');
           if (variant === 'shape') writeFileSync(ownerOf(run), JSON.stringify({ schemaVersion: 1, pid: process.pid, token: 'dead-generation', extra: true }));
           if (variant === 'symlink') {
-            renameSync(ownerOf(run), join(run.dir, '.apex/work/sentinel'));
+            renameSync(ownerOf(run), join(run.dir, '.formula/work/sentinel'));
             symlinkSync('../sentinel', ownerOf(run));
           }
-          if (variant === 'multilink') linkSync(ownerOf(run), join(run.dir, '.apex/work/sentinel'));
+          if (variant === 'multilink') linkSync(ownerOf(run), join(run.dir, '.formula/work/sentinel'));
           if (variant === 'fifo') {
             rmSync(ownerOf(run));
             execFileSync('mkfifo', [ownerOf(run)]);
@@ -4098,7 +4098,7 @@ if (process.argv[2] === '--version') {
         const result = await drive(run, { FAKE_HARNESS_MODE: 'done' }, { processProbe: deadProbe });
         assert.equal(result.code, 0);
         assert.equal(readFileSync(`${lockOf(run)}.stale-dead-generation/owner.json`, 'utf8'), bytes);
-        assert.match(statusOf(run), /LOCK_RECOVERED.*run-id=.*quarantine=\.apex\/work\/\.gear-3-autopilot\.lock\.stale-dead-generation.*pid=/);
+        assert.match(statusOf(run), /LOCK_RECOVERED.*run-id=.*quarantine=\.formula\/work\/\.gear-3-autopilot\.lock\.stale-dead-generation.*pid=/);
         assert.ok(!existsSync(lockOf(run)));
       } finally { rmSync(run.dir, { recursive: true, force: true }); }
     });
@@ -4151,7 +4151,7 @@ if (process.argv[2] === '--version') {
         const run = makeRun();
         const other = makeRun();
         try {
-          const spec = differentSpec ? join(run.dir, '.apex/work/specs/other.md') : run.specPath;
+          const spec = differentSpec ? join(run.dir, '.formula/work/specs/other.md') : run.specPath;
           if (differentSpec) writeFileSync(spec, readFileSync(run.specPath));
           let contender;
           let independent;
@@ -4243,12 +4243,12 @@ if (process.argv[2] === '--version') {
     it('refuses a spec whose name is not a safe run-directory segment', async () => {
       const run = makeRun();
       try {
-        const unsafeSpec = join(run.dir, '.apex', 'work', 'specs', 'to pic.md');
+        const unsafeSpec = join(run.dir, '.formula', 'work', 'specs', 'to pic.md');
         writeFileSync(unsafeSpec, readFileSync(run.specPath, 'utf8'));
         const { code, err } = await drive({ ...run, specPath: unsafeSpec }, {});
         assert.equal(code, 1);
         assert.match(err, /to pic/);
-        assert.ok(!existsSync(join(run.dir, '.apex', 'work', 'tasks')), 'no run directory is created');
+        assert.ok(!existsSync(join(run.dir, '.formula', 'work', 'tasks')), 'no run directory is created');
       } finally {
         rmSync(run.dir, { recursive: true, force: true });
       }
@@ -4275,7 +4275,7 @@ if (process.argv[2] === '--version') {
         assert.match(err, /graph-migrate/);
         assert.equal(existsSync(run.statusFile), false, 'a refused run writes no status file');
         assert.equal(existsSync(run.taskDir), false, 'a refused run creates no run directory');
-        assert.deepEqual(readdirSync(join(run.dir, '.apex', 'work')), ['specs'], 'nothing but the spec under the work dir (no lock)');
+        assert.deepEqual(readdirSync(join(run.dir, '.formula', 'work')), ['specs'], 'nothing but the spec under the work dir (no lock)');
       } finally {
         rmSync(run.dir, { recursive: true, force: true });
       }
@@ -4304,7 +4304,7 @@ if (process.argv[2] === '--version') {
           assert.equal(spawnAttempts, 0, 'must refuse before building any command');
           assert.match(err, expected);
           assert.equal(statusOf(run), '', 'a refused run writes no status line');
-          assert.ok(!existsSync(join(run.dir, '.apex', 'work', 'tasks')), 'a refused run writes nothing under the work dir');
+          assert.ok(!existsSync(join(run.dir, '.formula', 'work', 'tasks')), 'a refused run writes nothing under the work dir');
         } finally {
           rmSync(run.dir, { recursive: true, force: true });
         }
@@ -4337,7 +4337,7 @@ if (process.argv[2] === '--version') {
       { cwd, encoding: 'utf8' },
     );
     const noWorkDirWrites = (run) => assert.ok(
-      !existsSync(join(run.dir, '.apex', 'work', 'tasks')),
+      !existsSync(join(run.dir, '.formula', 'work', 'tasks')),
       'a refused run must leave nothing under the work dir',
     );
     const outsideSentinel = (content = 'OUTSIDE-SENTINEL\n') => {
@@ -4351,7 +4351,7 @@ if (process.argv[2] === '--version') {
       'keeps a pre-confinement conductor at its dirty-tree refusal, never at a real spawn\n',
     );
 
-    it('CLI refuses a valid source spec outside .apex/work/specs/ with zero spawns and zero work-dir writes', () => {
+    it('CLI refuses a valid source spec outside .formula/work/specs/ with zero spawns and zero work-dir writes', () => {
       const run = makeRun();
       const stray = join(run.dir, 'outside-spec.md');
       writeFileSync(stray, specText());
@@ -4366,9 +4366,9 @@ if (process.argv[2] === '--version') {
       }
     });
 
-    it('CLI refuses an existing .apex/work/plans file as the source spec (wrong type for the site)', () => {
+    it('CLI refuses an existing .formula/work/plans file as the source spec (wrong type for the site)', () => {
       const run = makeRun();
-      const planPath = join(run.dir, '.apex', 'work', 'plans', 'topic.md');
+      const planPath = join(run.dir, '.formula', 'work', 'plans', 'topic.md');
       mkdirSync(dirname(planPath), { recursive: true });
       writeFileSync(planPath, specText());
       dirtyMarker(run);
@@ -4386,7 +4386,7 @@ if (process.argv[2] === '--version') {
       const run = makeRun();
       dirtyMarker(run);
       try {
-        const r = conductorCli(run.dir, '.apex/work/specs//topic.md');
+        const r = conductorCli(run.dir, '.formula/work/specs//topic.md');
         assert.equal(r.status, 1);
         assert.match(r.stderr, /empty segment/);
         noWorkDirWrites(run);
@@ -4418,7 +4418,7 @@ if (process.argv[2] === '--version') {
       const outside = mkdtempSync(join(tmpdir(), 'steepy-autopilot-outside-'));
       dirtyMarker(run);
       try {
-        mkdirSync(join(run.dir, '.apex', 'work', 'tasks'), { recursive: true });
+        mkdirSync(join(run.dir, '.formula', 'work', 'tasks'), { recursive: true });
         symlinkSync(outside, run.taskDir);
         const r = conductorCli(run.dir, run.specPath);
         assert.equal(r.status, 1);
@@ -4430,13 +4430,13 @@ if (process.argv[2] === '--version') {
       }
     });
 
-    it('CLI refuses a symlinked .apex/work/tasks ancestor with zero bytes written outside', () => {
+    it('CLI refuses a symlinked .formula/work/tasks ancestor with zero bytes written outside', () => {
       const run = makeRun();
       const outside = mkdtempSync(join(tmpdir(), 'steepy-autopilot-outside-'));
       dirtyMarker(run);
       try {
-        mkdirSync(join(run.dir, '.apex', 'work'), { recursive: true });
-        symlinkSync(outside, join(run.dir, '.apex', 'work', 'tasks'));
+        mkdirSync(join(run.dir, '.formula', 'work'), { recursive: true });
+        symlinkSync(outside, join(run.dir, '.formula', 'work', 'tasks'));
         const r = conductorCli(run.dir, run.specPath);
         assert.equal(r.status, 1);
         assert.match(r.stderr, /symlink ancestor blocks/);
@@ -4455,7 +4455,7 @@ if (process.argv[2] === '--version') {
       const sentinel = outsideSentinel(`${process.pid}\n`);
       try {
         mkdirSync(run.taskDir, { recursive: true });
-        symlinkSync(sentinel.file, join(run.dir, '.apex/work/.gear-3-autopilot.lock'));
+        symlinkSync(sentinel.file, join(run.dir, '.formula/work/.gear-3-autopilot.lock'));
         const r = conductorCli(run.dir, run.specPath);
         assert.equal(r.status, 1);
         assert.match(r.stderr, /not an ordinary directory/);
@@ -4589,10 +4589,10 @@ describe('autopilot main(argv)', () => {
       execFileSync('git', ['init', '-q', '-b', 'gear3-topic'], { cwd: dir });
       execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
       execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
-      mkdirSync(join(dir, '.apex', 'work', 'specs'), { recursive: true });
-      const specPath = join(dir, '.apex', 'work', 'specs', 'manual-spec.md');
+      mkdirSync(join(dir, '.formula', 'work', 'specs'), { recursive: true });
+      const specPath = join(dir, '.formula', 'work', 'specs', 'manual-spec.md');
       writeFileSync(specPath, '<!-- verdict: GAP | gear: 3 -->\n\n# Manual spec\n');
-      const { code, err } = await captured(['.apex/work/specs/manual-spec.md'], { cwd: dir });
+      const { code, err } = await captured(['.formula/work/specs/manual-spec.md'], { cwd: dir });
       assert.equal(code, 1);
       assert.match(err, /drive: autopilot/);
       assert.ok(!/git branch/.test(err), `must not fall over on git, got: ${err}`);
@@ -4605,10 +4605,11 @@ describe('autopilot main(argv)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'steepy-autopilot-'));
     let spawnAttempts = 0;
     try {
-      mkdirSync(join(dir, '.apex', 'work', 'specs'), { recursive: true });
+      mkdirSync(join(dir, '.formula', 'work', 'specs'), { recursive: true });
+      mkdirSync(join(dir, '.apex'));
       writeFileSync(join(dir, '.apex', '_INDEX.md'), '# Markdown Hub\n');
-      writeFileSync(join(dir, '.apex', 'work', 'specs', 'topic.md'), '<!-- verdict: GAP | gear: 3\ndrive: autopilot\n-->\n\n# Spec\n');
-      const { code, err } = await captured(['.apex/work/specs/topic.md'], {
+      writeFileSync(join(dir, '.formula', 'work', 'specs', 'topic.md'), '<!-- verdict: GAP | gear: 3\ndrive: autopilot\n-->\n\n# Spec\n');
+      const { code, err } = await captured(['.formula/work/specs/topic.md'], {
         cwd: dir,
         commandFor: () => { spawnAttempts += 1; throw new Error('must not spawn'); },
       });
@@ -4616,9 +4617,9 @@ describe('autopilot main(argv)', () => {
       assert.equal(spawnAttempts, 0, 'a refused run spawns nothing');
       assert.match(err, /graph-migrate/);
       assert.ok(err.split('\n').includes(`autopilot: ${MIGRATE_REFUSAL_MESSAGE}`), err);
-      assert.equal(existsSync(join(dir, '.apex', 'work', 'tasks', 'topic', 'autopilot-status.md')), false, 'no status file');
-      assert.equal(existsSync(join(dir, '.apex', 'work', 'tasks')), false, 'no run directory');
-      assert.deepEqual(readdirSync(join(dir, '.apex', 'work')), ['specs'], 'nothing but the spec under the work dir (no lock)');
+      assert.equal(existsSync(join(dir, '.formula', 'work', 'tasks', 'topic', 'autopilot-status.md')), false, 'no status file');
+      assert.equal(existsSync(join(dir, '.formula', 'work', 'tasks')), false, 'no run directory');
+      assert.deepEqual(readdirSync(join(dir, '.formula', 'work')), ['specs'], 'nothing but the spec under the work dir (no lock)');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

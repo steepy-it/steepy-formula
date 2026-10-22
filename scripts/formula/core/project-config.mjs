@@ -1,5 +1,5 @@
-// Project identity binding (plan .apex/work/plans/2026-08-20-project-identity-binding.md Task 1;
-// spec .apex/work/specs/2026-08-20-project-identity-binding.md D2/D3) — the ONE place a
+// Project identity binding (plan .formula/work/plans/2026-08-20-project-identity-binding.md Task 1;
+// spec .formula/work/specs/2026-08-20-project-identity-binding.md D2/D3) — the ONE place a
 // repository's bound project id lives on disk: `<root>/.formula/config.json`, normalized to
 // `{"projectId": "<id>"}` (2-space JSON + trailing newline).
 //

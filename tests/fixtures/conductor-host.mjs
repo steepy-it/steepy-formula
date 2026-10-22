@@ -11,7 +11,7 @@ import { fakeResolveHubContext } from '../helpers/fake-hub-context.mjs';
 const [specPath, cwd, stubPath] = process.argv.slice(2);
 // Always isolate this subprocess and its fake descendants, even when its
 // parent test has an ambient OpenCode pin. No real harness is invoked here.
-const fixtureHome = join(cwd, '.apex', 'work', 'test-home');
+const fixtureHome = join(cwd, '.formula', 'work', 'test-home');
 process.env.HOME = fixtureHome;
 process.env.XDG_CONFIG_HOME = join(fixtureHome, '.config');
 

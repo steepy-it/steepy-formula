@@ -38,7 +38,7 @@ outside the repository. Never infer corrections. An explicit malformed or stale 
 without discovery. Supporting `onDemand` inputs are never preloaded; read one only for a concrete
 named missing fact. Stable routing inputs stay outside the envelope and follow bootstrap routing.
 Native invocation spelling comes only from the active harness. No child inherits general
-`.apex/work/**` access; pass only its accepted role paths.
+`.formula/work/**` access; pass only its accepted role paths.
 
 Every new work artifact starts with verdict/contract metadata when that phase requires it, followed
 immediately by this versioned header before the Markdown title:

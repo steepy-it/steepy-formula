@@ -36,7 +36,7 @@ outside the repository. Never infer corrections. An explicit malformed or stale 
 without discovery. Supporting `onDemand` inputs are never preloaded; read one only for a concrete
 named missing fact. Stable routing inputs stay outside the envelope and follow bootstrap routing.
 Native invocation spelling comes only from the active harness. No child inherits general
-`.apex/work/**` access; pass only its accepted role paths.
+`.formula/work/**` access; pass only its accepted role paths.
 
 Every new work artifact starts with verdict/contract metadata when that phase requires it, followed
 immediately by this versioned header before the Markdown title:
@@ -180,7 +180,7 @@ inventory, and the criteria-only required artifact supplies the review criteria.
 Autopilot paragraph below and never ask the user anything. A manifest/output failure, success criteria
 unmet, the `graph validate` gate red, or a CONFLICT discovered mid-run → append
 `<ISO timestamp> — review — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>`
-to `.apex/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. A CONFLICT discovered
+to `.formula/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. A CONFLICT discovered
 mid-run is ALWAYS a halt — doc-wins needs a human, never auto-override.
 
 Use the pinned `manifest.contract.taskResultProtocol` to interpret the task index. In autopilot
@@ -330,8 +330,8 @@ unbounded transcript into model context.
 **Inline deterministic collection.** Resolve the current output path from the accepted primary
 artifact, never by directory discovery:
 
-- regular review: `.apex/work/tasks/<plan-basename>/evidence-report.md`;
-- Gear 4: `.apex/work/loops/<slug>/evidence-report.md`.
+- regular review: `.formula/work/tasks/<plan-basename>/evidence-report.md`;
+- Gear 4: `.formula/work/loops/<slug>/evidence-report.md`.
 
 Then run this once, passing each command as one safely quoted argument:
 
@@ -439,8 +439,8 @@ with a one-line reason.
 
 **The sweep assembles the Promotion Scenario.** In manual drive, beyond listing the
 candidates, the sweep writes the still-valuable ones to the typed candidates file at
-`.apex/work/tasks/<plan-basename>/promotion-candidates.json` (gitignored work area; a gear-4
-review writes `.apex/work/loops/<slug>/promotion-candidates.json` — the loop directory stands in
+`.formula/work/tasks/<plan-basename>/promotion-candidates.json` (gitignored work area; a gear-4
+review writes `.formula/work/loops/<slug>/promotion-candidates.json` — the loop directory stands in
 for the plan directory). The file carries the typed schema only — `term` (`term`, `definition`),
 `rule` (`title`, `statement`, `concern`, `strength` of `must|should`, `appliesTo` of an existing
 node id), `decision` (`title`, `statement`, `context`), `readme` (`note`) — built from the sweep's
@@ -499,8 +499,8 @@ success, and retain `goal-succeeded: false` in the judgement. Approval confirms 
 and evidence; it never rewrites the controller outcome to `GOAL_REACHED`.
 
 Persist this review phase's criterion-by-criterion judgement in
-`.apex/work/tasks/<plan-basename>/review-report.md`; for Gear 4 use
-`.apex/work/loops/<slug>/review-report.md`. Cite the evidence artifact plus command hashes and compact
+`.formula/work/tasks/<plan-basename>/review-report.md`; for Gear 4 use
+`.formula/work/loops/<slug>/review-report.md`. Cite the evidence artifact plus command hashes and compact
 receipt fields instead of duplicating command transcripts. Write this terminal review report before
 consuming the ledger. For Gear 4, include the outcome, goal-success boolean, provenance checks,
 terminal-condition matrix, and exact receipt hashes. For Gear 4 only, after the report is complete and every
@@ -558,7 +558,7 @@ No scenario was created at Step 2: the typed candidates listed above are what th
 interactive Step 5 session creates, previews, and applies when the human acts. After the report
 above, append
 `<ISO timestamp> — review — READY_FOR_PR — run-id=<conductor-supplied> attempt=<positive supplied> <one-line verdict>` to
-`.apex/work/tasks/<spec-basename>/autopilot-status.md` and end the session: no version bump, no
+`.formula/work/tasks/<spec-basename>/autopilot-status.md` and end the session: no version bump, no
 CHANGELOG edit, no PR, no Step 5 question. The run's artifacts and this report stay on disk for a
 human to pick up Step 5 later, in an interactive session.
 

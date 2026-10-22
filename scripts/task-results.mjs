@@ -93,7 +93,7 @@ function configFor(state, input) {
   if (config.report !== `${dirname(state)}/task-${config.task}-report.md`) throw new Error('wrong task report path');
   parseWorkPath(config.report, 'work-output', 'task-report');
   parseWorkPath(config.planPath, 'work-output', 'plan');
-  if (config.planPath !== `.apex/work/plans/${dirname(state).split('/').at(-1)}.md`) throw new Error('task plan correlation mismatch');
+  if (config.planPath !== `.formula/work/plans/${dirname(state).split('/').at(-1)}.md`) throw new Error('task plan correlation mismatch');
   if (config.role === 'implementer' ? config.execution !== 1 || config.previousState !== null
     : config.execution <= 1 || config.previousState !== `${dirname(state)}/task-${config.task}-execution-${config.execution - 1}`) throw new Error('invalid task fix lineage');
   if (config.role === 'retry' && config.parentState !== config.previousState) throw new Error('task retry requires the latest parent to be its previous execution');

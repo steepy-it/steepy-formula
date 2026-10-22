@@ -47,7 +47,7 @@ Subagent (<surface>-agent):
 
     In manual drive, use only the two role-local direct documents above as eager work context, inspect
     ordinary repository source normally as needed, and record the no-manifest degradation. Never
-    enumerate `.apex/work/**`, infer another work artifact, or widen the orchestrator's capability.
+    enumerate `.formula/work/**`, infer another work artifact, or widen the orchestrator's capability.
 
     ## Before you begin
     If anything is ambiguous, write the concrete question to [REPORT_FILE] and return
@@ -79,7 +79,7 @@ Subagent (<surface>-agent):
 
     ## Durable report and response
     Write full implementation/fix detail to the manifest-declared [REPORT_FILE], canonically
-    `.apex/work/tasks/<plan-basename>/task-N-report.md`: implementation, RED/GREEN command evidence,
+    `.formula/work/tasks/<plan-basename>/task-N-report.md`: implementation, RED/GREEN command evidence,
     changed files, self-review, commit evidence, concerns, questions, or blockers. This file is
     authoritative for implementation detail; update it after every fix dispatch. In autopilot,
     immutable execution reports are frozen by the controller before a later fix updates this canonical

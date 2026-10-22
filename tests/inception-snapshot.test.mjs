@@ -24,14 +24,14 @@ test('full no-Git inventory includes ignored files, provider files, modes and ad
   assert.equal(applicationIdentity(before), applicationIdentity({ ...before, git: { ...before.git, branch: 'provenance-only' } }));
 }));
 test('reserved local areas and their physical aliases are excluded before readdir', () => fixture(root => {
-  for (const path of ['.apex/inception/private', '.apex/work/private', '.git/private', 'src/a']) put(root, path);
-  fs.symlinkSync(join(root, '.apex/work'), join(root, 'work-alias'));
+  for (const path of ['.formula/inception/private', '.formula/work/private', '.git/private', 'src/a']) put(root, path);
+  fs.symlinkSync(join(root, '.formula/work'), join(root, 'work-alias'));
   const original = fs.readdirSync; const attempted = [];
   fs.readdirSync = (path, ...args) => { attempted.push(fs.realpathSync(path)); return original(path, ...args); };
   try {
     assert.deepEqual(observeApplication(root, { git: { present: false, branch: null, head: null, status: [] } }).files.map(f => f.path), ['src/a']);
   } finally { fs.readdirSync = original; }
-  for (const path of ['.apex/work', '.apex/inception', '.git']) assert.equal(attempted.some(p => p === join(root, path) || p.startsWith(join(root, path) + '/')), false);
+  for (const path of ['.formula/work', '.formula/inception', '.git']) assert.equal(attempted.some(p => p === join(root, path) || p.startsWith(join(root, path) + '/')), false);
 }));
 test('explicit roots and motivated exclusions are exact, no implicit dependency or lock exclusions', () => fixture(root => {
   for (const path of ['app/src/a', 'app/cache/data', 'other/a', 'node_modules/a', '.steepy-project-scaffold.lock/user']) put(root, path);
@@ -65,9 +65,9 @@ test('UTF-8 filenames are never normalized into another application entry', () =
   assert.deepEqual(snapshot.files.map(f => f.path), ['name', '\ufeffname']);
   assert.notEqual(snapshot.files[0].sha256, snapshot.files[1].sha256);
 }));
-test('governance receipt names are ordinary inventory files until the completion verifier authenticates them', () => fixture(root => {
-  for (const path of ['.apex/init-provenance.pending.json', '.apex/init-provenance.json', '.agents/foreign.md']) put(root, path, 'not a receipt');
-  assert.deepEqual(observeApplication(root).files.map(file => file.path), ['.agents/foreign.md', '.apex/init-provenance.json', '.apex/init-provenance.pending.json']);
+test('governance receipts live in the reserved .formula area, so the inventory never observes them', () => fixture(root => {
+  for (const path of ['.formula/init-provenance.pending.json', '.formula/init-provenance.json', '.agents/foreign.md']) put(root, path, 'not a receipt');
+  assert.deepEqual(observeApplication(root).files.map(file => file.path), ['.agents/foreign.md']);
 }));
 
 // F2: one excluded set drives both the walk and Git status. The repository has
@@ -87,7 +87,7 @@ function excludedTree(root) {
   run('init', '-q'); run('config', 'user.name', 'Test'); run('config', 'user.email', 'test@example.test');
   put(root, 'src/app.js'); put(root, 'dist/tracked.js', 'v1'); run('add', 'src/app.js', 'dist/tracked.js'); run('commit', '-qm', 'Initial');
   put(root, 'dist/tracked.js', 'v2'); put(root, 'dist/out.js'); put(root, 'node_modules/dep/index.js'); put(root, 'package.json', '{}');
-  for (const path of ['.apex/inception/run.json', '.apex/work/notes.md']) put(root, path);
+  for (const path of ['.formula/inception/run.json', '.formula/work/notes.md']) put(root, path);
 }
 // Excluded and reserved paths are absent from both inventories; package.json is in both.
 function assertFiltered(snapshot) {

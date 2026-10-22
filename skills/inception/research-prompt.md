@@ -30,7 +30,7 @@ Subagent (researcher):
     before unit finish; your changed-paths field does not grant scope or establish completion.
 
     Read exactly the files in [INPUT_PATHS]. Never list or read anything else under
-    `.apex/inception/`, and never read `.apex/work/`. The coordinator supplies these paths; do not
+    `.formula/inception/`, and never read `.formula/work/`. The coordinator supplies these paths; do not
     infer another run file.
 
     ## Sources

@@ -148,7 +148,7 @@ For DeepSeek Harness, use an existing configured profile. For one-shot verificat
 use the shipped `headless` profile: an arbitrary new profile name may have no frontend.
 
 A successful graph-first `init` provisions the local engine, lands the initial graph through one
-promotion you confirm, and writes the local `.apex/work/` area, project instructions, the
+promotion you confirm, and writes the local `.formula/work/` area, project instructions, the
 specialist adapters, the root `CLAUDE.md`, and the committed `.formula/config.json` binding — it
 never creates a Markdown hub (`.apex/_INDEX.md`). `check` should then report a coherent graph
 (`steepy-formula graph validate`). A repository carrying a steepy-apex `.apex/` hub is routed

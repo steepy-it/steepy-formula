@@ -52,7 +52,7 @@ Include publication interruptions before/after staging, ordered target prefixes 
 
 ## Copy validation
 
-A copy of only the versioned files (for example a `git clone` of the branch) must validate without `.apex/inception/` and `.apex/work/`: `steepy-formula graph validate` is clean against the initialized graph. Check this after each completed scenario.
+A copy of only the versioned files (for example a `git clone` of the branch) must validate without `.formula/inception/` and `.formula/work/`: `steepy-formula graph validate` is clean against the initialized graph. Check this after each completed scenario.
 
 ## Evidence rules
 

@@ -27,7 +27,7 @@ the recorded verdict, and do not read or locate the spec merely to rediscover co
 the Step 2 autopilot paragraph below and never ask the user anything. An invalid phase manifest,
 missing required input, undeclared or unwritable output, or anything else unresolvable → append
 `<ISO timestamp> — implement — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>`
-to `.apex/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero.
+to `.formula/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero.
 
 **Autopilot correlation.** Before appending any current-protocol status marker, use the `run-id` and
 positive `attempt` supplied by the conductor's `phasePrompt`; that correlated identity is authoritative.
@@ -41,7 +41,7 @@ Do not independently rediscover or preload inputs beyond its `required` list. Us
 concrete named missing fact and record the reason in the ledger. The plan supplied there is authoritative
 for task order, the self-contained task contracts, test commands, criterion IDs, and complexity tiers.
 The standard input is the conductor-resolved `context.md`: the conductor resolves one context under
-`.apex/work/tasks/<plan-basename>/context/hub-context/` and the phase manifest lists it once as the
+`.formula/work/tasks/<plan-basename>/context/hub-context/` and the phase manifest lists it once as the
 standard input. Its Rules are the standards the task follows and its Surfaces/Components are the
 ownership map. When a task-local manifest needs its owning standards, use that exact resolved
 `context.md` path in every task-local `--standard` argument. Never guess or manufacture a standard
@@ -58,7 +58,7 @@ question — the git decisions were already made by the human at the brainstorm 
 the contract. Branch: the contract's `branch` field names the working branch — verify
 `git branch --show-current` matches it; a mismatch, or being on `main`/`master`, is unresolvable →
 append `<ISO timestamp> — implement — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>` to
-`.apex/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. Commit authorization: the
+`.formula/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. Commit authorization: the
 contract's `commit-auth: per-task` selects the **Yes** path. Complete an authorized task commit
 inside the observed writer execution before capture, then review that captured state; never add an
 unobserved commit.
@@ -98,7 +98,7 @@ defect to resolve through the authorized artifact-first protocol, not a reason t
 **Autopilot:** there is no human to answer a NEEDS_CONTEXT question or adjudicate an unresolvable
 BLOCKED — exhaust the non-human remedies first (re-dispatch with more context, escalate the model,
 split the task); if still stuck, append `<ISO timestamp> — implement — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>`
-to `.apex/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. The conductor halts and a
+to `.formula/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. The conductor halts and a
 human resumes later; the chain artifacts and ledger are the state, nothing to reconstruct.
 
 ## Step 4 — whole-branch review (final-review manifest)
@@ -112,14 +112,14 @@ aggregate branch diff, and relevant standards are its exact required inventory.
 ## Step 5 — hand off
 
 **Autopilot:** after the handoff verifies and the SKILL.md → "Step 5 — Hand off" lifecycle completes
-(output READY first, input CONSUMED second), run the `reviewer-recovery.md` verify-handoff command, then append `<ISO timestamp> — implement — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <commit range>` to `.apex/work/tasks/<spec-basename>/autopilot-status.md`. The session then simply ends — the conductor spawns the `review` skill next. Resume uses only manifest-authorized paths and the same exact-pair proof; manual resume capabilities do not widen an autopilot manifest or authorize scanning for prior outputs.
+(output READY first, input CONSUMED second), run the `reviewer-recovery.md` verify-handoff command, then append `<ISO timestamp> — implement — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <commit range>` to `.formula/work/tasks/<spec-basename>/autopilot-status.md`. The session then simply ends — the conductor spawns the `review` skill next. Resume uses only manifest-authorized paths and the same exact-pair proof; manual resume capabilities do not widen an autopilot manifest or authorize scanning for prior outputs.
 
 ## Task-local manifest protocol
 
 Before **every** implementer, task-reviewer, fix, or final-review dispatch, invoke
 `node <engine-root>/scripts/autopilot-context.mjs` with only that role's strict named arguments.
 Use the conductor-supplied run ID, the selected abstract tier, the brief's exact test command and
-criterion IDs, and repository-relative paths. Create `.apex/work/tasks/<plan-basename>/context/` and
+criterion IDs, and repository-relative paths. Create `.formula/work/tasks/<plan-basename>/context/` and
 use these deterministic output paths:
 
 - implementer: `task-N-implement.json`;
@@ -133,10 +133,10 @@ artifact.
 The canonical command shapes are:
 
 ```sh
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role implementer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --standard <resolved-context-path> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-implement.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role task-reviewer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --report .apex/work/tasks/<plan-basename>/task-N-report.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --hub-index <resolved-context-path> --artifact-output .apex/work/tasks/<plan-basename>/task-N-review.md --artifact-output .apex/work/tasks/<plan-basename>/task-N-issues.md --output .apex/work/tasks/<plan-basename>/context/task-N-review-<iteration>.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role fix --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .apex/work/tasks/<plan-basename>/task-N-brief.md --issue .apex/work/tasks/<plan-basename>/task-N-issues.md --task-diff .apex/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --artifact-output .apex/work/tasks/<plan-basename>/task-N-report.md --output .apex/work/tasks/<plan-basename>/context/task-N-fix-<iteration>.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role final-review --run-id <supplied-run-id> --task-result-protocol 2 --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --criteria .apex/work/tasks/<plan-basename>/success-criteria.md --task-result-index .apex/work/tasks/<plan-basename>/task-result-index.md --branch-diff .apex/work/tasks/<plan-basename>/branch-diff.txt --standard <resolved-context-path> --artifact-output .apex/work/tasks/<plan-basename>/final-review.md --artifact-output .apex/work/tasks/<plan-basename>/final-review-issues.md --output .apex/work/tasks/<plan-basename>/context/final-review-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role implementer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .formula/work/tasks/<plan-basename>/task-N-brief.md --standard <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/task-N-report.md --output .formula/work/tasks/<plan-basename>/context/task-N-implement.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role task-reviewer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .formula/work/tasks/<plan-basename>/task-N-brief.md --report .formula/work/tasks/<plan-basename>/task-N-report.md --task-diff .formula/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --hub-index <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/task-N-review.md --artifact-output .formula/work/tasks/<plan-basename>/task-N-issues.md --output .formula/work/tasks/<plan-basename>/context/task-N-review-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role fix --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .formula/work/tasks/<plan-basename>/task-N-brief.md --issue .formula/work/tasks/<plan-basename>/task-N-issues.md --task-diff .formula/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/task-N-report.md --output .formula/work/tasks/<plan-basename>/context/task-N-fix-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role final-review --run-id <supplied-run-id> --task-result-protocol 2 --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --criteria .formula/work/tasks/<plan-basename>/success-criteria.md --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md --branch-diff .formula/work/tasks/<plan-basename>/branch-diff.txt --standard <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/final-review.md --artifact-output .formula/work/tasks/<plan-basename>/final-review-issues.md --output .formula/work/tasks/<plan-basename>/context/final-review-<iteration>.json
 ```
 
 Repeat `--standard` with `<resolved-context-path>` once per resolved context path. The examples show one
@@ -146,20 +146,20 @@ whose Rules govern the task's surface; as `--hub-index` it is the ownership map 
 Surfaces/Components and their paths). A child receives the filled values, never the mode question.
 
 Before the first final-review manifest, materialize the deterministic criteria-only `success-criteria.md`
-artifact at `.apex/work/tasks/<plan-basename>/success-criteria.md`. Give it canonical source attribution containing
+artifact at `.formula/work/tasks/<plan-basename>/success-criteria.md`. Give it canonical source attribution containing
 the repository-relative spec path and the exact source heading, then copy verbatim the approved
 success-criteria content from that heading, including every criterion ID. Include no unrelated spec sections.
 The same source bytes must produce the same artifact bytes. In autopilot, the source spec is the
 implement phase manifest's `onDemand` input: read only the named success-criteria heading for this
 concrete missing fact and record the reason. Failure to locate one unambiguous heading or write the
 artifact is correlated `BLOCKED` before dispatch. Reject any final-review `--criteria` value under
-`.apex/work/specs/`; a full spec path is never a valid required input.
+`.formula/work/specs/`; a full spec path is never a valid required input.
 
 Repeat `--criterion` and every role's `--standard` once per value, preserving plan order. Do not add a
 role-inapplicable option. A missing or invalid manifest is a correlated `BLOCKED` outcome: record the
 reason, make no child dispatch, and exit non-zero. A child receives the validated manifest path as its
 authoritative file inventory; it does not receive copied artifact bodies. For a whole-branch finding,
-the one responsible task's fix command uses `--issue .apex/work/tasks/<plan-basename>/final-review-issues.md`
+the one responsible task's fix command uses `--issue .formula/work/tasks/<plan-basename>/final-review-issues.md`
 and the current aggregate branch diff as `--task-diff`; all other named arguments remain role-valid.
 
 The eager inventories are exact:

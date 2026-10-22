@@ -1,5 +1,5 @@
 // Database port contract for the Stable Knowledge Graph (spec
-// .apex/work/specs/2026-08-11-stable-knowledge-graph.md §14 "CLI and core boundary", §20
+// .formula/work/specs/2026-08-11-stable-knowledge-graph.md §14 "CLI and core boundary", §20
 // "Portable-first enforcement", success criterion 10). This module is the contract itself —
 // vocabulary, error type, and pure argument validators shared by every adapter — not an
 // implementation: `memory.mjs` (reference/test double) and the ArcadeDB adapter (task C1)

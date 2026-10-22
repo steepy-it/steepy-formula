@@ -36,7 +36,7 @@ outside the repository. Never infer corrections. An explicit malformed or stale 
 without discovery. Supporting `onDemand` inputs are never preloaded; read one only for a concrete
 named missing fact. Stable routing inputs stay outside the envelope and follow bootstrap routing.
 Native invocation spelling comes only from the active harness. No child inherits general
-`.apex/work/**` access; pass only its accepted role paths.
+`.formula/work/**` access; pass only its accepted role paths.
 
 Every new work artifact starts with verdict/contract metadata when that phase requires it, followed
 immediately by this versioned header before the Markdown title:
@@ -193,7 +193,7 @@ onDemand:
    both exact labeled bindings. Never infer the source-spec binding from the plan header.
 2. **Bounded recovery.** Only when neither an envelope nor a direct binding was supplied, inspect
    bounded `steepy-workflow` headers in the immediate specs and plans directories,
-   `.apex/work/specs/` and `.apex/work/plans/`; never open a candidate body and never recurse. List
+   `.formula/work/specs/` and `.formula/work/plans/`; never open a candidate body and never recurse. List
    only `status: READY`, `next: implement`, `consumed-by: none` candidates whose phase is
    `brainstorm` or `plan`, and require user selection even when there is exactly one candidate. A
    selected spec requires a new exact `spec` binding. A selected plan grants no linked source-spec
@@ -319,7 +319,7 @@ phase manifest):
 
 **Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the input inventory and resolved-context standards.
 
-Derive `.apex/work/tasks/<entry-basename>/`, its optional `ledger.md`, and its canonical
+Derive `.formula/work/tasks/<entry-basename>/`, its optional `ledger.md`, and its canonical
 `task-result-index.md` solely from the accepted spec or plan basename; never search for a historical
 task directory or scan for a ledger/index. In manual drive, validate accepted
 `onDemand.progress-ledger` and `onDemand.task-results` paths against those exact derived paths. If
@@ -330,7 +330,7 @@ neither exists, create the current-run task directory and initialize the ledger;
 below. Output creation grants no historical sibling-read capability. A one-present/one-absent pair is
 malformed and fails closed. In autopilot, use the manifest-declared ledger/index inventory under its existing
 protocol. A missing pair is normal on a fresh run, never a pre-spawn failure. If
-`.apex/work/.gitignore` is missing, create it with exactly:
+`.formula/work/.gitignore` is missing, create it with exactly:
 
 ```gitignore
 *
@@ -339,7 +339,7 @@ protocol. A missing pair is normal on a fresh run, never a pre-spawn failure. If
 
 Same canonical body as `skills/init/SKILL.md` → "Step 4 — Disk scaffolding (after the gate, disk-minimal)". Any task marked complete in the ledger is DONE — do not re-dispatch it; resume at the first task not marked complete.
 
-On a fresh run, create `.apex/work/tasks/<entry-basename>/task-result-index.md` before dispatch as the
+On a fresh run, create `.formula/work/tasks/<entry-basename>/task-result-index.md` before dispatch as the
 implementation primary. On an authorized resume, retain the existing index bytes and validate its
 header/source before using its DRAFT progress or READY terminal-repair state. In Gear 3 use this exact
 header and metadata immediately below it:
@@ -411,7 +411,7 @@ single derived Task 1 from the accepted spec. Use `<entry-basename>` in task pat
 plan basename for plan-backed work and the spec basename for direct Gear 2.
 
 1. **Brief.** Materialize the task's complete contract at
-   `.apex/work/tasks/<entry-basename>/task-N-brief.md`.
+   `.formula/work/tasks/<entry-basename>/task-N-brief.md`.
    - **Plan-backed:** copy these task fields and their values verbatim from the approved plan:
      **Requirements and deliverables**, **Relevant global constraints**, **Surface**,
      **Specialist agent**, **Exact paths**, **Test command**, **Dependencies**, **Complexity**, and
@@ -426,9 +426,9 @@ plan basename for plan-backed work and the spec basename for direct Gear 2.
    In both forms, the brief is the implementer contract: no requirement may depend on chat or
    conversation history.
 2. **Implement.** If your harness provides a task/subagent tool and the registered `<surface>-agent`, dispatch that agent using `implementer-prompt.md`. In autopilot (`drive: autopilot`), create and validate the implementer manifest per `autopilot-protocol.md`, then pass only its path plus scalar dispatch controls. In manual drive, pass the brief path, owning standard, surface test command, report-file path, and commit-authorization flag directly and record this no-manifest degradation in the ledger — the owning standard is the resolved context's Rules for the task's surface (pass the Step 1 resolve output), and the surface test command is the brief's `Test command`, already sourced from the Check's `ext_v1_command` at plan time (direct Gear 2: at Step 1). Otherwise load the resolved context's Rules for the task's surface and implement the task inline under the same rigid TDD, then run the Step 3.4 review as a dedicated same-session pass at the end of the task; state the inline degradation in the ledger. Pick the model from the task's `Complexity` line: mechanical → cheap, integration → standard, design → most-capable. To override, record a one-line reason in the ledger. If the plan has no `Complexity` lines, classify the task yourself at dispatch; direct Gear 2 instead uses its mandatory `Feature complexity`. The implementer writes a **failing test** first (rigid TDD), then the minimum code, self-reviews, and reports.
-3. **Diff.** Capture the change to `.apex/work/tasks/<entry-basename>/task-N-diff.txt` — `git diff <base>..<head>` if commits are authorized, else `git diff` of the working tree.
+3. **Diff.** Capture the change to `.formula/work/tasks/<entry-basename>/task-N-diff.txt` — `git diff <base>..<head>` if commits are authorized, else `git diff` of the working tree.
 4. **Review** (**Gear 3 only** — skip in gears 1–2; rely on the implementer's self-review instead). Review only tasks that carry judgment; the task's `Complexity` line decides: `integration`/`design` → review, `mechanical` → skip (the Step 4 whole-branch review catches it). In manual drive, to override either way, record the reason in the ledger. Autopilot requires validated receipts for every integration/design task; mechanical tasks may still opt into review. When you do review, dispatch a fresh reviewer subagent using `task-reviewer-prompt.md`. In autopilot (`drive: autopilot`), create and validate its iteration manifest per `autopilot-protocol.md`; in manual drive pass the same four required artifacts directly and record the degradation. Fill the prompt's `[STANDARD_FILE]` and `[HUB_INDEX]` slots with the resolved context's Rules for the task's surface and its Surfaces/Components listing, both from the Step 1 `context.md`. The hub index is never eager: include it only as `onDemand`, and read it only for a named suspected ownership conflict whose reason is recorded. On **Issues Found**, require `task-N-issues.md`, then create and validate a fix manifest before dispatching the fix back to the same `<surface>-agent` (inline: apply the fix yourself). Regenerate the diff and re-review until **Status: Approved**. Fix loops remain sequential.
-5. **Mark complete.** Append one line to the ledger, recording the model tier used — or `session model` where the harness gives no per-dispatch choice — and any degradation exercised (inline implementation, same-session review pass): `Task N: complete (model: standard, review: 1 iteration, commits <base7>..<head7>)` if authorized, else `Task N: complete (model: cheap, review: skipped (mechanical), no commit)`. On a harness with no task tool the line records the degradation, e.g. `Task N: complete (session model, inline impl + same-session review, 1 iteration, no commit)`. Also append the compact validated implementer outcome to `.apex/work/tasks/<entry-basename>/task-result-index.md` using this exact bullet grammar (one line per task, in execution order):
+5. **Mark complete.** Append one line to the ledger, recording the model tier used — or `session model` where the harness gives no per-dispatch choice — and any degradation exercised (inline implementation, same-session review pass): `Task N: complete (model: standard, review: 1 iteration, commits <base7>..<head7>)` if authorized, else `Task N: complete (model: cheap, review: skipped (mechanical), no commit)`. On a harness with no task tool the line records the degradation, e.g. `Task N: complete (session model, inline impl + same-session review, 1 iteration, no commit)`. Also append the compact validated implementer outcome to `.formula/work/tasks/<entry-basename>/task-result-index.md` using this exact bullet grammar (one line per task, in execution order):
 
    `- Task <id>: <DONE|DONE_WITH_CONCERNS>; artifact: <sanitized repo-relative path>; changed-paths: <comma list or none>; signals: <short machine-readable IDs or none>`
 
@@ -504,7 +504,7 @@ returns to or accumulates in the parent, and no prior task's body is copied into
 
 **Gear 3 only** — skip in gears 1–2.
 
-After the last task, capture the aggregate branch change at `.apex/work/tasks/<plan-basename>/branch-diff.txt`
+After the last task, capture the aggregate branch change at `.formula/work/tasks/<plan-basename>/branch-diff.txt`
 as the unmodified aggregate `git diff` and materialize the criteria-only `success-criteria.md` artifact:
 give it canonical `Source`/`Heading` attribution (the repository-relative spec path and the exact source heading), then copy the approved success-criteria
 content from that heading verbatim, including every criterion ID and no unrelated sections — the same
@@ -567,7 +567,7 @@ match the Step 3.5 grammar; autopilot uses the verified generated JSON receipt p
 Run the same parse here, where it is still fixable:
 
 ```sh
-node <engine-root>/scripts/autopilot-context.mjs --verify-handoff --repo-root . --plan .apex/work/plans/<plan-basename>.md --task-result-index .apex/work/tasks/<plan-basename>/task-result-index.md
+node <engine-root>/scripts/autopilot-context.mjs --verify-handoff --repo-root . --plan .formula/work/plans/<plan-basename>.md --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md
 ```
 
 Exit 0 prints the reviewed task IDs and this step continues. A non-zero exit names the exact

@@ -38,9 +38,9 @@ import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formul
 import { headlessCommand } from '../adapters/headless.mjs';
 import { DOGFOOD_CHECKPOINT, DOGFOOD_CHECKPOINT_SKIP } from './helpers/dogfood-checkpoint.mjs';
 
-const GOAL_PATH = '.apex/work/loops/2026-09-03-demo-loop/goal.md';
-const LEDGER_PATH = '.apex/work/loops/2026-09-03-demo-loop/ledger.md';
-const EVENTS_PATH = '.apex/work/loops/2026-09-03-demo-loop/events.jsonl';
+const GOAL_PATH = '.formula/work/loops/2026-09-03-demo-loop/goal.md';
+const LEDGER_PATH = '.formula/work/loops/2026-09-03-demo-loop/ledger.md';
+const EVENTS_PATH = '.formula/work/loops/2026-09-03-demo-loop/events.jsonl';
 const RUN_ID = '12345678-1234-4234-8234-123456789abc';
 const LOCK_TOKEN = '87654321-4321-4321-8321-cba987654321';
 const BASELINE = 'a'.repeat(40);
@@ -50,7 +50,7 @@ const BASELINE = 'a'.repeat(40);
 // pattern); that one context.md stands in for both routing slots, and RUN_STARTED records the
 // binding so a resume validates against it. Every fixture defaults to the stub resolver below.
 const GRAPH_TARGET = 'apex:demo-project:surface:scripts';
-const GRAPH_CONTEXT_DIR = '.apex/work/loops/2026-09-03-demo-loop/hub-context';
+const GRAPH_CONTEXT_DIR = '.formula/work/loops/2026-09-03-demo-loop/hub-context';
 const GRAPH_CONTEXT = `${GRAPH_CONTEXT_DIR}/context.md`;
 
 function fixture() {
@@ -480,7 +480,7 @@ test('preflight rejects unsafe paths, unbound routing, branch drift, dirty fresh
   assert.equal(validateLoopPreflight(base).ledgerPath, LEDGER_PATH);
   for (const overrides of [
     { goalPath: '/tmp/goal.md' },
-    { goalPath: '.apex/work/loops/2026-09-03-demo-loop/../goal.md' },
+    { goalPath: '.formula/work/loops/2026-09-03-demo-loop/../goal.md' },
     { routing: { ...routing, surface: 'tests' } },
     // A routing without a graph binding (the retired Markdown-hub shape) is unbound.
     { routing: { surface: 'scripts', routingPath: '.apex/_INDEX.md', standardPaths: ['.apex/standards/scripts.md'] } },
@@ -916,7 +916,7 @@ test('already-green boolean run uses zero mutation budget and finalizes exact ma
       `status: CONSUMED\\nnext: loop-engineer\\nsource: none\\nconsumed-by: ${LEDGER_PATH.replaceAll('.', '\\.')}`,
       'u',
     ));
-    assert.match(readWorkPath(repo, '.apex/work/loops/2026-09-03-demo-loop/branch-diff.txt', {
+    assert.match(readWorkPath(repo, '.formula/work/loops/2026-09-03-demo-loop/branch-diff.txt', {
       family: 'diff', encoding: 'utf8',
     }), new RegExp(BASELINE, 'u'));
     assert.deepEqual(result.handoff, { goal: GOAL_PATH, 'loop-ledger': LEDGER_PATH });
@@ -944,13 +944,13 @@ test('already-green boolean run uses zero mutation budget and finalizes exact ma
         'issues-found': false,
         review: 1,
         attempt: null,
-        report: `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1-report.md`,
+        report: `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1-report.md`,
         'report-sha256': authority.review.reportDigest,
-        diff: `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1-diff.txt`,
+        diff: `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1-diff.txt`,
         'diff-sha256': authority.review.diffDigest,
       },
       'final-projection': {
-        diff: '.apex/work/loops/2026-09-03-demo-loop/branch-diff.txt',
+        diff: '.formula/work/loops/2026-09-03-demo-loop/branch-diff.txt',
         'diff-sha256': authority.terminalEvidence.diffDigest,
         branch: 'feature/loop',
         head: BASELINE,
@@ -1020,7 +1020,7 @@ test('boolean policy commits cumulative red checkpoints, reaches green, and pers
         ['report.md', 'runner-report'], ['raw.jsonl', 'runner-raw'], ['log', 'runner-log'],
       ]) {
         assert.doesNotThrow(() => readWorkPath(
-          repo, `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-${attempt}-${suffix}`
+          repo, `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-${attempt}-${suffix}`
             .replace('-raw.jsonl', '.raw.jsonl').replace('-log', '.log'),
           { family },
         ));
@@ -1567,7 +1567,7 @@ test('resume spends an interrupted reservation and always advances to a fresh at
       if (crashPoint.endsWith('raw-evidence')) {
         assert.doesNotThrow(() => readWorkPath(
           repo,
-          `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`,
+          `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`,
           { family: 'runner-raw' },
         ));
       }
@@ -1680,7 +1680,7 @@ test('attempt and review diff evidence are create-new, digest-bound, and event-c
     const events = parseWorkflowJsonl(readWorkPath(repo, EVENTS_PATH, { family: 'events' }));
     const child = events.find(({ event }) => event === 'CHILD_COMPLETED');
     assert.equal(child.attempt, 1);
-    assert.equal(child.diffPath, `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1-diff.txt`);
+    assert.equal(child.diffPath, `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1-diff.txt`);
     const diffBytes = readWorkPath(repo, child.diffPath, { family: 'runner-diff' });
     assert.match(diffBytes.toString('utf8'), /tests\/new\.test\.mjs/u);
     assert.equal(child.diffDigest, createHash('sha256').update(diffBytes).digest('hex'));
@@ -1701,7 +1701,7 @@ test('immutable diff publication failure cannot publish a correlated CHILD_COMPL
   const repo = fixture();
   try {
     writeWorkPath(repo, GOAL_PATH, goalText({ budget: '1' }), { expect: 'goal', family: 'goal' });
-    const collision = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1-diff.txt`;
+    const collision = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1-diff.txt`;
     writeWorkPath(repo, collision, 'collision\n', { family: 'runner-diff' });
     const deps = executionDependencies({
       repoRoot: repo,
@@ -1803,7 +1803,7 @@ test('deterministic runtime/fake-runner evidence: terminal replay proves Git sta
     assert.equal(result.status, 'HALTED');
     assert.match(readWorkPath(repo, GOAL_PATH, { family: 'goal', encoding: 'utf8' }), /status: READY/u);
     assert.match(readWorkPath(repo, LEDGER_PATH, { family: 'ledger', encoding: 'utf8' }), /status: DRAFT/u);
-    assert.equal(existsSync(join(repo, '.apex/work/loops/2026-09-03-demo-loop/branch-diff.txt')), true);
+    assert.equal(existsSync(join(repo, '.formula/work/loops/2026-09-03-demo-loop/branch-diff.txt')), true);
     const events = parseWorkflowJsonl(readWorkPath(repo, EVENTS_PATH, { family: 'events' }));
     assert.deepEqual(events.slice(-2).map(({ event }) => event), [
       'RECONCILIATION_REQUIRED', 'RUN_HALTED',
@@ -1830,8 +1830,8 @@ test('deterministic runtime/fake-runner evidence: after-return hooks expose the 
       };
       await assert.rejects(() => runLoopController(GOAL_PATH, deps.options), /return gap/u);
       const stem = boundary === 'child'
-        ? `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1`
-        : `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1`;
+        ? `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1`
+        : `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1`;
       assert.equal(existsSync(join(repo, `${stem}.raw.jsonl`)), false, boundary);
       assert.equal(existsSync(join(repo, `${stem}.log`)), false, boundary);
     } finally {
@@ -2281,7 +2281,7 @@ test('real Git ownership snapshot refuses same-path byte drift before destructiv
   try {
     execFileSync('git', ['init', '-b', 'feature/loop'], { cwd: repo });
     mkdirSync(join(repo, 'scripts'), { recursive: true });
-    writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
+    writeFileSync(join(repo, '.gitignore'), '.formula/work/\n');
     writeFileSync(join(repo, 'scripts', 'metric.mjs'), 'export const score = 10;\n');
     execFileSync('git', ['add', '.'], { cwd: repo });
     execFileSync('git', ['-c', 'user.name=Steepy', '-c', 'user.email=steepy@example.invalid', 'commit', '-m', 'baseline'], { cwd: repo });
@@ -2345,8 +2345,8 @@ test('real Git ownership snapshot refuses same-path byte drift before destructiv
 test('CLI streaming persists raw evidence while the child is alive and leaves readable output usable', async () => {
   const repo = fixture();
   try {
-    const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
-    const readablePath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
+    const rawPath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+    const readablePath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
     const script = [
       "const fs = require('node:fs');",
       "const raw = process.argv[1];",
@@ -2379,8 +2379,8 @@ test('CLI streaming persists raw evidence while the child is alive and leaves re
 test('CLI streaming interruption preserves the fsynced raw prefix', async () => {
   const repo = fixture();
   try {
-    const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
-    const readablePath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
+    const rawPath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+    const readablePath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
     const script = "process.stdout.write(JSON.stringify({type:'thread.started',thread_id:'abc'})+'\\n');setTimeout(()=>process.kill(process.pid,'SIGTERM'),30);";
     const result = await runStreamingHeadlessDescriptor(
       { cmd: process.execPath, args: ['-e', script] },
@@ -2398,8 +2398,8 @@ test('CLI streaming interruption preserves the fsynced raw prefix', async () => 
 test('CLI streaming treats raw failure as blocking and cosmetic output failure as degradation', async () => {
   const repo = fixture();
   try {
-    const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
-    const readablePath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
+    const rawPath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+    const readablePath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
     writeWorkPath(repo, rawPath, 'collision\n', { family: 'runner-raw' });
     const blocked = await runStreamingHeadlessDescriptor(
       { cmd: process.execPath, args: ['-e', 'process.exit(0)'] },
@@ -2673,7 +2673,7 @@ test('KEEP refuses tracked and untracked verifier drift before any index or ref 
       execFileSync('git', ['init', '-b', 'feature/loop'], { cwd: repo });
       mkdirSync(join(repo, 'scripts'), { recursive: true });
       mkdirSync(join(repo, 'docs'), { recursive: true });
-      writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
+      writeFileSync(join(repo, '.gitignore'), '.formula/work/\n');
       writeFileSync(join(repo, 'scripts', 'metric.mjs'), 'export const fixed = false;\n');
       if (kind === 'tracked') writeFileSync(join(repo, 'docs', 'late.md'), 'baseline\n');
       execFileSync('git', ['add', '.'], { cwd: repo });
@@ -2883,7 +2883,7 @@ test('the controller resumes real-Git intra-command commit and discard crashes w
     try {
       execFileSync('git', ['init', '-b', 'feature/loop'], { cwd: repo });
       mkdirSync(join(repo, 'scripts'), { recursive: true });
-      writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
+      writeFileSync(join(repo, '.gitignore'), '.formula/work/\n');
       writeFileSync(join(repo, 'scripts', 'tracked.mjs'), 'export const value = 0;\n');
       execFileSync('git', ['add', '.'], { cwd: repo });
       execFileSync('git', [
@@ -3032,7 +3032,7 @@ test('deterministic runtime/real-Git evidence: pre-intent preparation replays th
     execFileSync('git', ['config', 'user.name', 'Steepy'], { cwd: repo });
     execFileSync('git', ['config', 'user.email', 'steepy@example.invalid'], { cwd: repo });
     mkdirSync(join(repo, 'scripts'), { recursive: true });
-    writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
+    writeFileSync(join(repo, '.gitignore'), '.formula/work/\n');
     writeFileSync(join(repo, 'scripts', 'fix.mjs'), 'export const fixed = false;\n');
     execFileSync('git', ['add', '.'], { cwd: repo });
     execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repo });
@@ -3145,7 +3145,7 @@ test('deterministic runtime/real-Git evidence: a committed durable intent record
     execFileSync('git', ['config', 'user.name', 'Steepy'], { cwd: repo });
     execFileSync('git', ['config', 'user.email', 'steepy@example.invalid'], { cwd: repo });
     mkdirSync(join(repo, 'scripts'), { recursive: true });
-    writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
+    writeFileSync(join(repo, '.gitignore'), '.formula/work/\n');
     writeFileSync(join(repo, 'scripts', 'fix.mjs'), 'export const fixed = false;\n');
     execFileSync('git', ['add', '.'], { cwd: repo });
     execFileSync('git', ['commit', '-m', 'baseline'], { cwd: repo });
@@ -3235,8 +3235,8 @@ test('deterministic runtime/real-Git evidence: a committed durable intent record
 test('streaming retains only bounded terminal correlation while durable raw evidence stays complete', async () => {
   const repo = fixture();
   try {
-    const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
-    const readablePath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
+    const rawPath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+    const readablePath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
     const script = [
       "const payload='x'.repeat(96*1024);",
       "process.stdout.write(JSON.stringify({type:'item.completed',item:{type:'command_execution',output:payload}})+'\\n');",
@@ -3285,8 +3285,8 @@ test('streaming retains only bounded terminal correlation while durable raw evid
 test('a blocking stream failure terminates and awaits the detached descendant process group', { timeout: 5000 }, async () => {
   const repo = fixture();
   try {
-    const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
-    const readablePath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
+    const rawPath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+    const readablePath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
     const pidPath = join(repo, 'descendant.pid');
     const descendant = "process.on('SIGTERM',()=>{});setTimeout(()=>process.exit(0),1800);";
     const script = [
@@ -3439,8 +3439,8 @@ test('normal zero and nonzero child closes terminate and await unrefed detached 
   for (const exitCode of [0, 7]) {
     const repo = fixture();
     try {
-      const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
-      const readablePath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
+      const rawPath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+      const readablePath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
       const pidPath = join(repo, `descendant-${exitCode}.pid`);
       const descendant = "process.on('SIGTERM',()=>{});setTimeout(()=>process.exit(0),2500);";
       const script = [
@@ -3484,8 +3484,8 @@ test('leader exit starts bounded convergence before inherited descendant pipes c
   for (const leaderExit of ['zero', 'nonzero', 'signal']) {
     const repo = fixture();
     try {
-      const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
-      const readablePath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
+      const rawPath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+      const readablePath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
       const pidPath = join(repo, `inherited-descendant-${leaderExit}.pid`);
       const readyPath = join(repo, `inherited-descendant-${leaderExit}.ready`);
       const descendant = [
@@ -3551,8 +3551,8 @@ test('leader exit starts bounded convergence before inherited descendant pipes c
 test('process-group convergence timeout is a blocking result after raw stream finalization', async () => {
   const repo = fixture();
   try {
-    const rawPath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
-    const readablePath = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
+    const rawPath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.raw.jsonl`;
+    const readablePath = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1.log`;
     const pidPath = join(repo, 'convergence-timeout-descendant.pid');
     const readyPath = join(repo, 'convergence-timeout-descendant.ready');
     const descendant = [
@@ -3743,7 +3743,7 @@ test('graph refusals happen before runner, verifier, or machine state', async ()
       name: 'context outside the loop-bound hub-context directory',
       code: 'INVALID_ROUTING',
       resolves: 1,
-      stub: { contextPath: '.apex/work/loops/2026-09-03-demo-loop/context.md' },
+      stub: { contextPath: '.formula/work/loops/2026-09-03-demo-loop/context.md' },
     },
     { name: 'empty context', code: 'INVALID_ROUTING', resolves: 1, stub: { text: '' } },
     {
@@ -3878,7 +3878,7 @@ test('preflight binds graph routing to the loop-local resolved context and the g
   };
   assert.equal(validateLoopPreflight(base).ledgerPath, LEDGER_PATH);
   for (const overrides of [
-    { routingPath: '.apex/work/loops/2026-09-03-demo-loop/context.md' },
+    { routingPath: '.formula/work/loops/2026-09-03-demo-loop/context.md' },
     { standardPaths: [GRAPH_CONTEXT, GRAPH_CONTEXT] },
     { contextTarget: 'apex:demo-project:surface:tests' },
     { contextTarget: undefined },
@@ -4083,7 +4083,7 @@ test('real-Git graph entry: the resolver writes only the ignored hub-context, so
   try {
     execFileSync('git', ['init', '-b', 'feature/loop'], { cwd: repo });
     mkdirSync(join(repo, 'scripts'), { recursive: true });
-    writeFileSync(join(repo, '.gitignore'), '.apex/work/\n');
+    writeFileSync(join(repo, '.gitignore'), '.formula/work/\n');
     writeFileSync(join(repo, 'scripts', 'example.mjs'), 'export const value = 1;\n');
     execFileSync('git', ['add', '.'], { cwd: repo });
     execFileSync('git', [

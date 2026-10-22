@@ -25,7 +25,7 @@ prose, a successful process exit, or observed edits. A response carrying `change
 JSON) is malformed and fails closed. Malformed semantic fields fail closed.
 
 `source-observation.mjs` observes branch, HEAD, index, tracked files, and nonignored untracked
-source outside `.apex/work/`, including content, modes, and symlink targets. Git NUL-delimited
+source outside `.formula/work/`, including content, modes, and symlink targets. Git NUL-delimited
 filenames are preserved exactly. JSON `changedPaths` arrays contain the cumulative union across
 that task's executions; `executionChangedPaths` records each execution's observed changes.
 Spaces, commas, semicolons, Unicode, and newlines are JSON strings, never comma-separated source
@@ -36,7 +36,7 @@ observation; unsupported submodules fail closed. The helper is not an OS sandbox
 ## Begin before every writer dispatch
 
 Before an implementer, fix, or retry dispatch, record the exact state prefix and run/attempt/task/execution
-identity in the authorized ledger. Use `.apex/work/tasks/<plan-basename>/task-N-execution-E`.
+identity in the authorized ledger. Use `.formula/work/tasks/<plan-basename>/task-N-execution-E`.
 Each task starts at execution 1; each real fix or explicit retry increments that task's execution. `previousState`
 is the same-task prior execution for a fix or retry, absent for its first implementation. `parentState`
 is the immediately preceding completed execution across all tasks, absent only for the first
@@ -44,7 +44,7 @@ execution of the run. A late fix therefore uses its own previousState and the la
 parentState even when another task ran in between. Never substitute one for the other.
 
 ```sh
-node <engine-root>/scripts/task-results.mjs --repo-root . --action begin --state <exact-state-prefix> --run-id <supplied-run-id> --attempt <supplied-attempt> --task N --execution E --role <implementer-or-fix-or-retry> --report .apex/work/tasks/<plan-basename>/task-N-report.md --plan <exact-authorized-plan-path> --format text
+node <engine-root>/scripts/task-results.mjs --repo-root . --action begin --state <exact-state-prefix> --run-id <supplied-run-id> --attempt <supplied-attempt> --task N --execution E --role <implementer-or-fix-or-retry> --report .formula/work/tasks/<plan-basename>/task-N-report.md --plan <exact-authorized-plan-path> --format text
 ```
 
 Add `--previous-state <same-task-prior-state>` for a fix or retry and `--parent-state <latest-global-state>`
@@ -58,7 +58,7 @@ exact recorded state prefix. Its machine replay capability covers the schema-aut
 `parentState` and `previousState` links confined to the same task directory, their exact baseline,
 capture, frozen report and result files, and the exact bound plan/report paths. This is permission
 for deterministic replay, not permission to preload those bodies into a child or search work.
-Manifest outputs alone do not grant generic read permission. Do not enumerate `.apex/work/**` or
+Manifest outputs alone do not grant generic read permission. Do not enumerate `.formula/work/**` or
 discover receipt state from filenames. Normal repository source discovery is unchanged.
 
 ## Capture, then review

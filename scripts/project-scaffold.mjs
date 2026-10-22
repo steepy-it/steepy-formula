@@ -773,10 +773,10 @@ function makeOperation(artifact, classification) {
 function boundedGeneratedEntries(hubRoot) {
   const entries = [];
   let reservedWork;
-  try { reservedWork = lstatSync(join(hubRoot, '.apex', 'work')); }
+  try { reservedWork = lstatSync(join(hubRoot, '.formula', 'work')); }
   catch { /* Work is excluded local state, never a required planner input. */ }
   let reservedInception;
-  try { reservedInception = lstatSync(join(hubRoot, '.apex', 'inception')); }
+  try { reservedInception = lstatSync(join(hubRoot, '.formula', 'inception')); }
   catch { /* The inception run area is excluded local state, like work. */ }
   const visit = (absolute, logical) => {
     let stat;

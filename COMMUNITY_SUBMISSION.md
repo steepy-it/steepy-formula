@@ -28,7 +28,7 @@ steepy-formula governs a repository's stable knowledge in the canonical Stable K
 ## Runtime behavior and safety
 
 - steepy-formula has five native harnesses: Claude Code, Codex, OpenCode, Pi, and DeepSeek Harness.
-- steepy-formula writes the gitignored `.apex/work/` local work area and a root `CLAUDE.md` into the target repo — graph-first init creates no other `.apex/` files.
+- steepy-formula writes the gitignored `.formula/work/` local work area and a root `CLAUDE.md` into the target repo — graph-first init creates no other `.apex/` files.
 - steepy-formula writes Claude Code agent and skill artifacts into the target repo during initialization.
 - steepy-formula runs Node.js scripts from the plugin package, and runs the graph engine as a local Docker container bound to localhost.
 - Core workflows do not require network access to third-party services; the runtime dependency set is a single pinned package (`neo4j-driver`, Apache-2.0) kept behind the engine adapter.

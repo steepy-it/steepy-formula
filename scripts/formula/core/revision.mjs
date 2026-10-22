@@ -1,5 +1,5 @@
 // ChangeSet, hash-chained Revisions and transactional apply — the audit backbone of the Stable
-// Knowledge Graph (spec .apex/work/specs/2026-08-11-stable-knowledge-graph.md §21 "Revision and
+// Knowledge Graph (spec .formula/work/specs/2026-08-11-stable-knowledge-graph.md §21 "Revision and
 // audit model", §26 "actor identity", §11 "Promotion workflow", success criterion 13).
 //
 //   applyChangeSet(port, changeSet, meta) -> { ok, revision, violations }

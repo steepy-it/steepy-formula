@@ -44,21 +44,21 @@ function checkSkill(name, mustReference) {
   }
 }
 
-test('brainstorm: valid user-invocable skill, writes spec into .apex/work/specs/', () => {
-  checkSkill('brainstorm', ['.apex/work/specs/', 'steepy-formula graph validate']);
+test('brainstorm: valid user-invocable skill, writes spec into .formula/work/specs/', () => {
+  checkSkill('brainstorm', ['.formula/work/specs/', 'steepy-formula graph validate']);
 });
 
 test('brainstorm: local-work contract is explicit and forbids stable registration', () => {
   const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
   assert.match(
     text,
-    /description:\s+Turn an idea into a local working spec under \.apex\/work\/specs\/\./,
+    /description:\s+Turn an idea into a local working spec under \.formula\/work\/specs\/\./,
     'brainstorm description must describe the local working-spec contract'
   );
   assert.match(text, /5\. Finalize the approved draft/);
   assert.match(text, /6\. Validate the graph with `steepy-formula graph validate` \(deterministic gate\)\./);
   assert.match(text, /### Step 5 — Finalize the approved draft/);
-  assert.match(text, /Create `\.apex\/work\/specs\/` if it does not exist\./);
+  assert.match(text, /Create `\.formula\/work\/specs\/` if it does not exist\./);
   assert.match(text, /Do not create a specs sub-index\./);
   assert.match(text, /Specs are local workflow artifacts, not stable hub documentation\./);
   assert.doesNotMatch(text, /_INDEX\.md|validate-hub|\blegacy\b/i, 'brainstorm is graph-only: no Markdown hub, linter, or legacy branch');
@@ -69,7 +69,7 @@ test('brainstorm: Step 4 writes the draft into the spec file (gate), Step 5 fina
   const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8');
   const step4 = sectionBetween(text, '### Step 4 — Present the design (gate)', '### Step 5');
   assert.match(step4, /^status: DRAFT$/m, 'Step 4 must write the draft with the workflow header status: DRAFT');
-  assert.match(step4, /\.apex\/work\/specs\//, 'Step 4 must write the draft to .apex/work/specs/');
+  assert.match(step4, /\.formula\/work\/specs\//, 'Step 4 must write the draft to .formula/work/specs/');
   assert.match(
     step4,
     /no finalization,? no handoff,? no hub mutation until the user approves/i,
@@ -150,8 +150,8 @@ test('brainstorm: Step 2 grilling has structure — design tree, facts/decisions
   assert.doesNotMatch(step2, /until the idea is clear/i, 'the vague exit criterion must be replaced');
 });
 
-test('plan: valid user-invocable skill, writes plan into .apex/work/plans/', () => {
-  checkSkill('plan', ['.apex/work/plans/', '.apex/work/specs/', '-agent', 'steepy-formula graph validate']);
+test('plan: valid user-invocable skill, writes plan into .formula/work/plans/', () => {
+  checkSkill('plan', ['.formula/work/plans/', '.formula/work/specs/', '-agent', 'steepy-formula graph validate']);
 });
 
 test('plan: local-work contract is explicit and forbids stable registration', () => {
@@ -165,7 +165,7 @@ test('plan: local-work contract is explicit and forbids stable registration', ()
   assert.match(text, /If no\s+candidate exists, tell the user to run the `brainstorm` skill/);
   assert.match(text, /### Step 4 — Write the local working plan/);
   assert.match(text, /> Source spec: \[<topic>\]\(\.\.\/specs\/<YYYY-MM-DD-topic>\.md\)/);
-  assert.match(text, /Create `\.apex\/work\/plans\/` if it does not exist\./);
+  assert.match(text, /Create `\.formula\/work\/plans\/` if it does not exist\./);
   assert.match(text, /Do not create a plans sub-index\./);
   assert.match(text, /Plans are local workflow artifacts, not stable hub documentation\./);
   assert.doesNotMatch(text, /_INDEX\.md|validate-hub|testing-and-checklist|\blegacy\b/i, 'plan is graph-only: no Markdown hub, linter, or legacy branch');
@@ -191,7 +191,7 @@ test('chain skills: byte-identical canonical manual handoff contract', () => {
   ]) assert.ok(block.includes(phrase), `manual block must contain ${phrase}`);
   assert.match(block, /fails closed\s+without discovery/);
   assert.match(block, /Gear-3 implement → review\s+maps `criteria`, `task-results`, `branch-diff`/);
-  assert.match(block, /No child inherits general\s+`\.apex\/work\/\*\*` access/);
+  assert.match(block, /No child inherits general\s+`\.formula\/work\/\*\*` access/);
 });
 
 test('chain skills: every declared transition emits exactly the destination accepted roles', () => {
@@ -361,7 +361,7 @@ test('plan: Step 3 binds each task to Complexity and Step 4.5 verifies it', () =
 });
 
 test('implement: valid user-invocable skill, enforces TDD against the surface test command', () => {
-  checkSkill('implement', ['.apex/work/specs/', '.apex/work/plans/', 'failing test', '-agent']);
+  checkSkill('implement', ['.formula/work/specs/', '.formula/work/plans/', 'failing test', '-agent']);
 });
 
 test('implement: hands off to review with the exact minimal review capability', () => {
@@ -376,7 +376,7 @@ test('implement: hands off to review with the exact minimal review capability', 
   );
   assert.doesNotMatch(step5, /required:\n\s+plan:/, 'review must not receive the full plan');
   assert.match(step5, /required:\n\s+criteria: <criteria-path>\n\s+task-results: <task-result-index-path>\n\s+branch-diff: <branch-diff-path>\nonDemand: none/);
-  assert.match(step5, /\.apex\/work\/tasks\/<plan-basename>\/task-result-index\.md/, 'handoff names the verified task-result-index path');
+  assert.match(step5, /\.formula\/work\/tasks\/<plan-basename>\/task-result-index\.md/, 'handoff names the verified task-result-index path');
   assert.match(step5, /starts from those files, not from this conversation'?s memory/);
 });
 
@@ -385,14 +385,14 @@ test('implement: manual entry supports mutually exclusive direct-spec and plan-b
   assert.match(text, /two exclusive manual entry paths/i);
   assert.match(text, /required:\n\s+spec: <spec-path>\nonDemand: none/);
   assert.match(text, /required:\n\s+plan: <plan-path>\nonDemand:\n\s+source-spec: <spec-path>/);
-  assert.match(text, /immediate specs and plans directories|immediate `?\.apex\/work\/specs\/`? and `?\.apex\/work\/plans\/`? directories/i);
+  assert.match(text, /immediate specs and plans directories|immediate `?\.formula\/work\/specs\/`? and `?\.formula\/work\/plans\/`? directories/i);
   assert.match(text, /require user selection\s+even when there is exactly one candidate/i);
   assert.match(text, /explicit[\s\S]{0,100}(failure|invalid|malformed)[\s\S]{0,100}without (fallback|discovery)/i);
   assert.match(text, /optional `ledger\.md`[^]*canonical\s+`task-result-index\.md` solely from the accepted (?:spec or plan|entry artifact) basename/i);
   assert.doesNotMatch(text, /most recent dated plan/i);
   assert.match(text, /never search for a historical[^]*task directory or scan for a ledger\/index/i);
   assert.match(text, /If no candidate exists[^]*(?:brainstorm|plan)/i);
-  assert.match(text, /\*\n!\.gitignore/, 'fallback .apex/work/.gitignore must be the two-line body');
+  assert.match(text, /\*\n!\.gitignore/, 'fallback .formula/work/.gitignore must be the two-line body');
   assert.doesNotMatch(text, /create it with content `\*`/, 'a bare * ignores the .gitignore itself');
 });
 
@@ -531,7 +531,7 @@ test('implement: skill defines the conductor result-index grammar and canonical 
   assert.ok(skill.includes(canonical), 'skill must define the exact task-result-index bullet grammar');
   assert.match(skill, /task-result-index\.md[\s\S]{0,240}exact bullet grammar/i);
   assert.doesNotMatch(skill, /branch\.diff\b/);
-  assert.ok(skill.includes('.apex/work/tasks/<plan-basename>/branch-diff.txt'));
+  assert.ok(skill.includes('.formula/work/tasks/<plan-basename>/branch-diff.txt'));
 });
 
 test('implement: final review consumes a deterministic criteria-only artifact, never the full spec', () => {
@@ -540,12 +540,12 @@ test('implement: final review consumes a deterministic criteria-only artifact, n
   const finalCommand = skill.split('\n').find((line) => line.includes('--role final-review')) ?? '';
 
   assert.ok(
-    finalCommand.includes('--criteria .apex/work/tasks/<plan-basename>/success-criteria.md'),
+    finalCommand.includes('--criteria .formula/work/tasks/<plan-basename>/success-criteria.md'),
     'final-review CLI must require the deterministic task-local criteria-only artifact'
   );
   assert.doesNotMatch(
     finalCommand,
-    /--criteria \.apex\/work\/specs\//,
+    /--criteria \.formula\/work\/specs\//,
     'the full source spec must never be a final-review required input'
   );
   assert.match(skill, /materialize[\s\S]{0,180}`success-criteria\.md`/i);
@@ -732,8 +732,8 @@ test('bootstrap template includes the workflow-chain router step', () => {
     assert.ok(tpl.includes(namespacedCommand('plan')), `${file}: must mention plan`);
     assert.ok(tpl.includes(namespacedCommand('implement')), `${file}: must mention implement`);
     assert.ok(tpl.includes(namespacedCommand('review')), `${file}: must mention review`);
-    assert.match(tpl, /\.apex\/work\/specs\//, `${file}: router should detect local spec presence`);
-    assert.match(tpl, /\.apex\/work\/plans\//, `${file}: router should detect local plan presence`);
+    assert.match(tpl, /\.formula\/work\/specs\//, `${file}: router should detect local spec presence`);
+    assert.match(tpl, /\.formula\/work\/plans\//, `${file}: router should detect local plan presence`);
     assertNoBareWorkflowInvocations(tpl, `templates/${file}`);
   }
   const graphTpl = readFileSync(join(here, '..', 'templates', 'bootstrap-skill-graph.md'), 'utf8');
@@ -760,9 +760,9 @@ test('bootstrap template includes the coverage-verdict and gear-selection steps'
       `${file}: Step 2.6 must declare the gear and ask for one confirmation before the ceremony starts`);
     assert.match(tpl, /force|override/i, `${file}: Step 2.6 must let the user force a different gear, recorded as an override`);
     assert.match(tpl, /goal contract/i, `${file}: Step 2.6 must interview the user on the goal contract fields on gear-4 confirmation`);
-    assert.match(tpl, /\.apex\/work\/loops\//, `${file}: Step 2.6 must write the goal contract under .apex/work/loops/`);
+    assert.match(tpl, /\.formula\/work\/loops\//, `${file}: Step 2.6 must write the goal contract under .formula/work/loops/`);
     assert.match(tpl, /verdict artifact/i, `${file}: gear step must describe the verdict artifact`);
-    assert.match(tpl, /\.apex\/work\//, `${file}: verdict artifact must be recorded under .apex/work/`);
+    assert.match(tpl, /\.formula\/work\//, `${file}: verdict artifact must be recorded under .formula/work/`);
     assert.match(tpl, /confirmed, not re-asked/,
       `${file}: Step 2.6 gear-4 branch must state that fields already present are confirmed, not re-asked`);
     assert.match(tpl, /only missing fields/,
@@ -900,7 +900,7 @@ test('brainstorm: Step 7 offers the drive-mode choice — manual default, autopi
   assert.match(step7, /blast-radius: branch-only, no-push, stop-before-PR/, 'the contract must fill the blast-radius value');
   assert.match(step7, /launch the conductor in background/i, 'Step 7 must describe the launch as launching the conductor in background');
   assert.match(step7, /node <engine-root>\/scripts\/autopilot\.mjs <spec-path>/, 'Step 7 must launch autopilot.mjs on the spec path');
-  assert.match(step7, /\.apex\/work\/tasks\/<spec-basename>\/autopilot-status\.md/, 'Step 7 must report the status file path');
+  assert.match(step7, /\.formula\/work\/tasks\/<spec-basename>\/autopilot-status\.md/, 'Step 7 must report the status file path');
   assert.match(step7, /phase-<n>\.log/, 'Step 7 must report the phase log path');
   assert.match(step7, /READY_FOR_PR/, 'Step 7 must name the READY_FOR_PR halt state');
   assert.match(step7, /version-bump\/PR decision \(review Step 5\) stays human/i, 'Step 7 must state the version-bump/PR decision stays human');
@@ -1280,9 +1280,9 @@ test('shipped workflow handoffs use namespaced slash invocations', () => {
   }
 });
 
-test('implement: gates commits, keeps the ledger under .apex/work/tasks/, runs sequentially', () => {
+test('implement: gates commits, keeps the ledger under .formula/work/tasks/, runs sequentially', () => {
   const text = readFileSync(join(skillsDir, 'implement', 'SKILL.md'), 'utf8');
-  assert.match(text, /\.apex\/work\/tasks\//, 'SKILL must place the progress ledger under .apex/work/tasks/');
+  assert.match(text, /\.formula\/work\/tasks\//, 'SKILL must place the progress ledger under .formula/work/tasks/');
   assert.match(text, /commit/i, 'SKILL must address per-task commit authorization');
   assert.match(text, /sequential/i, 'SKILL must state sequential execution');
 });
@@ -1891,7 +1891,7 @@ test('downstream plan and implement read only the accepted artifact gear at Step
     assert.match(text, /### Step 0 — Read the gear/, `${s} must have a Step 0 gear-read step`);
     assert.match(text, /verdict artifact/i, `${s} Step 0 must reference the verdict artifact`);
     if (s === 'implement') assert.match(text, /accepted plan's contract metadata/i, 'implement takes gear from the accepted plan contract');
-    else assert.match(text, /`\.apex\/work\/`/, `${s} Step 0 must locate the verdict artifact under .apex/work/`);
+    else assert.match(text, /`\.formula\/work\/`/, `${s} Step 0 must locate the verdict artifact under .formula/work/`);
     assert.match(text, /gear-1\/2 work/i, `${s} Step 0 must branch on artifact-absent gear-1/2 recompute`);
     assert.match(text, /recompute the coverage verdict inline/i, `${s} Step 0 must recompute the verdict inline when the artifact is absent for gear-1/2 work`);
     assert.match(text, /do not proceed\s+blind/i, `${s} Step 0 must refuse to proceed blind when full gear-3 ceremony is required and the artifact is absent`);
@@ -1978,7 +1978,7 @@ test('review: regular evidence and terminal lifecycle use exact current-run capa
   const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   const step4 = sectionBetween(text, '### Step 4', '### Step 5');
-  assert.match(step2, /regular review[^]*`\.apex\/work\/tasks\/<plan-basename>\/evidence-report\.md`/i);
+  assert.match(step2, /regular review[^]*`\.formula\/work\/tasks\/<plan-basename>\/evidence-report\.md`/i);
   assert.match(step2, /surface test[^]*optional goal verifier[^]*coherence gate/i);
   assert.match(step2, /receipt[^]*artifact path[^]*timestamps[^]*pass state/i);
   assert.doesNotMatch(step2, /\[TASK_DIR\]|per-task files under/);
@@ -2063,7 +2063,7 @@ test('review capture and loop prompts preserve bounded role-local access', () =>
   for (const file of ['loop-implementer-prompt.md', 'loop-final-review-prompt.md']) {
     const prompt = readFileSync(join(skillsDir, 'loop-engineer', file), 'utf8');
     assert.match(prompt, /exact role-local|only the exact/i);
-    assert.match(prompt, /do not[^]*explore[^]*\.apex\/work/i);
+    assert.match(prompt, /do not[^]*explore[^]*\.formula\/work/i);
   }
 });
 
@@ -2273,7 +2273,7 @@ test('review: Step 2 assembles the Promotion Scenario — typed candidates file,
   const step2 = sectionBetween(text, '### Step 2', '### Step 3');
   assert.match(step2, /\*\*The sweep assembles the Promotion Scenario\.\*\*/,
     'Step 2 must carry the scenario-assembly branch');
-  assert.ok(step2.includes('.apex/work/tasks/<plan-basename>/promotion-candidates.json'),
+  assert.ok(step2.includes('.formula/work/tasks/<plan-basename>/promotion-candidates.json'),
     'the sweep must write the typed candidates file at the canonical plan-directory path');
   assert.ok(step2.includes('steepy-formula promotion create --project <id> --candidates <file.json> [--proposer <name>] <scenario-id>'),
     'assembly must create the scenario via promotion create');
@@ -2501,7 +2501,7 @@ test('brainstorm: manual handoff names the plan skill, a NEW session, and the re
   const step8 = sectionBetween(text, '### Step 8 — Hand off', '## Model Selection');
   assert.match(step8, /run the `plan` skill in a NEW session, with the relative path of the plan document/,
     'the handoff must name the plan skill, a NEW session, and the relative plan path');
-  assert.match(step8, /`\.apex\/work\/plans\/<date>-<topic>\.md`/,
+  assert.match(step8, /`\.formula\/work\/plans\/<date>-<topic>\.md`/,
     'the handoff must state the conventional relative plan path');
 });
 
@@ -2685,11 +2685,11 @@ test('graph-migrate: cutover regenerates the graph-mode disk artifacts between e
   assert.match(
     text,
     /\.apex-work-staging/,
-    'the .apex/work/ staging path must be named so in-flight work survives the archive move'
+    'the .formula/work/ staging path must be named so in-flight work survives the archive move'
   );
   assert.match(
     text,
-    /\.apex\/work\/specs\/[\s\S]{0,200}\.apex\/work\/plans\/[\s\S]{0,300}\.gitignore/,
+    /\.formula\/work\/specs\/[\s\S]{0,200}\.formula\/work\/plans\/[\s\S]{0,300}\.gitignore/,
     'the work area must be re-created with specs/ and plans/ plus its .gitignore'
   );
   assert.match(

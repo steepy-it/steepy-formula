@@ -144,8 +144,8 @@ function classifyRest(rest, value) {
 export function classifyWorkPath(value) {
   assertCanonicalRelative(value);
   const segments = value.split('/');
-  if (segments[0] !== '.apex' || segments[1] !== 'work') {
-    fail(`'${value}' is outside the .apex/work/ contract of this module`);
+  if (segments[0] !== '.formula' || segments[1] !== 'work') {
+    fail(`'${value}' is outside the .formula/work/ contract of this module`);
   }
   const classified = classifyRest(segments.slice(2), value);
   return Object.freeze({ path: value, ...classified });

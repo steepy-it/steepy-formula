@@ -44,7 +44,7 @@ Subagent (reviewer):
     conflict, recording the risk and read in [REVIEW_FILE]. Never preload a full spec, plan, transcript,
     conversation, or another work artifact. Ordinary repository source needed to verify the assigned
     code task may be read normally. In manual drive use only the same four role-local direct inputs,
-    never enumerate or infer another `.apex/work/**` input, and record the no-manifest degradation.
+    never enumerate or infer another `.formula/work/**` input, and record the no-manifest degradation.
 
     Read the diff file once. The implementer report contains unverified claims: verify them against
     the diff. The review is read-only with respect to application code and other repository sources.
@@ -68,9 +68,9 @@ Subagent (reviewer):
 
     ## Durable findings and response
     Always write the complete review, Status, evidence, strengths, and calibrated findings to
-    `.apex/work/tasks/<plan-basename>/task-N-review.md` ([REVIEW_FILE]). Status is Approved or Issues Found.
+    `.formula/work/tasks/<plan-basename>/task-N-review.md` ([REVIEW_FILE]). Status is Approved or Issues Found.
     If Issues Found, also write the complete actionable findings to authoritative
-    `.apex/work/tasks/<plan-basename>/task-N-issues.md` ([ISSUE_FILE]); the fix reads that file, not the
+    `.formula/work/tasks/<plan-basename>/task-N-issues.md` ([ISSUE_FILE]); the fix reads that file, not the
     response. If BLOCKED or NEEDS_CONTEXT, write all detail to [REVIEW_FILE].
 
     For manual drive, return exactly the four unbulleted fields below and nothing else.

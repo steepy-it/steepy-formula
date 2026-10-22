@@ -73,15 +73,15 @@ function fixtureRef(path) {
 }
 
 function completeDescriptor() {
-  const cycle = fixtureRef('.apex/inception/verification/cycles/0001.json');
+  const cycle = fixtureRef('.formula/inception/verification/cycles/0001.json');
   return baseDescriptor({
     phase: 'complete',
     status: 'complete',
     nextRecord: 4,
     cycles: [cycle],
     currentCycle: cycle,
-    baseline: fixtureRef('.apex/inception/snapshots/0002.json'),
-    completion: fixtureRef('.apex/inception/verification/completions/0003.json'),
+    baseline: fixtureRef('.formula/inception/snapshots/0002.json'),
+    completion: fixtureRef('.formula/inception/verification/completions/0003.json'),
   });
 }
 
@@ -104,10 +104,10 @@ function moveKeyToEnd(object, key) {
 // ---------------------------------------------------------------------------
 
 test('exports the fixed inception paths, run children, and closed enums', () => {
-  assert.equal(INCEPTION_AREA, '.apex/inception');
-  assert.equal(INCEPTION_GITIGNORE, '.apex/inception/.gitignore');
+  assert.equal(INCEPTION_AREA, '.formula/inception');
+  assert.equal(INCEPTION_GITIGNORE, '.formula/inception/.gitignore');
   assert.equal(INCEPTION_GITIGNORE_BYTES, '*\n');
-  assert.equal(RUN_DESCRIPTOR_PATH, '.apex/inception/run.json');
+  assert.equal(RUN_DESCRIPTOR_PATH, '.formula/inception/run.json');
   assert.deepEqual(RUN_CHILDREN, [
     'approvals', 'checkpoints', 'resume-notes', 'project', 'research', 'bootstrap', 'verification',
     'snapshots', 'effects', 'reconciliations', 'units', 'run.json',
@@ -196,20 +196,20 @@ test('parseRunDescriptor rejects every invalid descriptor shape with a one-line 
     'fractional nextRecord': text({ ...base, nextRecord: 1.5 }),
     'approvalEntry above approvals': text({ ...base, approvalEntry: 1 }),
     'negative approvalEntry': text({ ...base, approvalEntry: -1 }),
-    'approval outside its directory': text({ ...base, nextRecord: 2, approvals: [fixtureRef('.apex/inception/checkpoints/0001.json')] }),
-    'approval at nextRecord': text({ ...base, nextRecord: 2, approvals: [fixtureRef('.apex/inception/approvals/0002.json')] }),
-    'unpadded record number': text({ ...base, nextRecord: 2, resumeNotes: [fixtureRef('.apex/inception/resume-notes/1.md')] }),
+    'approval outside its directory': text({ ...base, nextRecord: 2, approvals: [fixtureRef('.formula/inception/checkpoints/0001.json')] }),
+    'approval at nextRecord': text({ ...base, nextRecord: 2, approvals: [fixtureRef('.formula/inception/approvals/0002.json')] }),
+    'unpadded record number': text({ ...base, nextRecord: 2, resumeNotes: [fixtureRef('.formula/inception/resume-notes/1.md')] }),
     'records not increasing': text({
       ...base,
       nextRecord: 4,
-      checkpoints: [fixtureRef('.apex/inception/checkpoints/0003.json'), fixtureRef('.apex/inception/checkpoints/0002.json')],
+      checkpoints: [fixtureRef('.formula/inception/checkpoints/0003.json'), fixtureRef('.formula/inception/checkpoints/0002.json')],
     }),
     'complete without completion': text({ ...completeDescriptor(), completion: null }),
     'completion outside its directory': text({
-      ...completeDescriptor(), completion: fixtureRef('.apex/inception/verification/summaries/0003.json'),
+      ...completeDescriptor(), completion: fixtureRef('.formula/inception/verification/summaries/0003.json'),
     }),
     'completion with a bad digest': text({
-      ...completeDescriptor(), completion: { ...fixtureRef('.apex/inception/verification/completions/0003.json'), sha256: 'B'.repeat(64) },
+      ...completeDescriptor(), completion: { ...fixtureRef('.formula/inception/verification/completions/0003.json'), sha256: 'B'.repeat(64) },
     }),
     'malformed history entry': text({
       ...base,
@@ -426,8 +426,8 @@ function writeFile(c, relative, content) {
 }
 
 function writeArea(c, descriptorText) {
-  writeFile(c, '.apex/inception/.gitignore', '*\n');
-  writeFile(c, '.apex/inception/run.json', descriptorText);
+  writeFile(c, '.formula/inception/.gitignore', '*\n');
+  writeFile(c, '.formula/inception/run.json', descriptorText);
 }
 
 function writeDescriptor(c, descriptor) {
@@ -473,14 +473,14 @@ test('inspect is read-only and reports exact format, state, actions and referenc
 
 
 function readDescriptor(c) {
-  return JSON.parse(readFileSync(join(c.repo, '.apex/inception/run.json'), 'utf8'));
+  return JSON.parse(readFileSync(join(c.repo, '.formula/inception/run.json'), 'utf8'));
 }
 
 // Decoys hold valid descriptors at non-descriptor paths: reading any of them would change a row.
 function addDecoys(c) {
-  writeFile(c, '.apex/inception/project/x.md', text(completeDescriptor()));
-  writeFile(c, '.apex/inception/zzz-run.json', text(blockedDescriptor()));
-  writeFile(c, '.apex/inception/run.json.bak', text(completeDescriptor()));
+  writeFile(c, '.formula/inception/project/x.md', text(completeDescriptor()));
+  writeFile(c, '.formula/inception/zzz-run.json', text(blockedDescriptor()));
+  writeFile(c, '.formula/inception/run.json.bak', text(completeDescriptor()));
 }
 
 // ---------------------------------------------------------------------------
@@ -493,12 +493,12 @@ const VALID_CLASSIFICATIONS = [
   { label: 'empty repository', setup() {}, hub: 'absent', run: 'none', rows: ['maturity-decision-required', 'start-new-run', 'propose-init-discovery'] },
   {
     label: '.DS_Store beside the area',
-    setup(c) { writeFile(c, '.apex/.DS_Store', 'finder'); },
+    setup(c) { writeFile(c, '.formula/.DS_Store', 'finder'); },
     hub: 'absent', run: 'none', rows: ['maturity-decision-required', 'start-new-run', 'propose-init-discovery'],
   },
   {
     label: 'area without a descriptor',
-    setup(c) { writeFile(c, '.apex/inception/.gitignore', '*\n'); writeFile(c, '.apex/inception/.DS_Store', 'finder'); },
+    setup(c) { writeFile(c, '.formula/inception/.gitignore', '*\n'); writeFile(c, '.formula/inception/.DS_Store', 'finder'); },
     hub: 'absent', run: 'none', rows: ['maturity-decision-required', 'start-new-run', 'propose-init-discovery'],
   },
   { label: 'active run', setup(c) { writeDescriptor(c, baseDescriptor()); }, hub: 'absent', run: 'active', rows: ['resume-run'] },
@@ -509,7 +509,7 @@ const VALID_CLASSIFICATIONS = [
   },
   { label: 'complete run', setup(c) { writeDescriptor(c, completeDescriptor()); }, hub: 'absent', run: 'complete', rows: ['report-next-steps'] },
   // Formula: the graph channel has no Markdown index; its committed engine binding marks the hub.
-  { label: 'graph binding without .apex', setup(c) { writeFile(c, '.formula/config.json', '{}\n'); }, hub: 'present', run: 'none', rows: ['ordinary-workflow'] },
+  { label: 'graph binding without an inception area', setup(c) { writeFile(c, '.formula/config.json', '{}\n'); }, hub: 'present', run: 'none', rows: ['ordinary-workflow'] },
   {
     label: 'complete run beside a graph binding',
     setup(c) { writeDescriptor(c, completeDescriptor()); writeFile(c, '.formula/config.json', '{}\n'); },
@@ -610,7 +610,7 @@ test('formula: every command refuses the migrate state before admission, reads o
     ['resume-check'],
     ['resume-note', '--next', 'Continue'],
     ['transition', '--to', 'architecture', '--reason', 'Continue'],
-    ['unit', 'begin', '--id', 'work', '--input', '.apex/inception/inputs/missing.json'],
+    ['unit', 'begin', '--id', 'work', '--input', '.formula/inception/inputs/missing.json'],
   ];
   for (const descriptor of [baseDescriptor(), v1RunDescriptor()]) {
     withCase('commands-migrate', (c) => {
@@ -660,38 +660,38 @@ const INVALID_CLASSIFICATIONS = [
     label: 'symlinked descriptor',
     setup(c) {
       writeFile(c, 'elsewhere/run.json', text(baseDescriptor()));
-      writeFile(c, '.apex/inception/.gitignore', '*\n');
-      symlinkSync(join(c.repo, 'elsewhere/run.json'), join(c.repo, '.apex/inception/run.json'));
+      writeFile(c, '.formula/inception/.gitignore', '*\n');
+      symlinkSync(join(c.repo, 'elsewhere/run.json'), join(c.repo, '.formula/inception/run.json'));
     },
   },
   {
     label: 'hard-linked descriptor',
     setup(c) {
       writeDescriptor(c, baseDescriptor());
-      linkSync(join(c.repo, '.apex/inception/run.json'), join(c.repo, 'run-copy.json'));
+      linkSync(join(c.repo, '.formula/inception/run.json'), join(c.repo, 'run-copy.json'));
     },
   },
   {
     label: 'descriptor that is a directory',
-    setup(c) { mkdirSync(join(c.repo, '.apex/inception/run.json'), { recursive: true }); },
+    setup(c) { mkdirSync(join(c.repo, '.formula/inception/run.json'), { recursive: true }); },
   },
   {
-    label: 'symlinked .apex',
+    label: 'symlinked .formula',
     setup(c) {
-      mkdirSync(join(c.repo, 'real-apex/inception'), { recursive: true });
-      writeFile(c, 'real-apex/inception/run.json', text(baseDescriptor()));
-      symlinkSync(join(c.repo, 'real-apex'), join(c.repo, '.apex'));
+      mkdirSync(join(c.repo, 'real-formula/inception'), { recursive: true });
+      writeFile(c, 'real-formula/inception/run.json', text(baseDescriptor()));
+      symlinkSync(join(c.repo, 'real-formula'), join(c.repo, '.formula'));
     },
   },
   {
     label: 'symlinked inception area',
     setup(c) {
       writeFile(c, 'real-area/run.json', text(baseDescriptor()));
-      mkdirSync(join(c.repo, '.apex'));
-      symlinkSync(join(c.repo, 'real-area'), join(c.repo, '.apex/inception'));
+      mkdirSync(join(c.repo, '.formula'));
+      symlinkSync(join(c.repo, 'real-area'), join(c.repo, '.formula/inception'));
     },
   },
-  { label: '.apex is a file', setup(c) { writeFile(c, '.apex', 'not a directory'); } },
+  { label: '.formula is a file', setup(c) { writeFile(c, '.formula', 'not a directory'); } },
   { label: 'unsupported v1 schema', setup: c => writeDescriptor(c, v1RunDescriptor()) },
 ];
 
@@ -725,15 +725,15 @@ test('usage errors exit 2 with one JSON line and never write', () => {
   const cases = [
     { args: [], command: null, error: /missing command/u },
     { args: ['bogus'], command: 'bogus', error: /unknown command/u },
-    { args: ['approve', '--document', '.apex/inception/project/decision-register.md'], command: 'approve', error: /--statement/u },
+    { args: ['approve', '--document', '.formula/inception/project/decision-register.md'], command: 'approve', error: /--statement/u },
     { args: ['approve', '--statement', 'yes'], command: 'approve', error: /--document/u },
     {
-      args: ['approve', '--statement', 'yes', '--document', '.apex/inception/project/decision-register.md', '--statement', 'no'],
+      args: ['approve', '--statement', 'yes', '--document', '.formula/inception/project/decision-register.md', '--statement', 'no'],
       command: 'approve', error: /--statement/u,
     },
-    { args: ['approve', '--statement', 'yes', '--document', '.apex/inception/project/decision-register.md', 'extra'], command: 'approve', error: /extra/u },
+    { args: ['approve', '--statement', 'yes', '--document', '.formula/inception/project/decision-register.md', 'extra'], command: 'approve', error: /extra/u },
     { args: ['verify-approval', '--approval'], command: 'verify-approval', error: /approval/u },
-    { args: ['verify-approval', '--document', '.apex/inception/project/decision-register.md'], command: 'verify-approval', error: /document/u },
+    { args: ['verify-approval', '--document', '.formula/inception/project/decision-register.md'], command: 'verify-approval', error: /document/u },
     { args: ['effect'], command: 'effect', error: /missing effect subcommand/u },
     { args: ['effect', 'bogus'], command: 'effect', error: /unknown effect subcommand/u },
     { args: ['effect intent', '--id', 'x', '--kind', 'install', '--summary', 's'], command: 'effect intent', error: /unknown command/u },
@@ -816,14 +816,14 @@ test('formula: the startRun library refuses the migrate state with the shared me
 
 const HUB_ARTIFACTS = ['.apex/_INDEX.md', '.apex/standards', '.agents', '.claude', '.codex', '.opencode', 'AGENTS.md', 'CLAUDE.md'];
 
-// Every file the helper created lives under `.apex/inception/`; the only directory it created
-// outside the area is `.apex/` itself; no hub or provider artifact exists.
+// Every file the helper created lives under `.formula/inception/`; the only directory it created
+// outside the area is `.formula/` itself; no hub or provider artifact exists.
 function assertConfinedToArea(c, before, { exclude = [] } = {}) {
   const after = snapshot(c.repo, { exclude });
   for (const path of Object.keys(after)) {
     if (path in before) continue;
     const insideArea = path === INCEPTION_AREA || path.startsWith(`${INCEPTION_AREA}/`);
-    assert.ok(insideArea || (path === '.apex' && after[path].type === 'dir'), `unexpected path created: ${path}`);
+    assert.ok(insideArea || (path === '.formula' && after[path].type === 'dir'), `unexpected path created: ${path}`);
   }
   for (const path of HUB_ARTIFACTS) {
     assert.equal(lstatOrNull(join(c.repo, path)), null, `${path} must not exist`);
@@ -854,7 +854,7 @@ test('start in an empty directory creates the ignored area first and an initial 
     assert.match(output.runId, RUN_ID_PATTERN);
     assert.equal(output.descriptor, RUN_DESCRIPTOR_PATH);
     assert.deepEqual(Object.keys(snapshot(c.repo)).sort(), [
-      '.apex', '.apex/inception', '.apex/inception/.gitignore', '.apex/inception/run.json',
+      '.formula', '.formula/inception', '.formula/inception/.gitignore', '.formula/inception/run.json',
     ]);
     assert.equal(readFileSync(join(c.repo, INCEPTION_GITIGNORE), 'utf8'), '*\n');
     const bytes = readFileSync(join(c.repo, RUN_DESCRIPTOR_PATH), 'utf8');
@@ -917,7 +917,7 @@ test('start refuses an existing hub, an existing descriptor, or a foreign area .
     },
     {
       label: 'symlinked area',
-      setup(c) { mkdirSync(join(c.repo, 'real-area')); mkdirSync(join(c.repo, '.apex')); symlinkSync(join(c.repo, 'real-area'), join(c.repo, INCEPTION_AREA)); },
+      setup(c) { mkdirSync(join(c.repo, 'real-area')); mkdirSync(join(c.repo, '.formula')); symlinkSync(join(c.repo, 'real-area'), join(c.repo, INCEPTION_AREA)); },
       error: /real directory/u,
     },
   ];
@@ -1052,24 +1052,24 @@ test('replaceFileAtomic removes its temp file even when closing the temp file fa
 });
 
 // Shared command-test paths; public active flows below use v2.
-const REGISTER = '.apex/inception/project/decision-register.md';
-const RESULTS = '.apex/inception/verification/results.md';
+const REGISTER = '.formula/inception/project/decision-register.md';
+const RESULTS = '.formula/inception/verification/results.md';
 
 function transition(c, to, ...extra) {
   return cli(c, 'transition', '--to', to, '--reason', `move to ${to}`, ...extra);
 }
 
-const ABANDONED = '.apex/inception/abandoned';
+const ABANDONED = '.formula/inception/abandoned';
 
 function populateRunChildren(c) {
-  writeFile(c, '.apex/inception/approvals/0002.json', '{"record":2}\n');
-  writeFile(c, '.apex/inception/checkpoints/0003.json', '{"record":3}\n');
-  writeFile(c, '.apex/inception/project/decision-register.md', '# Decisions\n');
-  writeFile(c, '.apex/inception/project/nested/deep.md', '# Deep\n');
-  writeFile(c, '.apex/inception/research/stack.md', '# Stack\n');
-  writeFile(c, '.apex/inception/bootstrap/web.md', '# Web\n');
-  writeFile(c, '.apex/inception/verification/results.md', '# Results\n');
-  writeFile(c, '.apex/inception/.DS_Store', 'finder');
+  writeFile(c, '.formula/inception/approvals/0002.json', '{"record":2}\n');
+  writeFile(c, '.formula/inception/checkpoints/0003.json', '{"record":3}\n');
+  writeFile(c, '.formula/inception/project/decision-register.md', '# Decisions\n');
+  writeFile(c, '.formula/inception/project/nested/deep.md', '# Deep\n');
+  writeFile(c, '.formula/inception/research/stack.md', '# Stack\n');
+  writeFile(c, '.formula/inception/bootstrap/web.md', '# Web\n');
+  writeFile(c, '.formula/inception/verification/results.md', '# Results\n');
+  writeFile(c, '.formula/inception/.DS_Store', 'finder');
 }
 
 // Where every pre-abandon file must be afterwards: run children move under the archive.
@@ -1092,7 +1092,7 @@ test('abandon archives every present run child byte-identical, deletes nothing, 
     assert.equal(cli(c, 'resume-note', '--next', 'continue').status, 0);
     populateRunChildren(c);
     const before = files(c.repo);
-    const archive = `.apex/inception/abandoned/${first}`;
+    const archive = `.formula/inception/abandoned/${first}`;
 
     const { status, output } = cli(c, 'abandon', '--reason', 'restart with a smaller scope');
     assert.equal(status, 0);
@@ -1119,8 +1119,8 @@ test('abandon archives every present run child byte-identical, deletes nothing, 
     const firstArchive = snapshot(join(c.repo, archive));
     const second = cli(c, ...startArgs()).output.runId;
     assert.notEqual(second, first);
-    assert.equal(cli(c, 'abandon', '--reason', 'second thoughts').output.archive, `.apex/inception/abandoned/${second}`);
-    assert.ok(existsSync(join(c.repo, `.apex/inception/abandoned/${second}/receipt.json`)));
+    assert.equal(cli(c, 'abandon', '--reason', 'second thoughts').output.archive, `.formula/inception/abandoned/${second}`);
+    assert.ok(existsSync(join(c.repo, `.formula/inception/abandoned/${second}/receipt.json`)));
     assert.deepEqual(snapshot(join(c.repo, archive)), firstArchive, 'an earlier archive is never touched');
     assert.equal(cli(c, 'classify').output.row, 'maturity-decision-required');
   });
@@ -1156,7 +1156,7 @@ test('abandon refuses a foreign or ambiguous archive and unsafe input without wr
       setup(c, archive, runId) {
         writeFile(c, `${archive}/abandon.json`, text({ schema: 'steepy-inception-abandon/v1', runId, at: '2026-10-07T12:00:00.000Z', reason: 'r', phase: 'reconnaissance', status: 'active' }));
         writeFile(c, `${archive}/project/old.md`, 'old\n');
-        writeFile(c, '.apex/inception/project/new.md', 'new\n');
+        writeFile(c, '.formula/inception/project/new.md', 'new\n');
       },
       error: /exists|real directory/u,
     },
@@ -1213,11 +1213,11 @@ test('an invalid descriptor refuses every command without writing', () => {
       },
     },
     {
-      label: 'symlinked .apex',
+      label: 'symlinked .formula',
       setup(c) {
-        writeFile(c, 'real-apex/inception/.gitignore', '*\n');
-        writeFile(c, 'real-apex/inception/run.json', text(baseDescriptor()));
-        symlinkSync(join(c.repo, 'real-apex'), join(c.repo, '.apex'));
+        writeFile(c, 'real-formula/inception/.gitignore', '*\n');
+        writeFile(c, 'real-formula/inception/run.json', text(baseDescriptor()));
+        symlinkSync(join(c.repo, 'real-formula'), join(c.repo, '.formula'));
       },
     },
     { label: 'unsupported v1 schema', setup(c) { writeDescriptor(c, v1RunDescriptor()); } },
@@ -1229,7 +1229,7 @@ test('an invalid descriptor refuses every command without writing', () => {
     startArgs(),
     ['transition', '--to', 'architecture', '--reason', 'next'],
     ['transition', '--to', 'blocked', '--reason', 'stop'],
-    ['transition', '--to', 'complete', '--reason', 'done', '--checkpoint', '.apex/inception/checkpoints/0001.json', '--verification', RESULTS],
+    ['transition', '--to', 'complete', '--reason', 'done', '--checkpoint', '.formula/inception/checkpoints/0001.json', '--verification', RESULTS],
     ['resume-note', '--next', 'continue'],
     ['approve', '--statement', 'yes', '--document', REGISTER],
     ['verify-approval'],
@@ -1255,7 +1255,7 @@ test('an invalid descriptor refuses every command without writing', () => {
 });
 
 
-// Paths outside the area (and `.apex/` itself, which `start` creates) keep their exact bytes,
+// Paths outside the area (and `.formula/` itself, which `start` creates) keep their exact bytes,
 // link counts, and mtimes.
 
 
@@ -2558,7 +2558,7 @@ test('C7 readers inspect only immediate declared archive names and never open ch
     import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module';
     const archive = process.argv[1] + '/${ABANDONED}/${RUN_ID}'; const calls = [];
     const list = fs.readdirSync; fs.readdirSync = function(path, ...args) {
-      if (String(path).includes('/.apex/inception')) { calls.push(String(path)); if (String(path) !== archive) throw new Error('Forbidden area scan: ' + path); }
+      if (String(path).includes('/.formula/inception')) { calls.push(String(path)); if (String(path) !== archive) throw new Error('Forbidden area scan: ' + path); }
       return list.call(this, path, ...args);
     };
     const open = fs.openSync; fs.openSync = function(path, ...args) {

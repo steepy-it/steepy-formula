@@ -69,7 +69,7 @@ function validateConfig(state, config) {
     parseWorkPath(`${config.execution}-result.json`, 'work-output', 'task-result');
   }
   if (config.plan !== null || config.index !== null) {
-    if (config.task !== 'final' || config.plan !== `.apex/work/plans/${dir.split('/').at(-1)}.md`
+    if (config.task !== 'final' || config.plan !== `.formula/work/plans/${dir.split('/').at(-1)}.md`
       || config.index !== `${dir}/task-result-index.md`) throw new Error('invalid review handoff paths');
   }
 }

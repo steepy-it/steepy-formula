@@ -338,7 +338,7 @@ test('discovery: SKILL.md graph write-back rides typed candidates → promotion 
   assert.match(step25, /promotion apply/, 'the graph channel must name promotion apply');
   assert.match(
     step25,
-    /\.apex\/work\/discovery\/YYYY-MM-DD-<surface>-candidates\.json/,
+    /\.formula\/work\/discovery\/YYYY-MM-DD-<surface>-candidates\.json/,
     'the graph channel must name the typed candidates file path pattern'
   );
   assert.match(step25, /never an inline graph mutation/i,
@@ -568,9 +568,9 @@ function flat(text) {
 
 test('discovery inception source (SC11): Step 1 offers only a v2 complete candidate without body reads', () => {
   const step1 = flat(sectionBetween(readFileSync(skillPath, 'utf8'), '### Step 1', '### Step 2'));
-  assert.match(step1, /If `\.apex\/inception\/run\.json` exists, its `schema` is `steepy-inception-run\/v2`.*`status` is `complete`/);
+  assert.match(step1, /If `\.formula\/inception\/run\.json` exists, its `schema` is `steepy-inception-run\/v2`.*`status` is `complete`/);
   assert.match(step1, /offer the \*\*inception source\*\*/);
-  assert.match(step1, /Read only that one file.*never list `\.apex\/inception\/`/);
+  assert.match(step1, /Read only that one file.*never list `\.formula\/inception\/`/);
   assert.match(step1, /candidate.*not.*verified/i);
   assert.match(step1, /unsupported run format.*ordinary discovery/i);
   assert.doesNotMatch(step1, /documents\[\]|verification\.path/);
@@ -590,7 +590,7 @@ test('discovery inception source (SC11): Step 2a sits between Step 2 and Step 3 
   const section = flat(sectionBetween(text, STEP_2A, '### Step 3'));
   assert.match(section, /Run this step only when the user chose the inception source in Step 1\./);
   assert.match(section, /It runs right after Step 1 and before Step 2/);
-  assert.match(section, /never list `\.apex\/inception\/`/, 'Step 2a must never list the area');
+  assert.match(section, /never list `\.formula\/inception\/`/, 'Step 2a must never list the area');
   assert.match(section, /A stop in this step ends only the inception source; Step 2, Step 3 and Step 4 still run\./);
 });
 
@@ -616,7 +616,7 @@ test('discovery inception source (SC11): Step 2a passes exactly the verified ret
   const text = readFileSync(skillPath, 'utf8');
   const raw = sectionBetween(text, STEP_2A, '### Step 3');
   const section = flat(raw);
-  assert.match(section, /`\[REPORT_FILE\] = \.apex\/work\/discovery\/YYYY-MM-DD-inception\.md`/);
+  assert.match(section, /`\[REPORT_FILE\] = \.formula\/work\/discovery\/YYYY-MM-DD-inception\.md`/);
   assert.match(
     section,
     /If your harness provides a task\/subagent tool, dispatch a fresh subagent using `skills\/discovery\/explore-inception-prompt\.md`/,
@@ -691,8 +691,8 @@ test('discovery inception source (SC12): write-back is one typed promotion scena
   const text = readFileSync(skillPath, 'utf8');
   const raw = sectionBetween(text, STEP_2A, '### Step 3');
   const section = flat(raw);
-  assert.match(section, /into one candidates file `\.apex\/work\/discovery\/YYYY-MM-DD-inception-candidates\.json` \(the Step 2\.5 schema\)/);
-  assert.match(section, /Candidate text never names, cites, or links `\.apex\/inception\/`/);
+  assert.match(section, /into one candidates file `\.formula\/work\/discovery\/YYYY-MM-DD-inception-candidates\.json` \(the Step 2\.5 schema\)/);
+  assert.match(section, /Candidate text never names, cites, or links `\.formula\/inception\/`/);
   for (const command of [
     'steepy-formula promotion create --project <id> --candidates <file.json> [--proposer <name>] inception-<runId>',
     'steepy-formula promotion preview inception-<runId>',
@@ -758,7 +758,7 @@ test('discovery inception source (SC12): explore-inception-prompt.md reads exact
   assert.doesNotMatch(body, /\[GLOSSARY_PATH\]|\[CONVENTIONS_PATH\]|\[STANDARD_PATHS\]/, 'the graph-channel explorer reads no Markdown hub doc');
   assert.match(
     body,
-    /Never list `\.apex\/inception\/` or read anything else under it, never read under `\.apex\/work\/`, and never write to the hub or the codebase\./,
+    /Never list `\.formula\/inception\/` or read anything else under it, never read under `\.formula\/work\/`, and never write to the hub or the codebase\./,
   );
 });
 
@@ -775,7 +775,7 @@ test('discovery inception source (SC12): explore-inception-prompt.md writes one 
   assert.match(body, /`verified` → `existing rule`/);
   assert.match(body, /`unverified` → `design choice`/);
   assert.match(body, /`future` → `future context`/);
-  assert.match(body, /The Proposed doc text never names, cites, or links `\.apex\/inception\/`/);
+  assert.match(body, /The Proposed doc text never names, cites, or links `\.formula\/inception\/`/);
   assert.match(body, /the interviewer records `## Decision outcomes`/);
 });
 
@@ -796,7 +796,7 @@ test('discovery inception source (SC12): explore-surface-prompt.md gains the inc
   const text = readFileSync(promptPath, 'utf8');
   assert.match(
     text,
-    /beyond what is needed to confirm a finding\.\n {4}Never read under `\.apex\/work\/` or `\.apex\/inception\/`: inception material reaches discovery only\s+through its inception source\./,
+    /beyond what is needed to confirm a finding\.\n {4}Never read under `\.formula\/work\/` or `\.formula\/inception\/`: inception material reaches discovery only\s+through its inception source\./,
   );
 });
 

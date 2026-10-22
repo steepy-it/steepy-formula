@@ -72,7 +72,7 @@ test('new-surface skill: drives the structural-promotion helper with its real fl
   // The helper invocation, with the flags scripts/structural-promotion.mjs actually parses.
   assert.match(graph, /node <engine-root>\/scripts\/structural-promotion\.mjs/, 'the graph branch must drive the shipped helper');
   assert.match(graph, /--project <projectId> --port docker/, 'the helper must be invoked with --project and --port docker');
-  assert.match(graph, /--input \.apex\/work\/new-surface-<surface-name>\.json new-surface-<surface-name>/,
+  assert.match(graph, /--input \.formula\/work\/new-surface-<surface-name>\.json new-surface-<surface-name>/,
     'the helper must take the work-area structural input and a scenario id positional');
   // The structural input carries the surface and its approved test command.
   assert.match(graph, /"project": \{ "id": "<projectId>" \}/, 'the input must declare the project id');

@@ -1151,10 +1151,10 @@ test('external project mounts compose scoped paths, replace repair and a zero-wr
     });
     const hubRoot = seedGraphHub(scoped);
     const outside = tempHub();
-    const names = ['.apex', '.agents', '.claude', '.codex', '.opencode', 'AGENTS.md', 'CLAUDE.md'];
+    const names = ['.formula', '.agents', '.claude', '.codex', '.opencode', 'AGENTS.md', 'CLAUDE.md'];
     try {
-      // A graph-mode scaffold writes no `.apex/`; create the local area so its mount is exercised too.
-      mkdirSync(join(hubRoot, '.apex'));
+      // A graph-mode scaffold writes no `.formula/`; create the local area so its mount is exercised too.
+      mkdirSync(join(hubRoot, '.formula'));
       for (const name of names) {
         const source = join(hubRoot, name);
         const target = join(outside, name);
@@ -1317,14 +1317,14 @@ test('broken, cyclic, wrong-type, filesystem-root and work mounts are controlled
     cycle: ['AGENTS.md', 'symlink mount AGENTS.md could not be resolved safely'],
     'wrong-type': ['.claude', 'symlink mount AGENTS.md has wrong target type'],
     'filesystem-root': ['/', 'symlink mount AGENTS.md targets the filesystem root'],
-    work: ['.apex/work/private.md', 'symlink mount AGENTS.md enters excluded .apex/work'],
+    work: ['.formula/work/private.md', 'symlink mount AGENTS.md enters excluded .formula/work'],
   };
   for (const [kind, [destination, message]] of Object.entries(cases)) {
     const hubRoot = seedGraphHub();
     try {
       const target = join(hubRoot, 'AGENTS.md');
       unlinkSync(target);
-      put(hubRoot, '.apex/work/private.md', '# Work must stay excluded\n');
+      put(hubRoot, '.formula/work/private.md', '# Work must stay excluded\n');
       symlinkSync(destination, target);
       assert.throws(() => bindProjectMount(hubRoot, 'AGENTS.md'), { message }, kind);
       const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
@@ -1337,19 +1337,19 @@ test('broken, cyclic, wrong-type, filesystem-root and work mounts are controlled
 
 test('instruction and provider mounts into the inception area are symlink conflicts that keep the link', () => {
   const cases = [
-    { name: 'AGENTS.md', destination: '.apex/inception/private.md' },
-    { name: '.opencode', destination: '.apex/inception' },
+    { name: 'AGENTS.md', destination: '.formula/inception/private.md' },
+    { name: '.opencode', destination: '.formula/inception' },
   ];
   for (const { name, destination } of cases) {
     const hubRoot = seedGraphHub();
     try {
       const target = join(hubRoot, name);
       rmSync(target, { recursive: true, force: true });
-      put(hubRoot, '.apex/inception/private.md', '# Inception must stay excluded\n');
+      put(hubRoot, '.formula/inception/private.md', '# Inception must stay excluded\n');
       symlinkSync(destination, target);
 
       assert.throws(() => bindProjectMount(hubRoot, name), {
-        message: `symlink mount ${name} enters excluded .apex/inception`,
+        message: `symlink mount ${name} enters excluded .formula/inception`,
       });
       const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
       assert.ok(plan.conflicts.some(({ path, reason }) => (
@@ -1364,15 +1364,15 @@ test('provider mount discovery excludes the physical work and inception areas in
   for (const area of ['work', 'inception']) {
     const hubRoot = seedGraphHub();
     try {
-      put(hubRoot, `.apex/${area}/decoy.md`, `<!-- steepy:generated:${area}-sentinel:v1 -->\n`);
+      put(hubRoot, `.formula/${area}/decoy.md`, `<!-- steepy:generated:${area}-sentinel:v1 -->\n`);
       rmSync(join(hubRoot, '.claude'), { recursive: true });
-      symlinkSync('.apex', join(hubRoot, '.claude'));
+      symlinkSync('.formula', join(hubRoot, '.claude'));
       const plan = planProjectScaffold({ hubRoot, model: model(), templatesDir });
       assert.deepEqual(plan.conflicts, [], area);
       assert.ok(plan.operations.some(({ path }) => path === '.claude/agents/web-agent.md'), area);
 
       // Control: the same decoy outside the excluded area is walked through the mount.
-      put(hubRoot, `.apex/${area}-control/decoy.md`, `<!-- steepy:generated:${area}-sentinel:v1 -->\n`);
+      put(hubRoot, `.formula/${area}-control/decoy.md`, `<!-- steepy:generated:${area}-sentinel:v1 -->\n`);
       assert.deepEqual(planProjectScaffold({ hubRoot, model: model(), templatesDir }).conflicts, [{
         id: `v1:${area}-sentinel:orphan`,
         artifactId: `${area}-sentinel`,

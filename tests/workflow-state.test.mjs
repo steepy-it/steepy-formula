@@ -283,7 +283,7 @@ test('the closed v1 envelope validates every event-specific schema', () => {
     envelope('CHILD_COMPLETED', {
       attempt: 1,
       changedPaths: ['scripts/fix.mjs'],
-      diffPath: `.apex/work/loops/2026-09-03-demo-loop/run-12345678-1234-4234-8234-123456789abc-attempt-1-diff.txt`,
+      diffPath: `.formula/work/loops/2026-09-03-demo-loop/run-12345678-1234-4234-8234-123456789abc-attempt-1-diff.txt`,
       diffDigest: 'e'.repeat(64),
       snapshotDigest: 'f'.repeat(64),
     }),
@@ -769,7 +769,7 @@ test('commit reconciliation identifies the one safe controller-owned case and ne
     sequenced('CHILD_COMPLETED', {
       attempt: 1,
       changedPaths: ['scripts/fix.mjs'],
-      diffPath: `.apex/work/loops/demo/run-${RUN_ID}-attempt-1-diff.txt`,
+      diffPath: `.formula/work/loops/demo/run-${RUN_ID}-attempt-1-diff.txt`,
       diffDigest: '2'.repeat(64),
       snapshotDigest: '3'.repeat(64),
     }, 3),
@@ -914,7 +914,7 @@ test('reconciliation is a durable general halt transition for any active replay 
     sequenced('CHILD_COMPLETED', {
       attempt: 1,
       changedPaths: ['scripts/fix.mjs'],
-      diffPath: `.apex/work/loops/demo/run-${RUN_ID}-attempt-1-diff.txt`,
+      diffPath: `.formula/work/loops/demo/run-${RUN_ID}-attempt-1-diff.txt`,
       diffDigest: '2'.repeat(64),
       snapshotDigest: '3'.repeat(64),
     }, 3),
@@ -1214,8 +1214,8 @@ test('spent incomplete reservations advance monotonically while preserving both 
 });
 
 test('child completion binds immutable diff evidence and replay accepts every durable prefix', () => {
-  const diffPath = `.apex/work/loops/2026-09-03-demo-loop/run-${'12345678-1234-4234-8234-123456789abc'}-attempt-1-diff.txt`;
-  const reviewDiffPath = `.apex/work/loops/2026-09-03-demo-loop/run-${'12345678-1234-4234-8234-123456789abc'}-review-1-diff.txt`;
+  const diffPath = `.formula/work/loops/2026-09-03-demo-loop/run-${'12345678-1234-4234-8234-123456789abc'}-attempt-1-diff.txt`;
+  const reviewDiffPath = `.formula/work/loops/2026-09-03-demo-loop/run-${'12345678-1234-4234-8234-123456789abc'}-review-1-diff.txt`;
   const stream = [
     start(),
     sequenced('ATTEMPT_RESERVED', {
@@ -1238,7 +1238,7 @@ test('child completion binds immutable diff evidence and replay accepts every du
       attempt: 1,
       diffPath: reviewDiffPath,
       diffDigest: '4'.repeat(64),
-      reportPath: `.apex/work/loops/2026-09-03-demo-loop/run-12345678-1234-4234-8234-123456789abc-review-1-report.md`,
+      reportPath: `.formula/work/loops/2026-09-03-demo-loop/run-12345678-1234-4234-8234-123456789abc-review-1-report.md`,
       reportDigest: '5'.repeat(64),
     }, 8),
     sequenced('TERMINAL_RECORDED', { outcome: 'GOAL_REACHED' }, 9),
@@ -1257,8 +1257,8 @@ test('child completion binds immutable diff evidence and replay accepts every du
 });
 
 test('review completion binds its own immutable review-correlated evidence without changing event vocabulary', () => {
-  const attemptDiff = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1-diff.txt`;
-  const reviewDiff = `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1-diff.txt`;
+  const attemptDiff = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-attempt-1-diff.txt`;
+  const reviewDiff = `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1-diff.txt`;
   const state = reduceWorkflowEvents([
     start(),
     sequenced('ATTEMPT_RESERVED', {
@@ -1281,7 +1281,7 @@ test('review completion binds its own immutable review-correlated evidence witho
       attempt: 1,
       diffPath: reviewDiff,
       diffDigest: '4'.repeat(64),
-      reportPath: `.apex/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1-report.md`,
+      reportPath: `.formula/work/loops/2026-09-03-demo-loop/run-${RUN_ID}-review-1-report.md`,
       reportDigest: '5'.repeat(64),
     }, 8),
   ]);

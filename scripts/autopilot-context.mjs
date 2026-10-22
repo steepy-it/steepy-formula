@@ -317,7 +317,7 @@ function assertSpecSourcePath(path) {
   try {
     return parseWorkPath(safePath, 'spec', 'spec').path;
   } catch (error) {
-    throw new Error(`criteria source must be a canonical spec under .apex/work/specs/: ${error.message}`);
+    throw new Error(`criteria source must be a canonical spec under .formula/work/specs/: ${error.message}`);
   }
 }
 
@@ -724,7 +724,7 @@ export function inspectResumeInputs({ repoRoot, specPath, resumeInputs = [] }) {
   if (!Array.isArray(resumeInputs)) throw new Error('resume inputs must be a list');
   if (resumeInputs.length === 0) return [];
   parseWorkPath(specPath, 'spec');
-  const prefix = `.apex/work/tasks/${basename(specPath, '.md')}/`;
+  const prefix = `.formula/work/tasks/${basename(specPath, '.md')}/`;
   const inventoryPaths = [`${prefix}ledger.md`, `${prefix}task-result-index.md`];
   const seen = new Set(inventoryPaths);
   const paths = resumeInputs.map((value) => {
@@ -1015,13 +1015,13 @@ function suppliedOptionsOutside(values, accepted) {
     .map(([option]) => option);
 }
 
-// Work-path inputs (.apex/work/**) ride the typed confined read, mirroring the
-// conductor's readArtifact boundary. A verifier input named outside .apex/work/ (a
+// Work-path inputs (.formula/work/**) ride the typed confined read, mirroring the
+// conductor's readArtifact boundary. A verifier input named outside .formula/work/ (a
 // caller-supplied plan or index path) has no work-path family, so it keeps the
 // lexical guard of assertSafeRelPath instead.
 function readRepoFile(repoRoot, path, label) {
   const safePath = assertSafeRelPath(path, label);
-  if (safePath.startsWith('.apex/work/')) {
+  if (safePath.startsWith('.formula/work/')) {
     return readWorkPath(repoRoot, safePath, { expect: 'work-output', encoding: 'utf8' });
   }
   return readFileSync(join(repoRoot, safePath), 'utf8');

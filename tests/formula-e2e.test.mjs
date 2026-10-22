@@ -434,7 +434,7 @@ test('boundary 4 — delete the Work Graph: stable context is unchanged', async 
     const path = 'packages/web/src/app.mjs';
 
     // A work graph beside the canonical port: specs, plans, task briefs, loop contracts — exactly
-    // the gitignored `.apex/work/**` operational state, and nothing the port can see.
+    // the gitignored `.formula/work/**` operational state, and nothing the port can see.
     const structure = {
       'specs/e2e-boundaries.md': '# End-to-end boundaries\n- every boundary must be a green test.\n',
       'plans/step-1.md': '# Plan step 1\n- seed the workspace.\n',

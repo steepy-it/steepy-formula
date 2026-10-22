@@ -10,17 +10,17 @@ import { beginTask, recordTaskResult, projectTaskResults } from '../scripts/task
 function fixture(fn) {
   const root = mkdtempSync(join(tmpdir(), 'steepy-reviewer-response-'));
   const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
-  const dir = '.apex/work/tasks/topic';
+  const dir = '.formula/work/tasks/topic';
   const report = `${dir}/task-4-review.md`, issues = `${dir}/task-4-issues.md`;
   const state = `${dir}/task-4-review-guard-attempt-3-iteration-2`;
-  const planPath = '.apex/work/plans/topic.md', taskReport = `${dir}/task-4-report.md`;
+  const planPath = '.formula/work/plans/topic.md', taskReport = `${dir}/task-4-report.md`;
   const put = (path, text) => writeFileSync(join(root, path), text);
   try {
     git('init'); git('config', 'user.email', 'test@example.com'); git('config', 'user.name', 'Test');
-    put('.gitignore', '.apex/work/\n'); put('code.js', 'implemented then fixed\n');
+    put('.gitignore', '.formula/work/\n'); put('code.js', 'implemented then fixed\n');
     git('add', '.'); git('commit', '-m', 'fix');
     mkdirSync(join(root, dir), { recursive: true });
-    mkdirSync(join(root, '.apex/work/plans'), { recursive: true });
+    mkdirSync(join(root, '.formula/work/plans'), { recursive: true });
     put(planPath, '# Plan\n\n## Task 4\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
     put(`${dir}/ledger.md`, 'Task 1: complete\nTask 2: complete\nTask 3: complete\n');
     put(`${dir}/phase-2-attempt-2.log`, 'previous attempt\n');
@@ -164,8 +164,8 @@ test('whole-branch reviewer uses the same bounded gate and exact final issue bin
 }));
 
 test('v2 task approval binds its execution and cannot approve a later fix', () => fixture(({ root, state, config, put, dir, report, envelope }) => {
-  const planPath = '.apex/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
-  mkdirSync(join(root, '.apex/work/plans'), { recursive: true });
+  const planPath = '.formula/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
+  mkdirSync(join(root, '.formula/work/plans'), { recursive: true });
   put(planPath, '# Plan\n\n## Task 4\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
   const taskReport = `${dir}/task-4-report.md`, first = `${dir}/task-4-execution-1`, second = `${dir}/task-4-execution-2`;
   beginTask(root, first, { runId: config.runId, attempt: config.attempt, task: '4', execution: 1, role: 'implementer', report: taskReport, planPath });
@@ -185,8 +185,8 @@ test('v2 task approval binds its execution and cannot approve a later fix', () =
 
 for (const replacement of ['directory-to-file', 'file-to-directory']) {
   test(`v2 review accepts unstaged ${replacement} and still detects drift`, () => fixture(({ root, state, config, put, dir, report, git }) => {
-    const planPath = '.apex/work/plans/topic.md', taskReport = `${dir}/task-4-report.md`, execution = `${dir}/task-4-execution-1`;
-    mkdirSync(join(root, '.apex/work/plans'), { recursive: true });
+    const planPath = '.formula/work/plans/topic.md', taskReport = `${dir}/task-4-report.md`, execution = `${dir}/task-4-execution-1`;
+    mkdirSync(join(root, '.formula/work/plans'), { recursive: true });
     put(planPath, 'Task 4: source replacement\n');
     if (replacement === 'directory-to-file') {
       mkdirSync(join(root, 'item')); put('item/old', 'old source\n');
@@ -209,8 +209,8 @@ for (const replacement of ['directory-to-file', 'file-to-directory']) {
 }
 
 test('v2 semantic reviewer response cannot conceal source mutations', () => fixture(({ root, state, config, put, dir, report }) => {
-  const planPath = '.apex/work/plans/topic.md', taskReport = `${dir}/task-4-report.md`, execution = `${dir}/task-4-execution-1`;
-  mkdirSync(join(root, '.apex/work/plans'), { recursive: true }); put(planPath, '# Plan\n');
+  const planPath = '.formula/work/plans/topic.md', taskReport = `${dir}/task-4-report.md`, execution = `${dir}/task-4-execution-1`;
+  mkdirSync(join(root, '.formula/work/plans'), { recursive: true }); put(planPath, '# Plan\n');
   beginTask(root, execution, { runId: config.runId, attempt: config.attempt, task: '4', execution: 1, role: 'implementer', report: taskReport, planPath });
   put(taskReport, 'Implementation report.\n'); recordTaskResult(root, execution, `status: DONE\nartifact: ${taskReport}\nsignals: none\n`);
   beginReview(root, state, { ...config, execution }); put(report, 'Approved.\n'); put('code.js', 'unauthorized reviewer change\n');
@@ -332,12 +332,12 @@ test('final begin over a bullet-only index is refused', () => fixture(({ root, s
   assert.throws(() => readFileSync(join(root, `${finalState}-baseline.json`)), /ENOENT/);
 }));
 
-const handoffPlan = '<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: .apex/work/specs/topic.md\nconsumed-by: none\n-->\n# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n- **Requirements and deliverables:** Preserve ordering.\n- **Exact paths:** code.js\n- **Dependencies:** Task 3\n\n## Constraints\nNever drop data.\n';
+const handoffPlan = '<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: .formula/work/specs/topic.md\nconsumed-by: none\n-->\n# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n- **Requirements and deliverables:** Preserve ordering.\n- **Exact paths:** code.js\n- **Dependencies:** Task 3\n\n## Constraints\nNever drop data.\n';
 function handoffFixture(fn, { planText } = {}) {
   fixture((ctx) => {
     const { root, dir, config, state, put, report, envelope, record } = ctx;
     mkdirSync(join(root, dir, 'context'), { recursive: true });
-    const planPath = '.apex/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
+    const planPath = '.formula/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
     const plan = handoffPlan;
     put(planPath, planText ?? plan);
     put(`${dir}/context/phase-implement-attempt-3.json`, JSON.stringify({ runId: config.runId, attempt: 3, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } }));
@@ -360,8 +360,8 @@ function handoffFixture(fn, { planText } = {}) {
 function executionChainFixture(fn) {
   fixture((ctx) => {
     const { root, dir, config, state, put, report } = ctx;
-    const planPath = '.apex/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
-    mkdirSync(join(root, '.apex/work/plans'), { recursive: true });
+    const planPath = '.formula/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
+    mkdirSync(join(root, '.formula/work/plans'), { recursive: true });
     mkdirSync(join(root, dir, 'context'), { recursive: true });
     put(planPath, '# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
     const manifest = (attempt, runId) => ({ runId, attempt, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } });
@@ -430,7 +430,7 @@ for (const [field, before, after] of [
   ['paths', '**Exact paths:** code.js', '**Exact paths:** other.js'],
   ['dependencies', '**Dependencies:** Task 3', '**Dependencies:** none'],
   ['constraints', 'Never drop data.', 'Drop old data.'],
-  ['source', 'source: .apex/work/specs/topic.md', 'source: .apex/work/specs/other.md'],
+  ['source', 'source: .formula/work/specs/topic.md', 'source: .formula/work/specs/other.md'],
 ]) {
   test(`full plan binding invalidates approval after changing ${field}`, () => handoffFixture(({ approveFinal, verify, put, planPath, plan }) => {
     approveFinal(); assert.equal(verify().status, 'APPROVED');
@@ -443,7 +443,7 @@ test('plan READY → CONSUMED lifecycle is allowed only with the bound result in
   approveFinal();
   put(planPath, plan.replace('status: READY', 'status: CONSUMED').replace('consumed-by: none', `consumed-by: ${indexPath}`));
   assert.equal(verify().status, 'APPROVED');
-  put(planPath, plan.replace('status: READY', 'status: CONSUMED').replace('consumed-by: none', 'consumed-by: .apex/work/tasks/other/task-result-index.md'));
+  put(planPath, plan.replace('status: READY', 'status: CONSUMED').replace('consumed-by: none', 'consumed-by: .formula/work/tasks/other/task-result-index.md'));
   assert.throws(() => verify(), /lifecycle|handoff/);
 }));
 

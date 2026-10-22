@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-export const area = '.apex/inception';
+export const area = '.formula/inception';
 export const environment = { tools: [], resources: [] };
 export const command = code => ({ executable: process.execPath, args: ['-e', code], cwd: '.', successExitCodes: [0] });
 export function check(id, type = 'manual', extra = {}) {
@@ -78,7 +78,7 @@ export function fixture(t, { checks, approvedContract = contract(checks), phase 
     git(...args) { const r = spawnSync('git', ['-C', root, ...args], { env, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); },
     // Audit *attempts* before access, including readers that catch errors. The
     // preload patches builtin named imports before importing the real CLI.
-    audit(args, { forbiddenReads = [], forbiddenLists = [area, '.apex/work', '.git'], allowedLists = [], expected = 0, name = 'inception-state' } = {}) {
+    audit(args, { forbiddenReads = [], forbiddenLists = [area, '.formula/work', '.git'], allowedLists = [], expected = 0, name = 'inception-state' } = {}) {
       const log = join(sandbox, `audit-${++serial}.jsonl`); const preload = join(sandbox, `audit-${serial}.mjs`);
       fs.writeFileSync(preload, `import fs from 'node:fs'; import {syncBuiltinESMExports} from 'node:module'; import {resolve} from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=${JSON.stringify(root)}, log=${JSON.stringify(log)}, reads=${JSON.stringify(forbiddenReads)}, lists=${JSON.stringify(forbiddenLists)}, allowedLists=${JSON.stringify(allowedLists)}; const append=fs.appendFileSync; const record=(kind,p)=>{if(typeof p==='number')return;let path=resolve(p instanceof URL?fileURLToPath(p):String(p)); if(!path.startsWith(root+'/'))return;path=path.slice(root.length+1);const forbidden=!(kind==='list'&&allowedLists.includes(path))&&(kind==='list'?lists:reads).some(x=>path===x||path.startsWith(x+'/'));append(log,JSON.stringify({kind,path,forbidden})+'\\n');if(forbidden)throw Error('FORBIDDEN ACCESS '+kind+' '+path);};

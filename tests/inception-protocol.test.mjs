@@ -6,7 +6,7 @@ import * as protocol from '../scripts/inception-protocol.mjs';
 const runId = 'inc-20261012T120000Z-1234abcd';
 const otherRun = 'inc-20261012T120000Z-1234abce';
 const at = '2026-10-12T12:00:00.000Z';
-const area = '.apex/inception/';
+const area = '.formula/inception/';
 const ref = (path = 'snapshots/0001.json') => ({ path: area + path, bytes: 1, sha256: 'a'.repeat(64) });
 const app = (path = 'app.js') => ({ path, mode: 0o644, bytes: 1, sha256: 'b'.repeat(64) });
 const command = () => ({ executable: 'node', args: ['--test', 'test file.js'], cwd: '.', successExitCodes: [0] });

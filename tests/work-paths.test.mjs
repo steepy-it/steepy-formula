@@ -33,23 +33,23 @@ import { DOGFOOD_CHECKPOINT_SKIP, readDogfoodRecords } from './helpers/dogfood-c
 
 const RUN = '2026-09-02-demo-run';
 const FAMILIES = [
-  ['spec', '.apex/work/specs/demo-spec.md', 'spec'],
-  ['criteria', `.apex/work/tasks/${RUN}/success-criteria.md`, 'criteria'],
-  ['plan', '.apex/work/plans/demo-spec.md', 'work-output'],
-  ['manifest', `.apex/work/tasks/${RUN}/context/phase-1-attempt-1.json`, 'work-output'],
-  ['hub-context', `.apex/work/tasks/${RUN}/context/hub-context/context.md`, 'work-output'],
-  ['status', `.apex/work/tasks/${RUN}/autopilot-status.md`, 'work-output'],
-  ['raw', `.apex/work/tasks/${RUN}/phase-1-attempt-1.raw.jsonl`, 'work-output'],
-  ['ledger', `.apex/work/tasks/${RUN}/resource-usage.jsonl`, 'work-output'],
-  ['diff', `.apex/work/tasks/${RUN}/branch-diff.txt`, 'work-output'],
-  ['task-result-index', `.apex/work/tasks/${RUN}/task-result-index.md`, 'work-output'],
-  ['task-report', `.apex/work/tasks/${RUN}/task-1-report.md`, 'work-output'],
-  ['task-result', `.apex/work/tasks/${RUN}/task-1-execution-1-baseline.json`, 'work-output'],
-  ['task-result', `.apex/work/tasks/${RUN}/task-1-execution-1-capture.json`, 'work-output'],
-  ['task-result', `.apex/work/tasks/${RUN}/task-1-execution-1-result.json`, 'work-output'],
-  ['task-result-report', `.apex/work/tasks/${RUN}/task-1-execution-1-report.md`, 'work-output'],
-  ['evidence', `.apex/work/tasks/${RUN}/evidence-report.md`, 'work-output'],
-  ['review-report', `.apex/work/tasks/${RUN}/review-report.md`, 'work-output'],
+  ['spec', '.formula/work/specs/demo-spec.md', 'spec'],
+  ['criteria', `.formula/work/tasks/${RUN}/success-criteria.md`, 'criteria'],
+  ['plan', '.formula/work/plans/demo-spec.md', 'work-output'],
+  ['manifest', `.formula/work/tasks/${RUN}/context/phase-1-attempt-1.json`, 'work-output'],
+  ['hub-context', `.formula/work/tasks/${RUN}/context/hub-context/context.md`, 'work-output'],
+  ['status', `.formula/work/tasks/${RUN}/autopilot-status.md`, 'work-output'],
+  ['raw', `.formula/work/tasks/${RUN}/phase-1-attempt-1.raw.jsonl`, 'work-output'],
+  ['ledger', `.formula/work/tasks/${RUN}/resource-usage.jsonl`, 'work-output'],
+  ['diff', `.formula/work/tasks/${RUN}/branch-diff.txt`, 'work-output'],
+  ['task-result-index', `.formula/work/tasks/${RUN}/task-result-index.md`, 'work-output'],
+  ['task-report', `.formula/work/tasks/${RUN}/task-1-report.md`, 'work-output'],
+  ['task-result', `.formula/work/tasks/${RUN}/task-1-execution-1-baseline.json`, 'work-output'],
+  ['task-result', `.formula/work/tasks/${RUN}/task-1-execution-1-capture.json`, 'work-output'],
+  ['task-result', `.formula/work/tasks/${RUN}/task-1-execution-1-result.json`, 'work-output'],
+  ['task-result-report', `.formula/work/tasks/${RUN}/task-1-execution-1-report.md`, 'work-output'],
+  ['evidence', `.formula/work/tasks/${RUN}/evidence-report.md`, 'work-output'],
+  ['review-report', `.formula/work/tasks/${RUN}/review-report.md`, 'work-output'],
 ];
 const SYMLINK_FAMILIES = [
   'manifest', 'hub-context', 'criteria', 'status', 'raw', 'ledger', 'diff', 'evidence', 'review-report', 'task-report', 'task-result', 'task-result-report',
@@ -57,20 +57,20 @@ const SYMLINK_FAMILIES = [
 const LOOP = '2026-09-03-demo-loop';
 const UUID = '12345678-1234-4234-8234-123456789abc';
 const LOOP_FAMILIES = [
-  ['goal', `.apex/work/loops/${LOOP}/goal.md`, 'goal'],
-  ['events', `.apex/work/loops/${LOOP}/events.jsonl`, 'work-output'],
-  ['ledger', `.apex/work/loops/${LOOP}/ledger.md`, 'work-output'],
-  ['diff', `.apex/work/loops/${LOOP}/branch-diff.txt`, 'work-output'],
-  ['evidence', `.apex/work/loops/${LOOP}/evidence-report.md`, 'work-output'],
-  ['review-report', `.apex/work/loops/${LOOP}/review-report.md`, 'work-output'],
-  ['runner-report', `.apex/work/loops/${LOOP}/run-${UUID}-attempt-1-report.md`, 'work-output'],
-  ['runner-log', `.apex/work/loops/${LOOP}/run-${UUID}-attempt-2.log`, 'work-output'],
-  ['runner-raw', `.apex/work/loops/${LOOP}/run-${UUID}-attempt-3.raw.jsonl`, 'work-output'],
-  ['runner-diff', `.apex/work/loops/${LOOP}/run-${UUID}-attempt-4-diff.txt`, 'work-output'],
-  ['reviewer-report', `.apex/work/loops/${LOOP}/run-${UUID}-review-1-report.md`, 'work-output'],
-  ['reviewer-log', `.apex/work/loops/${LOOP}/run-${UUID}-review-2.log`, 'work-output'],
-  ['reviewer-raw', `.apex/work/loops/${LOOP}/run-${UUID}-review-3.raw.jsonl`, 'work-output'],
-  ['reviewer-diff', `.apex/work/loops/${LOOP}/run-${UUID}-review-4-diff.txt`, 'work-output'],
+  ['goal', `.formula/work/loops/${LOOP}/goal.md`, 'goal'],
+  ['events', `.formula/work/loops/${LOOP}/events.jsonl`, 'work-output'],
+  ['ledger', `.formula/work/loops/${LOOP}/ledger.md`, 'work-output'],
+  ['diff', `.formula/work/loops/${LOOP}/branch-diff.txt`, 'work-output'],
+  ['evidence', `.formula/work/loops/${LOOP}/evidence-report.md`, 'work-output'],
+  ['review-report', `.formula/work/loops/${LOOP}/review-report.md`, 'work-output'],
+  ['runner-report', `.formula/work/loops/${LOOP}/run-${UUID}-attempt-1-report.md`, 'work-output'],
+  ['runner-log', `.formula/work/loops/${LOOP}/run-${UUID}-attempt-2.log`, 'work-output'],
+  ['runner-raw', `.formula/work/loops/${LOOP}/run-${UUID}-attempt-3.raw.jsonl`, 'work-output'],
+  ['runner-diff', `.formula/work/loops/${LOOP}/run-${UUID}-attempt-4-diff.txt`, 'work-output'],
+  ['reviewer-report', `.formula/work/loops/${LOOP}/run-${UUID}-review-1-report.md`, 'work-output'],
+  ['reviewer-log', `.formula/work/loops/${LOOP}/run-${UUID}-review-2.log`, 'work-output'],
+  ['reviewer-raw', `.formula/work/loops/${LOOP}/run-${UUID}-review-3.raw.jsonl`, 'work-output'],
+  ['reviewer-diff', `.formula/work/loops/${LOOP}/run-${UUID}-review-4-diff.txt`, 'work-output'],
 ];
 
 function fixture() {
@@ -102,24 +102,24 @@ test('typed grammar classifies every canonical family and never normalizes alias
     assert.equal(parsed.family, family, family);
     assert.deepEqual(parseWorkPath(path, type), parsed, family);
   }
-  assert.equal(classifyWorkPath(`.apex/work/tasks/${RUN}/phase-2.log`).family, 'raw');
-  assert.equal(classifyWorkPath(`.apex/work/tasks/${RUN}/phase-2-attempt-3.log`).family, 'raw');
-  assert.equal(classifyWorkPath(`.apex/work/tasks/${RUN}/phase-2-attempt-3.raw.jsonl`).family, 'raw');
-  assert.equal(classifyWorkPath(`.apex/work/tasks/${RUN}/context/phase-2-attempt-3.json`).family, 'manifest');
+  assert.equal(classifyWorkPath(`.formula/work/tasks/${RUN}/phase-2.log`).family, 'raw');
+  assert.equal(classifyWorkPath(`.formula/work/tasks/${RUN}/phase-2-attempt-3.log`).family, 'raw');
+  assert.equal(classifyWorkPath(`.formula/work/tasks/${RUN}/phase-2-attempt-3.raw.jsonl`).family, 'raw');
+  assert.equal(classifyWorkPath(`.formula/work/tasks/${RUN}/context/phase-2-attempt-3.json`).family, 'manifest');
 
-  const base = '.apex/work/specs/demo-spec.md';
+  const base = '.formula/work/specs/demo-spec.md';
   const aliases = [
     `./${base}`,
     `.apex//work/specs/demo-spec.md`,
-    `.apex/work//specs/demo-spec.md`,
-    `.apex/work/specs//demo-spec.md`,
+    `.formula/work//specs/demo-spec.md`,
+    `.formula/work/specs//demo-spec.md`,
     `${base}/`,
     `.apex/./work/specs/demo-spec.md`,
-    `.apex/work/specs/./demo-spec.md`,
-    `.apex/work/specs/../specs/demo-spec.md`,
+    `.formula/work/specs/./demo-spec.md`,
+    `.formula/work/specs/../specs/demo-spec.md`,
     `/${base}`,
-    '.apex/work/specs/.hidden-start.md',
-    '.apex/work/specs/.md',
+    '.formula/work/specs/.hidden-start.md',
+    '.formula/work/specs/.md',
   ];
   const repo = fixture();
   try {
@@ -170,9 +170,9 @@ test('the implementation and both stable work-path descriptions share one ordere
 });
 
 test('grammar rejects wrong-type paths for a call site and paths outside the work contract', () => {
-  const specPath = '.apex/work/specs/demo-spec.md';
-  const criteriaPath = `.apex/work/tasks/${RUN}/success-criteria.md`;
-  const statusPath = `.apex/work/tasks/${RUN}/autopilot-status.md`;
+  const specPath = '.formula/work/specs/demo-spec.md';
+  const criteriaPath = `.formula/work/tasks/${RUN}/success-criteria.md`;
+  const statusPath = `.formula/work/tasks/${RUN}/autopilot-status.md`;
   assert.throws(() => parseWorkPath(criteriaPath, 'spec'), /this call site expects spec/u);
   assert.throws(() => parseWorkPath(specPath, 'work-output'), /this call site expects work-output/u);
   assert.throws(() => parseWorkPath(statusPath, 'work-output', 'ledger'), /this call site expects ledger/u);
@@ -189,14 +189,14 @@ test('grammar rejects wrong-type paths for a call site and paths outside the wor
     'scripts/work-paths.mjs',
     '.apex/standards/scripts.md',
     '.apex',
-    '.apex/work',
-    '.apex/work/tasks',
-    `.apex/work/tasks/${RUN}`,
-    `.apex/work/tasks/${RUN}/task-1-brief.md`,
-    `.apex/work/tasks/${RUN}/unknown.md`,
-    '.apex/work/specs/nested/demo-spec.md',
-    '.apex/work/other.md',
-    '.apex/work/plans',
+    '.formula/work',
+    '.formula/work/tasks',
+    `.formula/work/tasks/${RUN}`,
+    `.formula/work/tasks/${RUN}/task-1-brief.md`,
+    `.formula/work/tasks/${RUN}/unknown.md`,
+    '.formula/work/specs/nested/demo-spec.md',
+    '.formula/work/other.md',
+    '.formula/work/plans',
   ];
   for (const path of outside) {
     assert.throws(() => classifyWorkPath(path), /work path/u, path);
@@ -204,19 +204,19 @@ test('grammar rejects wrong-type paths for a call site and paths outside the wor
 });
 
 test('hub-context grammar admits exactly the resolver context.md and rejects near misses', () => {
-  const base = `.apex/work/tasks/${RUN}/context/hub-context`;
+  const base = `.formula/work/tasks/${RUN}/context/hub-context`;
   assert.equal(classifyWorkPath(`${base}/context.md`).family, 'hub-context');
   for (const bad of [
     `${base}/other.md`, `${base}/sub/context.md`, `${base}-x/context.md`, `${base}/context.md/`,
     `${base}/./context.md`, `${base}/../hub-context/context.md`, `${base}//context.md`,
-    `.apex/work/tasks/${RUN}/hub-context/context.md`, `${base}/context.md.bak`, `${base}/CONTEXT.md`,
+    `.formula/work/tasks/${RUN}/hub-context/context.md`, `${base}/context.md.bak`, `${base}/CONTEXT.md`,
   ]) {
     assert.throws(() => parseWorkPath(bad, 'work-output', 'hub-context'), /work path/u, bad);
   }
 });
 
 test('manifest grammar admits exactly the conductor and protocol context names, never conveniences', () => {
-  const ctx = (name) => `.apex/work/tasks/${RUN}/context/${name}`;
+  const ctx = (name) => `.formula/work/tasks/${RUN}/context/${name}`;
   const admitted = [
     'phase-plan-attempt-1.json',
     'phase-implement-attempt-2.json',
@@ -270,7 +270,7 @@ test('manifest grammar admits exactly the conductor and protocol context names, 
       assert.equal(readWorkPath(repo, ctx(name), { family: 'manifest', encoding: 'utf8' }), `${name}\n`, name);
     }
     assert.deepEqual(
-      readdirSync(join(repo, '.apex', 'work', 'tasks', RUN, 'context')).sort(),
+      readdirSync(join(repo, '.formula', 'work', 'tasks', RUN, 'context')).sort(),
       ['final-review.json', 'task-2-review-3.json'],
     );
   } finally {
@@ -286,7 +286,7 @@ test('loop grammar admits only the dated run directory and closed Gear-4 artifac
     assert.deepEqual(parseWorkPath(path, type, family), parsed, family);
   }
 
-  const inLoop = (name, run = LOOP) => `.apex/work/loops/${run}/${name}`;
+  const inLoop = (name, run = LOOP) => `.formula/work/loops/${run}/${name}`;
   const rejected = [
     inLoop('goal.MD'),
     inLoop('events.json'),
@@ -335,7 +335,7 @@ test('loop grammar admits only the dated run directory and closed Gear-4 artifac
 
 test('atomic create-only publication leaves no partial target and refuses replacement', () => {
   const repo = fixture();
-  const path = `.apex/work/tasks/${RUN}/task-1-execution-1-result.json`;
+  const path = `.formula/work/tasks/${RUN}/task-1-execution-1-result.json`;
   try {
     assert.throws(() => writeWorkPath(repo, path, 'complete', { createOnly: true, onCheckpoint(event) {
       if (event.phase === 'before-publish') throw new Error('interrupted staging');
@@ -641,10 +641,10 @@ test('confined primitives round-trip every canonical family as ordinary files', 
       assert.equal(readWorkPath(repo, path, { family, encoding: 'utf8' }), `${family}-three\n`, family);
       assert.ok(lstatSync(join(repo, path)).isFile(), family);
     }
-    const created = `.apex/work/tasks/${RUN}-second/autopilot-status.md`;
+    const created = `.formula/work/tasks/${RUN}-second/autopilot-status.md`;
     writeWorkPath(repo, created, 'created without prior mkdir\n');
     assert.equal(readWorkPath(repo, created, { encoding: 'utf8' }), 'created without prior mkdir\n');
-    assert.equal(mkdirWorkPath(repo, `.apex/work/tasks/${RUN}-second/context/phase-1-attempt-2.json`).created, true);
+    assert.equal(mkdirWorkPath(repo, `.formula/work/tasks/${RUN}-second/context/phase-1-attempt-2.json`).created, true);
     assert.equal(mkdirWorkPath(repo, created).created, false);
     assert.equal(snapshot(repo).some((entry) => entry.includes('steepy-work-')), false);
   } finally {
@@ -656,7 +656,7 @@ test('hard-linked work targets fail closed without reading or changing the share
   const outer = fixture();
   const repo = join(outer, 'repo');
   const outside = join(outer, 'outside-sentinel.md');
-  const path = `.apex/work/tasks/${RUN}/autopilot-status.md`;
+  const path = `.formula/work/tasks/${RUN}/autopilot-status.md`;
   try {
     mkdirSync(dirname(join(repo, path)), { recursive: true });
     writeFileSync(outside, 'outside sentinel\n');
@@ -681,7 +681,7 @@ test('hard-linked work targets fail closed without reading or changing the share
 
 test('atomic replacement preserves an existing mode of 000 instead of widening it to 0644', () => {
   const repo = fixture();
-  const path = `.apex/work/tasks/${RUN}/autopilot-status.md`;
+  const path = `.formula/work/tasks/${RUN}/autopilot-status.md`;
   const absolute = join(repo, path);
   try {
     mkdirSync(dirname(absolute), { recursive: true });
@@ -748,13 +748,13 @@ test('negative symlink matrix: selected path families fail closed at every ances
 test('reads and appends fail closed on missing or non-ordinary targets and an unresolvable repository root', () => {
   const repo = fixture();
   try {
-    const status = `.apex/work/tasks/${RUN}/autopilot-status.md`;
+    const status = `.formula/work/tasks/${RUN}/autopilot-status.md`;
     assert.throws(() => readWorkPath(repo, status), /work path: .*missing/u);
     assert.throws(() => appendWorkPath(repo, status, 'x'), /work path: .*missing/u);
     writeWorkPath(repo, status, 'seed\n');
     appendWorkPath(repo, status, 'more\n');
     assert.equal(readWorkPath(repo, status, { encoding: 'utf8' }), 'seed\nmore\n');
-    const diff = `.apex/work/tasks/${RUN}/branch-diff.txt`;
+    const diff = `.formula/work/tasks/${RUN}/branch-diff.txt`;
     mkdirSync(join(repo, diff), { recursive: true });
     assert.throws(() => readWorkPath(repo, diff), /work path: .*non-file/u);
     assert.throws(() => writeWorkPath(repo, diff, 'x'), /work path: .*non-file/u);

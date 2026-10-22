@@ -99,9 +99,9 @@ Inside Claude Code:
 
 Expected evidence (graph-first — no markdown hub is ever written):
 
-- `.apex/work/.gitignore` exists.
-- `.apex/work/specs/` exists locally and is gitignored.
-- `.apex/work/plans/` exists locally and is gitignored.
+- `.formula/work/.gitignore` exists.
+- `.formula/work/specs/` exists locally and is gitignored.
+- `.formula/work/plans/` exists locally and is gitignored.
 - `.apex/_INDEX.md` does **not** exist — its absence is the expected shape. The same
   goes for `conventions.md`, `glossary.md`, `testing-and-checklist.md`, and
   `standards/` under `.apex/`: any of them present is a failed init.

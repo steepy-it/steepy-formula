@@ -1,5 +1,5 @@
 // Stable Knowledge Graph ontology — the closed typed schema for the Stable Graph
-// (spec .apex/work/specs/2026-08-11-stable-knowledge-graph.md §3-§6, §10, "Required graph
+// (spec .formula/work/specs/2026-08-11-stable-knowledge-graph.md §3-§6, §10, "Required graph
 // invariants"). Data tables + pure validation functions only: no I/O, no dependencies, no
 // engine coupling — this module must run identically in every adapter/harness (spec §20).
 // Later tasks build on it: B2 (ids.mjs) owns qualified-ID construction/parsing and lifecycle

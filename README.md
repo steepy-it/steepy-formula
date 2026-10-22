@@ -31,10 +31,10 @@ In motorsport, the **formula** is the rulebook: the technical regulations every 
 - **A real graph engine, pinned** — ArcadeDB (pinned release) behind a portable engine adapter, with **Studio** as the professional Explorer; an in-memory reference port runs without Docker for development and tests.
 - **Local-first** — the engine runs in a local docker lifecycle bound to localhost; your graph never leaves your machine.
 - **Audit by construction** — a hash-chained in-graph Revision trail with replay detection: any out-of-band write is caught by `graph validate`.
-- **Graph-aware workflow chain** — a self-contained `brainstorm → plan → implement → review` flow where stable knowledge stays coherent, local specs/plans live under `.apex/work/`, and review's insight sweep assembles the durable decisions it discovers into a Promotion Scenario, applied only at an explicit human gate before work is declared done. Small fixes stay fast; a closed design with a machine-verifiable goal can run as a bounded autonomous loop.
+- **Graph-aware workflow chain** — a self-contained `brainstorm → plan → implement → review` flow where stable knowledge stays coherent, local specs/plans live under `.formula/work/`, and review's insight sweep assembles the durable decisions it discovers into a Promotion Scenario, applied only at an explicit human gate before work is declared done. Small fixes stay fast; a closed design with a machine-verifiable goal can run as a bounded autonomous loop.
 - **Complexity-matched models** — plans rate every task's complexity; implementation dispatches the cheapest model tier that can carry it and records each choice in a run ledger. [Provider-aware model selection](docs/workflow.md#model-selection) adapts to the harness; hosts without per-task selection use the session model.
 
-Stable knowledge stays versioned in the canonical graph. Specs and plans stay gitignored under `.apex/work/` as a local work artifact.
+Stable knowledge stays versioned in the canonical graph. Specs and plans stay gitignored under `.formula/work/` as a local work artifact.
 
 ## Quick start
 
@@ -109,7 +109,7 @@ Open that profile in your project and ask the model to call `steepy_skill` with
 
 Use your harness's [command syntax](docs/installation.md#first-run-and-troubleshooting); Claude Code is shown here.
 
-1. `/steepy-formula:init` - Initialize steepy-formula in your repo. Graph-first: a pre-flight engine gate, a short interview, then the local `.apex/work/` area for gitignored specs/plans, project instructions, per-surface agents, the project bootstrap skill, a root `CLAUDE.md`, and the committed `.formula/config.json` project binding. No markdown hub is ever created: the engine is provisioned and verified before anything is written, the interview confirms Surfaces, Components, and Rules (Rules are never invented from stack detection), and the initial graph lands as one promotion scenario applied only at your explicit confirmation. It closes with `graph validate` + `context resolve` green.
+1. `/steepy-formula:init` - Initialize steepy-formula in your repo. Graph-first: a pre-flight engine gate, a short interview, then the local `.formula/work/` area for gitignored specs/plans, project instructions, per-surface agents, the project bootstrap skill, a root `CLAUDE.md`, and the committed `.formula/config.json` project binding. No markdown hub is ever created: the engine is provisioned and verified before anything is written, the interview confirms Surfaces, Components, and Rules (Rules are never invented from stack detection), and the initial graph lands as one promotion scenario applied only at your explicit confirmation. It closes with `graph validate` + `context resolve` green.
 2. On an existing codebase, run `/steepy-formula:discovery` next: a seeded interview fills the canonical graph from the code you already have through a typed promotion scenario — each proposal backed by `file:line` evidence, nothing written without your confirmation.
 3. Arriving from steepy-apex — your repo already carries an `.apex/` Markdown hub? `/steepy-formula:graph-migrate` walks it into the graph (extraction → preview → approval → cutover → archive) instead of init.
 4. Run `/steepy-formula:check` to verify coherence, then give your agent any task. The generated bootstrap skill declares the hub mode, resolves the task's context from the graph, and classifies it — coverage verdict + gear — before touching code.
@@ -133,7 +133,7 @@ Claude Code syntax is shown below; see the [installation guide](docs/installatio
 | `/steepy-formula:discovery` | Populate/refresh stable knowledge from your codebase via a seeded interview — typed candidates promoted into the canonical graph; each proposal is an item card with `file:line` evidence and a write-back preview; re-runnable, additive + diff-gated. After inception, import its decisions once. |
 | `/steepy-formula:check` | Run the coherence gate on demand — `steepy-formula graph validate` on the canonical graph — and report any drift. |
 | `/steepy-formula:new-surface` | Add one surface through a human-approved promotion (Surface + Check with its `ext_v1_command` test command) plus its specialist agent. |
-| `/steepy-formula:brainstorm` | Turn an idea into a local `.apex/work/` spec with graph-resolved routing context; it never mutates the graph — every delta is recorded as a typed deferred proposal for review's sweep. |
+| `/steepy-formula:brainstorm` | Turn an idea into a local `.formula/work/` spec with graph-resolved routing context; it never mutates the graph — every delta is recorded as a typed deferred proposal for review's sweep. |
 | `/steepy-formula:plan` | Break a local spec into a step-by-step local implementation plan. |
 | `/steepy-formula:implement` | Implement a spec or plan under rigid TDD. |
 | `/steepy-formula:review` | Verify the work against its spec with real evidence: declares the hub mode, runs the coherence gate (`steepy-formula graph validate`), assembles the promotion scenario from swept insights, and gates the apply on a human. |
@@ -172,7 +172,7 @@ Before touching code, the generated bootstrap skill classifies every task agains
 
 That verdict, crossed with how consequential or irreversible the change is, picks a ceremony **gear** — from gear 1 (straight to the specialist agent, the graph coherence gate at the end) and gear 2 (a light spec implemented directly) up to gear 3 (the full `brainstorm → plan → implement → review` chain — driven manually or on **autopilot**, which runs the post-spec phases unattended and stops before the PR) and gear 4 (a bounded autonomous loop over a machine-verifiable goal, run by a deterministic controller after you ratify the goal contract and grant commit authorization). Low-stakes work stays fast; high-stakes work gets the full chain. You don't pick the ceremony — the classification does.
 
-Along the way, specs and plans are written under `.apex/work/` as a gitignored **local work artifact** — the disposable Work Graph stays separate from stable governance, and durable decisions are promoted into the canonical graph before work is declared done.
+Along the way, specs and plans are written under `.formula/work/` as a gitignored **local work artifact** — the disposable Work Graph stays separate from stable governance, and durable decisions are promoted into the canonical graph before work is declared done.
 
 Gear-3 autopilot combines context efficiency (fresh role-local manifests, durable artifact-first handoffs) with compact live observability. Safe capture is the default; exact raw capture requires an explicit sensitive-data opt-in. The detailed phase flow, resource ledger, resume behavior, and stop-before-PR boundary are in [docs/workflow.md](docs/workflow.md); the bridge boundary and failure policy are in [docs/architecture.md](docs/architecture.md).
 
@@ -199,7 +199,7 @@ For deeper drift, run `/steepy-formula:discovery` periodically: a seeded intervi
 
 steepy-formula has no server and sends no telemetry: no data reaches steepy-it. Your graph runs in
 a local container bound to `127.0.0.1`; specs, plans, and workflow logs stay in your repository
-under the gitignored `.apex/work/`; autopilot logs are redacted by default (`log-mode: safe`).
+under the gitignored `.formula/work/`; autopilot logs are redacted by default (`log-mode: safe`).
 These skills reach services outside your agent session:
 
 | Skill | Service | What is sent |
@@ -221,7 +221,7 @@ Everything runs on your machine. steepy-formula runs Node.js scripts from the pl
 
 What it touches:
 
-- It writes the gitignored `.apex/work/` local work area and a root `CLAUDE.md` into the target repo — graph-first init creates no other `.apex/` files, except the `.apex/init-provenance.json` certificate when it follows a complete inception run (whose own state lives under `.apex/inception/`).
+- It writes the gitignored `.formula/work/` local work area and a root `CLAUDE.md` into the target repo — graph-first init creates no other `.apex/` files, except the `.formula/init-provenance.json` certificate when it follows a complete inception run (whose own state lives under `.formula/inception/`).
 - It writes the **committed** `.formula/config.json` project binding at the repo root — the project id every command resolves when `--project`/`STEEPY_PROJECT` is absent; `.formula/` stays gitignored as `.formula/*` with the `!.formula/config.json` exception (a bare `.formula/` pattern would hide the binding too: Git cannot re-include a file inside an ignored directory).
 - It writes Claude Code agent and skill artifacts into the target repo during initialization (`/steepy-formula:init`), along with the managed `AGENTS.md` project instructions and the Codex and OpenCode specialist adapters.
 - It provisions a local ArcadeDB container and creates one database per project for the Stable Knowledge Graph.

@@ -13,7 +13,7 @@ import { sectionBetween, frontmatter } from './support/markdown.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const skill = readFileSync(join(root, 'skills/inception/SKILL.md'), 'utf8');
 const flat = text => text.replace(/\s+/g, ' ');
-const area = '.apex/inception';
+const area = '.formula/inception';
 const doc = name => readFileSync(join(root, 'skills/inception', name), 'utf8');
 const section = heading => flat(sectionBetween(skill, heading, '\n### Step '));
 function example(id) {
@@ -154,7 +154,7 @@ test('every decision-register row gets the coverage entry discovery reads, and a
 test('verification obeys cycles, capture provenance, manual human attest, all required checks after fixes and session reobservation', () => {
   const s = section('### Step 10');
   for (const pattern of [/verification begin/, /capture-inception-evidence/, /verification attest/, /both/, /explicit human/, /purpose.*revalidate/, /all required automatic and manual checks/, /new cycle/, /not-executed/, /verification summarize/, /limits/, /checkpoint create/, /--cycle/, /verify-complete/, /presentation only/, /completion/]) assert.match(s, pattern);
-  assert.doesNotMatch(s, /--verification|Write `\.apex\/inception\/verification\/results\.md`/);
+  assert.doesNotMatch(s, /--verification|Write `\.formula\/inception\/verification\/results\.md`/);
 });
 
 test('pauses and sessions recommend context management without granting authority or forcing a restart', () => {
@@ -390,7 +390,7 @@ test('complete source recipe verifies before source reads, certifies init, and r
   const projectModel = { projectName: 'sample', description: 'Confirmed app', devCommands: ['node --test'], surfaces: [{ name: 'web', path: 'src', agent: 'web-agent', testCmd: 'node --test' }], resolutions: {}, hubMode: 'graph' };
   const plan = planProjectScaffold({ hubRoot: f.repo, model: projectModel });
   assert.deepEqual(plan.conflicts, []);
-  const inputPath = '.apex/work/init/' + receipt.runId + '/governance-input.json';
+  const inputPath = '.formula/work/init/' + receipt.runId + '/governance-input.json';
   f.json(inputPath, { schema: 'steepy-inception-governance-input/v1', runId: receipt.runId, completion: receipt.completion, projectModel, documents: [] });
   run(prepare, inputPath);
   const readCount = sourceReads.length;
@@ -424,7 +424,7 @@ for (const prefix of ['full-scaffold', 'through-customized-replacement']) test(`
   projectModel.resolutions[unresolved.conflicts[0].id] = 'replace';
   const originalPlan = planProjectScaffold({ hubRoot: f.repo, model: projectModel });
   assert.deepEqual(originalPlan.conflicts, []);
-  const work = `.apex/work/init/${verified.runId}`;
+  const work = `.formula/work/init/${verified.runId}`;
   const inputPath = work + '/governance-input.json';
   const planPath = work + '/scaffold-plan.json';
   f.json(inputPath, { schema: 'steepy-inception-governance-input/v1', runId: verified.runId, completion: verified.completion, projectModel, documents: [] });
@@ -436,7 +436,7 @@ for (const prefix of ['full-scaffold', 'through-customized-replacement']) test(`
     assert.equal(r.status, expected, r.stdout + r.stderr); return r;
   };
   governance('prepare');
-  const reservationBytes = readFileSync(join(f.repo, '.apex/init-provenance.pending.json'));
+  const reservationBytes = readFileSync(join(f.repo, '.formula/init-provenance.pending.json'));
   const customIndex = originalPlan.operations.findIndex(op => op.path === customPath);
   assert.ok(customIndex >= 0 && customIndex < originalPlan.operations.length - 1, 'fixture has a genuine remaining publication suffix');
   if (prefix === 'full-scaffold') applyProjectScaffold({ hubRoot: f.repo, plan: originalPlan });
@@ -468,6 +468,6 @@ for (const prefix of ['full-scaffold', 'through-customized-replacement']) test(`
   assert.equal(f.run('verify-complete').ok, true);
   assert.deepEqual(readFileSync(join(f.repo, inputPath)), inputBytes);
   assert.deepEqual(readFileSync(join(f.repo, planPath)), planBytes);
-  assert.deepEqual(readFileSync(join(f.repo, '.apex/init-provenance.pending.json')), reservationBytes);
+  assert.deepEqual(readFileSync(join(f.repo, '.formula/init-provenance.pending.json')), reservationBytes);
   assert.deepEqual(readFileSync(join(f.repo, area, 'run.json')), descriptorBytes);
 });

@@ -1,5 +1,5 @@
 // Deterministic scale fixture generator for the Stable Knowledge Graph (spec
-// .apex/work/specs/2026-08-11-stable-knowledge-graph.md §16 "Performance envelope", plan task E1).
+// .formula/work/specs/2026-08-11-stable-knowledge-graph.md §16 "Performance envelope", plan task E1).
 // Produces the acceptance fixture the bake-off measures against — 500 Packages, 25,000 curated
 // stable nodes, 150,000 relationships — plus any smaller valid scale for smoke tests. Consumed by
 // E2 (eliminatory veto) and E4 (envelope measurement), and by D3's context-budget calibration.

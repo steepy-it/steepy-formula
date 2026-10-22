@@ -13,7 +13,7 @@ export const CAPTURE_SCHEMA_V2 = 'steepy-inception-capture/v2';
 export const ABANDON_INTENT_SCHEMA_V2 = 'steepy-inception-abandon-intent/v2';
 export const ABANDON_SCHEMA_V2 = 'steepy-inception-abandon/v2';
 export const ABANDON_RECEIPT_SCHEMA_V2 = 'steepy-inception-abandon-receipt/v2';
-const AREA = '.apex/inception/';
+const AREA = '.formula/inception/';
 const PHASES = ['reconnaissance', 'architecture', 'research', 'approval', 'bootstrap', 'verification', 'complete'];
 const CAPABILITIES = ['shell', 'network', 'browser', 'subagents', 'question-tool', 'headless'];
 const EFFECT_KINDS = ['install', 'generator', 'migration', 'external-resource', 'deploy', 'commit', 'remote'];
@@ -332,11 +332,11 @@ function allocationForPath(path) {
       return { number: canonicalAllocationNumber(digits, path), identity: path };
     }
   }
-  const capture = /^\.apex\/inception\/verification\/captures\/(\d+)\/(?:stdout\.bin|stderr\.bin|receipt\.json)$/u.exec(path);
+  const capture = /^\.formula\/inception\/verification\/captures\/(\d+)\/(?:stdout\.bin|stderr\.bin|receipt\.json)$/u.exec(path);
   if (capture) {
     return { number: canonicalAllocationNumber(capture[1], path), identity: `${AREA}verification/captures/${capture[1]}/receipt.json` };
   }
-  const copy = /^\.apex\/inception\/approvals\/(\d+)-documents\/(\d+)\.bin$/u.exec(path);
+  const copy = /^\.formula\/inception\/approvals\/(\d+)-documents\/(\d+)\.bin$/u.exec(path);
   if (copy) {
     canonicalAllocationNumber(copy[2], path);
     return { number: canonicalAllocationNumber(copy[1], path), identity: `${AREA}approvals/${copy[1]}.json` };

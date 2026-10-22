@@ -178,7 +178,7 @@ test('v1 generated templates render complete provenance and native thin graph ad
   assert.doesNotMatch(skill, /governed hub|hub coherence gate|\blegacy\b/i);
   assert.match(
     skill,
-    /Do not ordinarily enumerate, search, or read under `\.apex\/work\/\*\*`/,
+    /Do not ordinarily enumerate, search, or read under `\.formula\/work\/\*\*`/,
   );
   assert.match(
     skill,

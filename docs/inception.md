@@ -26,10 +26,10 @@ Inception is not a gear and is not part of the brainstorm → plan → implement
 
 A run moves through seven phases, in order: reconnaissance → architecture → research → approval → bootstrap → verification → complete.
 
-1. **Reconnaissance.** The skill reads every determining material, records each element as real or simulated, and asks what the materials do not answer. One question at a time, with options, trade-offs, and a recommendation. It writes `.apex/inception/project/reconnaissance.md`.
-2. **Architecture decisions.** You decide the shape of the system with the skill: system shape, contracts between parts, data, identity and access, internal architecture, repository and tooling, testing, hosting and deploy, observability and errors. Every significant decision enters the decision register, `.apex/inception/project/decision-register.md`, with a stable `DR-n` ID, its reason, its alternatives, and how you confirmed it. There is no preset stack: every layer is decided here.
+1. **Reconnaissance.** The skill reads every determining material, records each element as real or simulated, and asks what the materials do not answer. One question at a time, with options, trade-offs, and a recommendation. It writes `.formula/inception/project/reconnaissance.md`.
+2. **Architecture decisions.** You decide the shape of the system with the skill: system shape, contracts between parts, data, identity and access, internal architecture, repository and tooling, testing, hosting and deploy, observability and errors. Every significant decision enters the decision register, `.formula/inception/project/decision-register.md`, with a stable `DR-n` ID, its reason, its alternatives, and how you confirmed it. There is no preset stack: every layer is decided here.
 3. **Research and versions.** Each foundational choice gets an official source, an explicit version, a verification date, its support status, and a compatibility check. You confirm the version table. Versions the model remembers are not verified versions; without network access the skill asks you for official sources or blocks.
-4. **Project and approval.** The skill writes the project documents under `.apex/inception/project/`: constraints, the decision register, components and contracts, the verification plan, deploy, limits, and the representative path (one complete flow across the agreed boundaries). It also writes the machine-readable verification contract before approval. Other flows stay future context and never become a started backlog.
+4. **Project and approval.** The skill writes the project documents under `.formula/inception/project/`: constraints, the decision register, components and contracts, the verification plan, deploy, limits, and the representative path (one complete flow across the agreed boundaries). It also writes the machine-readable verification contract before approval. Other flows stay future context and never become a started backlog.
 5. **Bootstrap.** The skill builds the representative path: manifests and lockfiles from the official tools at the approved versions, install, build, test, and start commands, an example configuration without secrets, and the data and integrations the path needs.
 6. **Verification.** From a clean state, the skill checks install, build, test, start, the representative path, and the behaviors to preserve.
 7. **Complete.** The helper checks every required result against the approved project and the current application, then publishes the completion and a closing report.
@@ -62,7 +62,7 @@ An operation with effects is an installation, a generator, a migration, an exter
 - **Changes outside the agreed paths** stop the unit until you accept them explicitly.
 - **Subagent children never run an operation with effects.** They list what they need and the coordinator runs it.
 
-Everything a run writes about itself stays in the local area `.apex/inception/`, which Git ignores. Git and a clean working tree are not required.
+Everything a run writes about itself stays in the local area `.formula/inception/`, which Git ignores. Git and a clean working tree are not required.
 
 ## Checks and results
 
@@ -89,7 +89,7 @@ A coverage table marks every decision and component `verified`, `unverified`, or
 
 The skill blocks when it cannot safely go on: unreadable determining input, out-of-scope changes, uncertain effects, unexplained divergence or missing required evidence. It keeps every file and the exact recovery refs, and tells you what it needs. Resolving one named block never clears another.
 
-To give up on a run, ask the skill to abandon it. The run is archived intact under `.apex/inception/abandoned/<run-id>/`; nothing is deleted, and an interrupted abandon can always finish. A new run starts only when you ask for one. Until you start one or run `init`, there is no hub and no run, so `check` reports mode `none`.
+To give up on a run, ask the skill to abandon it. The run is archived intact under `.formula/inception/abandoned/<run-id>/`; nothing is deleted, and an interrupted abandon can always finish. A new run starts only when you ask for one. Until you start one or run `init`, there is no hub and no run, so `check` reports mode `none`.
 
 ## Harness capabilities
 
@@ -120,25 +120,25 @@ The rest of this guide is the exact contract the skill and its helpers follow. Y
 
 ### The local area
 
-Everything a run writes about itself lives under `.apex/inception/`. The area has its own `.gitignore` containing `*`, so the root `.gitignore` is never edited for it. It is local, like `.apex/work/`.
+Everything a run writes about itself lives under `.formula/inception/`. The area has its own `.gitignore` containing `*`, so the root `.gitignore` is never edited for it. It is local, like `.formula/work/`.
 
 | Path | Holds |
 |---|---|
-| `.apex/inception/run.json` | `steepy-inception-run/v2`: revision, phase/status, harness/Git, `preapprovalExclusions`, ordered refs, units/activeUnit, effects, cycles/currentCycle, verificationSession, baseline, blocks, pending/publications, completion, history. |
-| `.apex/inception/project/` | Project documents, decision register, and `verification-contract.json` (`steepy-inception-checks/v2`). |
-| `.apex/inception/research/`, `.apex/inception/bootstrap/` | One complete report per persisted research/bootstrap unit. |
-| `.apex/inception/units/<id>/outputs/` | Immutable copies of unit outputs, including cumulative project documents. |
-| `.apex/inception/approvals/` | Approval records and frozen byte-exact project documents. |
-| `.apex/inception/snapshots/`, `.apex/inception/checkpoints/` | Complete application inventories and immutable checkpoints. |
-| `.apex/inception/effects/`, `.apex/inception/reconciliations/` | Immutable intent/outcome and observed reconciliation records. |
-| `.apex/inception/verification/` | `cycles/`, `sessions/`, `manual/`, `results/`, `summaries/`, `reports/`, `completions/`, and `captures/`. |
-| `.apex/inception/resume-notes/` | Bound notes for pauses, blocks, and final presentation. |
-| `.apex/inception/abandon-intent.json` | Canonical archive intention, recoverable independently of the active descriptor. |
-| `.apex/inception/abandoned/<run-id>/` | Intact abandoned run, archive intent, `abandon.json`, and `receipt.json`. |
+| `.formula/inception/run.json` | `steepy-inception-run/v2`: revision, phase/status, harness/Git, `preapprovalExclusions`, ordered refs, units/activeUnit, effects, cycles/currentCycle, verificationSession, baseline, blocks, pending/publications, completion, history. |
+| `.formula/inception/project/` | Project documents, decision register, and `verification-contract.json` (`steepy-inception-checks/v2`). |
+| `.formula/inception/research/`, `.formula/inception/bootstrap/` | One complete report per persisted research/bootstrap unit. |
+| `.formula/inception/units/<id>/outputs/` | Immutable copies of unit outputs, including cumulative project documents. |
+| `.formula/inception/approvals/` | Approval records and frozen byte-exact project documents. |
+| `.formula/inception/snapshots/`, `.formula/inception/checkpoints/` | Complete application inventories and immutable checkpoints. |
+| `.formula/inception/effects/`, `.formula/inception/reconciliations/` | Immutable intent/outcome and observed reconciliation records. |
+| `.formula/inception/verification/` | `cycles/`, `sessions/`, `manual/`, `results/`, `summaries/`, `reports/`, `completions/`, and `captures/`. |
+| `.formula/inception/resume-notes/` | Bound notes for pauses, blocks, and final presentation. |
+| `.formula/inception/abandon-intent.json` | Canonical archive intention, recoverable independently of the active descriptor. |
+| `.formula/inception/abandoned/<run-id>/` | Intact abandoned run, archive intent, `abandon.json`, and `receipt.json`. |
 
 Numbered records use a global counter padded to at least four digits, never filesystem recency. Refs bind exact path, byte count, and SHA-256. The descriptor changes only through `inception-state.mjs`. Records are immutable; unit state changes are helper-owned. JSON uses canonical key order and a final newline, strict UTF-8, closed fields/enums, and no duplicate keys. Paths are confined ordinary single-link files: no symlink or symlinked ancestor directory, alias, or path named twice. Names are literal: `app/[id]/page.tsx` is an ordinary path, and the helper never reads a path, exclusion or allowed path as a pattern. Quote paths for the shell and give Git literal pathspecs (`':(literal)<path>'`), because both expand patterns. Unsupported names fail rather than being normalized.
 
-Runs use the v2 descriptor. A descriptor with any other schema is an unsupported run format: every helper command, `abandon` included, refuses it before any lease or write. Before a hub exists, `inception-state.mjs classify` and `inspect` report it as an invalid descriptor. No tool migrates, archives, deletes or restarts it. To upgrade, move `.apex/inception/` out of the repository by hand, including `abandon-intent.json` and `abandoned/` left by an earlier archive, then start a fresh run.
+Runs use the v2 descriptor. A descriptor with any other schema is an unsupported run format: every helper command, `abandon` included, refuses it before any lease or write. Before a hub exists, `inception-state.mjs classify` and `inspect` report it as an invalid descriptor. No tool migrates, archives, deletes or restarts it. To upgrade, move `.formula/inception/` out of the repository by hand, including `abandon-intent.json` and `abandoned/` left by an earlier archive, then start a fresh run.
 
 ### The helper commands
 
@@ -183,7 +183,7 @@ Helper exits: `0` success, `1` failed precondition/verification, `2` usage error
 
 The approval record stores your statement verbatim with the verification contract and frozen byte-exact copies of every project document, including the decision register. Live-document changes invalidate the approval for continuing; historical approvals verify their immutable copies. Blocking, unblocking and returning to approval never compare the working documents, so a blocked run with an edited approved document can still return to approval; a reserved completion binds from the frozen copies, and the strict `verify-complete` then reports the edit. A digest proves bytes, not a human: the record holds only the statement it was given.
 
-Every registered decision document under `.apex/inception/project/` must be covered by the latest approval. After an approval, `unit begin` accepts a new decision document only in the approval phase. Until a new approval includes it, `resume-check` reports an approval divergence and forward transitions, verification and `verify-complete` refuse, naming the path. `verify-approval --approval <older path>` still checks only that older approval's frozen copies.
+Every registered decision document under `.formula/inception/project/` must be covered by the latest approval. After an approval, `unit begin` accepts a new decision document only in the approval phase. Until a new approval includes it, `resume-check` reports an approval divergence and forward transitions, verification and `verify-complete` refuse, naming the path. `verify-approval --approval <older path>` still checks only that older approval's frozen copies.
 
 ### Units, effects and snapshots
 
@@ -226,14 +226,14 @@ After an application fix, rerun all required automatic and manual checks in a ne
 
 Manual checks start a unit before the procedure and bind the human's verbatim confirmation after it. One explicit response may cover named checks and their procedures; `both` requires automatic and manual proof. The helper validates structure/applicability, while the skill ensures human provenance. Observe the whole application before/after every check and before completion; drift during a command invalidates its old-cycle success.
 
-Each register row `DR-n` has its own coverage entry whose `id` is the lowercase register ID (`DR-1` → `dr-1`), because that is the only entry discovery reads for the decision; component entries may be added. `approve` refuses a register row without its entry. The run reaches `complete` only when every required check succeeded with all type/reuse evidence, current approval/contract/cycle/environment/inventory and final checkpoint verify, every transitive digest verifies, and no uncertain/partial effect, writer, foreign pending publication or independent block remains. The helper derives summary, report and coverage; `.apex/inception/verification/results.md` is the final projection, never edited by the skill between attempts. Immutable cycle report and completion bind all accepted evidence. A missing closing note permits presentation repair only.
+Each register row `DR-n` has its own coverage entry whose `id` is the lowercase register ID (`DR-1` → `dr-1`), because that is the only entry discovery reads for the decision; component entries may be added. `approve` refuses a register row without its entry. The run reaches `complete` only when every required check succeeded with all type/reuse evidence, current approval/contract/cycle/environment/inventory and final checkpoint verify, every transitive digest verifies, and no uncertain/partial effect, writer, foreign pending publication or independent block remains. The helper derives summary, report and coverage; `.formula/inception/verification/results.md` is the final projection, never edited by the skill between attempts. Immutable cycle report and completion bind all accepted evidence. A missing closing note permits presentation repair only.
 
 ### What init and discovery check
 
-- **Certified init.** Only a complete v2 run passes read-only `verify-complete` before first certified init. `inception-governance.mjs prepare --repo-root . --input <exact-json>` binds the confirmed Project model (with its `hubMode`) and the public-planner operations before writes; governance certifies no Markdown document and there is no `documents` step, because the stable knowledge lands through the initialization promotion. `finish --repo-root .` verifies the exact resulting difference. The canonical `.apex/init-provenance.pending.json` and `.apex/init-provenance.json` bind this one completion without modifying it.
+- **Certified init.** Only a complete v2 run passes read-only `verify-complete` before first certified init. `inception-governance.mjs prepare --repo-root . --input <exact-json>` binds the confirmed Project model (with its `hubMode`) and the public-planner operations before writes; governance certifies no Markdown document and there is no `documents` step, because the stable knowledge lands through the initialization promotion. `finish --repo-root .` verifies the exact resulting difference. The canonical `.formula/init-provenance.pending.json` and `.formula/init-provenance.json` bind this one completion without modifying it.
 - **Pending init recovery** enters before a fresh source check or interview. Use the same retained input and original validated plan, verify its operation bindings against the pending receipt, and call public idempotent `applyProjectScaffold`; do not replan through the model CLI after a resolved replacement has already applied. Then finish. Missing/mismatched retained state stops. Ordinary later init/repair remains available without replacing the old certificate.
 - **The discovery source check.** `verify-complete` authenticates all completion refs, derives summary/report again and compares the application before returning exact inputPaths and compact checks/coverage. Certified governance is virtually reversed: remove only wholly added files or subtract only the managed block from mixed AGENTS/CLAUDE bytes, preserving prefix and suffix. An unmarked CLAUDE.md whose active `@AGENTS.md` import the planner adopted into the block is certified only when its bytes are exactly the planner's adoption, and is reversed to its exact original bytes. Verify current certified bytes too. Other files in the same provider, unmanaged edits, lockfiles/config/migrations remain observable. In graph mode the source also requires the graph head to be the initialization revision. Application drift, tamper, a graph changed since the certified init, or an unsupported run format rejects this source only; ordinary discovery can examine current code, with no fallback to old inception decisions and no reopening/bootstrap replay.
 
 ### Abandon
 
-Abandon is explicit. The helper reserves `.apex/inception/abandon-intent.json` before archive creation and records child physical identities, moving `run.json` last. While that intention is prepared, `classify` reports `resume-abandon` and every other `inception-state.mjs` writer refuses, so an interrupted abandon can always finish. `abandon --resume` uses only that canonical intention and exact children even after moving run.json; source/destination identity conflicts refuse, while a verified final receipt is a no-op. It deletes nothing and performs no automatic restart. A later new run requires your explicit request. Without hub/run after archive, `check` again reports mode `none` until a new run or init.
+Abandon is explicit. The helper reserves `.formula/inception/abandon-intent.json` before archive creation and records child physical identities, moving `run.json` last. While that intention is prepared, `classify` reports `resume-abandon` and every other `inception-state.mjs` writer refuses, so an interrupted abandon can always finish. `abandon --resume` uses only that canonical intention and exact children even after moving run.json; source/destination identity conflicts refuse, while a verified final receipt is a no-op. It deletes nothing and performs no automatic restart. A later new run requires your explicit request. Without hub/run after archive, `check` again reports mode `none` until a new run or init.

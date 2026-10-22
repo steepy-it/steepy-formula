@@ -9,7 +9,7 @@ and optional audit evidence are separate steps.
 ## Before publishing
 
 1. Review the final source tree, packaged files, asset provenance, and public documentation.
-   Exclude local workflow artifacts (`.apex/work/`, `.apex/inception/`), credentials
+   Exclude local workflow artifacts (`.formula/work/`, `.formula/inception/`), credentials
    (`.formula/secrets.json`), graph exports or backups, personal paths, and internal material.
 2. Review the GitHub repository as well as Git history: pull requests, their Git refs,
    comments, old commits, releases, Actions logs, and artifacts may retain earlier content.

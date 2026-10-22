@@ -38,7 +38,7 @@ the repo root the human selected (default: the current working directory).
 ### Step 1 — Pre-flight hard gate: provision, verify, and route
 
 Nothing is scaffolded until the engine answers. This gate runs **before writing any repo
-scaffolding artifact** — the `.apex/work/` area, agent files, the bootstrap skill, and
+scaffolding artifact** — the `.formula/work/` area, agent files, the bootstrap skill, and
 `CLAUDE.md` are all created only after it passes.
 
 Drive `graph init` (idempotent provisioning — re-running with the same project id prints the
@@ -86,21 +86,21 @@ by the first promotion apply (Step 6), so a freshly provisioned graph correctly 
 `initialized: no` until this skill's own scenario lands.
 
 **Inception provenance (exact paths only).** On the virgin row, before any repo file is written,
-check only the exact `.apex/inception/run.json` descriptor when it exists. A descriptor with schema
+check only the exact `.formula/inception/run.json` descriptor when it exists. A descriptor with schema
 `steepy-inception-run/v2` and phase/status `complete` makes this the first post-complete init,
 certified in Step 4 (**Post-complete certification**); an unsupported run format is never certified
-or migrated. Never list `.apex/inception/` or read its document bodies for init: the completed run
+or migrated. Never list `.formula/inception/` or read its document bodies for init: the completed run
 is project context for the Step 3 interview, not a machine input. `.formula/` is a reserved area of
 inception snapshots, so the binding this step's `graph init` writes is never application drift.
 
-Check the exact canonical `.apex/init-provenance.pending.json` and `.apex/init-provenance.json`
+Check the exact canonical `.formula/init-provenance.pending.json` and `.formula/init-provenance.json`
 paths before a fresh `verify-complete` gate: a pending receipt intentionally makes that gate red.
 For an interrupted pending init, jump directly to **Pending certification recovery** in Step 4
 before any other write. Skip Steps 2 and 3, fresh detection/interview, model projection, and
 fresh preview/conflict resolution. Recover the same retained governance input at
-`.apex/work/init/<runId>/governance-input.json`, its original operation plan at
-`.apex/work/init/<runId>/scaffold-plan.json`, and the retained Step 5 structural input at
-`.apex/work/init-structural.json`. Missing any exact artifact stops recovery; never reconstruct a
+`.formula/work/init/<runId>/governance-input.json`, its original operation plan at
+`.formula/work/init/<runId>/scaffold-plan.json`, and the retained Step 5 structural input at
+`.formula/work/init-structural.json`. Missing any exact artifact stops recovery; never reconstruct a
 plan or choose a historical work file. If the final receipt exists, retain it unchanged; ordinary
 subsequent init/repair remains available, but new changes are not certified by the old receipt.
 Pending recovery failure stops its writes.
@@ -156,8 +156,8 @@ the interview is complete.
 
 Only now — gate green, interview confirmed — write the disk-minimal harness assets:
 
-- `.apex/work/specs/` and `.apex/work/plans/` — the local, gitignored work-artifact area, and
-  `.apex/work/.gitignore` with exactly:
+- `.formula/work/specs/` and `.formula/work/plans/` — the local, gitignored work-artifact area, and
+  `.formula/work/.gitignore` with exactly:
 
 ```gitignore
 *
@@ -261,14 +261,14 @@ the returned completion Ref, never placeholder digests:
 ```
 
 Serialize `<governance-input-json>` as the exact repo-relative
-`.apex/work/init/<runId>/governance-input.json` in this init run's authorized output scope. Never
+`.formula/work/init/<runId>/governance-input.json` in this init run's authorized output scope. Never
 write this input inside the completed run. Do not enumerate work artifacts to recover it. Also
-write the Step 5 structural input (`.apex/work/init-structural.json`) now, before prepare, and keep
+write the Step 5 structural input (`.formula/work/init-structural.json`) now, before prepare, and keep
 it unchanged: pending recovery resumes Step 5 from it without a fresh interview.
 
 Before the first prepare, retain the original zero-conflict plan, including complete operation
 contents and prior digests, as `<scaffold-plan-json>` =
-`.apex/work/init/<runId>/scaffold-plan.json`. Obtain it with the public
+`.formula/work/init/<runId>/scaffold-plan.json`. Obtain it with the public
 `planProjectScaffold({ hubRoot: repoRoot, model: retainedProjectModel })` using the exact confirmed
 zero-conflict model, and validate it with `validateProjectScaffoldPlan`; require
 `conflicts.length === 0`. Serialize that full plan create-only before prepare and keep it unchanged
@@ -320,7 +320,7 @@ const planPath = '<scaffold-plan-json>';
 const read = path => JSON.parse(readFileSync(join(repoRoot, path), 'utf8'));
 const sha = content => createHash('sha256').update(content).digest('hex');
 const input = validateGovernanceInput(read(inputPath));
-const pending = validateGovernanceReceipt(read('.apex/init-provenance.pending.json'));
+const pending = validateGovernanceReceipt(read('.formula/init-provenance.pending.json'));
 const plan = validateProjectScaffoldPlan(read(planPath));
 assert.equal(pending.status, 'prepared');
 assert.equal(pending.runId, input.runId);
@@ -339,7 +339,7 @@ assert.deepEqual(plan.operations.map(op => ({ path: op.path, kind: op.kind,
 console.log(JSON.stringify(applyProjectScaffold({ hubRoot: repoRoot, plan })));
 ```
 
-After the retained apply succeeds, create the `.apex/work/` area as above (a reserved area of
+After the retained apply succeeds, create the `.formula/work/` area as above (a reserved area of
 inception snapshots, never drift), skip the `CLAUDE.md` renderer, and close the certificate:
 
 ```bash
@@ -347,7 +347,7 @@ node <engine-root>/scripts/inception-governance.mjs finish --repo-root <repo-roo
 ```
 
 Require exit 0 and `ok: true`; finish checks the exact prepared outputs and the whole application
-difference, then publishes `.apex/init-provenance.json`. An explicit replay of an already-final
+difference, then publishes `.formula/init-provenance.json`. An explicit replay of an already-final
 certificate uses this same idempotent command without new writes. Graph mode has no certified
 document, so no `documents` step exists.
 Never edit the completed descriptor or any inception evidence. Run the full
@@ -372,7 +372,7 @@ helper, which maps a structural input file into a draft scenario through the cor
 `createScenario` (`scripts/formula/core/promotion.mjs`). Drive the helper; never rebuild its
 mapping agent-side.
 
-1. Write the interview results into `.apex/work/init-structural.json` — a local, gitignored
+1. Write the interview results into `.formula/work/init-structural.json` — a local, gitignored
    work artifact (the Step 4 work-area `.gitignore` already covers it). On the first
    post-complete init it was already written before prepare: reuse it unchanged.
 
@@ -404,7 +404,7 @@ mapping agent-side.
 ```bash
 node <engine-root>/scripts/structural-promotion.mjs \
   --project <projectId> --port docker \
-  --input .apex/work/init-structural.json <scenarioId>
+  --input .formula/work/init-structural.json <scenarioId>
 ```
 
 The helper maps the input into plain ADD operations:
@@ -476,18 +476,18 @@ Step 1's decision table routes here; nothing in this step scaffolds or mutates t
 - **`hub-mode` reports `migrate`**: do not repair or migrate it here. Stop and tell the user to
   run the `graph-migrate` skill (invoke it the way your harness invokes skills) before any other
   workflow.
-- **Init provenance receipts:** an existing final `.apex/init-provenance.json` is retained
+- **Init provenance receipts:** an existing final `.formula/init-provenance.json` is retained
   unchanged; ordinary repair is not certified by it and never prepares a replacement receipt or
   re-runs source verification as a prerequisite. A pending receipt routes to **Pending
   certification recovery** (Step 1).
 
 ### Step 9 — Report and close
 
-List every artifact created — the `.apex/work/` area (the structural input
-`.apex/work/init-structural.json` included, local and gitignored), the per-surface agent
+List every artifact created — the `.formula/work/` area (the structural input
+`.formula/work/init-structural.json` included, local and gitignored), the per-surface agent
 files, the bootstrap skill, and `CLAUDE.md` (created, block-inserted, or skipped — state
-which), and on the first post-complete init the receipts `.apex/init-provenance.pending.json` and
-`.apex/init-provenance.json` — plus the head revision and the approved Rules (or none). The scaffolded graph starts
+which), and on the first post-complete init the receipts `.formula/init-provenance.pending.json` and
+`.formula/init-provenance.json` — plus the head revision and the approved Rules (or none). The scaffolded graph starts
 with only the interviewed skeleton: run the `discovery` skill (invoke it the way your harness
 invokes skills; in graph mode its graph channel populates the graph, not markdown docs) to
 populate it from the codebase, and re-run it anytime to keep it from rotting. After a certified

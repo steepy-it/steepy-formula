@@ -1,5 +1,5 @@
 // Qualified identity and lifecycle rules for the Stable Knowledge Graph (spec
-// .apex/work/specs/2026-08-11-stable-knowledge-graph.md §6 "Identity and lifecycle", §24
+// .formula/work/specs/2026-08-11-stable-knowledge-graph.md §6 "Identity and lifecycle", §24
 // "Multi-project deployment"). Pure data + pure validation functions only: no I/O, no
 // dependencies, no engine coupling — this module must run identically in every
 // adapter/harness (spec §20), matching `ontology.mjs` (Task B1). Later tasks build on it: B3

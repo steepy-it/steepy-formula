@@ -27,7 +27,7 @@ and never a `steepy-formula` command-line flag. If no password is stored, `graph
 fresh one per run. Signed exports never carry credentials.
 
 **Your repository.** Specs, plans, and workflow logs stay in your repository under the
-gitignored `.apex/work/`. Autopilot logs are redacted by default (`log-mode: safe`). The
+gitignored `.formula/work/`. Autopilot logs are redacted by default (`log-mode: safe`). The
 committed `.formula/config.json` holds only the project id. A steepy-apex hub under `.apex/` (a
 one-time migration source for `graph-migrate`) is ordinary files in your repository; you decide
 whether to commit it.

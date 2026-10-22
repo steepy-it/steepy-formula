@@ -2,7 +2,7 @@
 // the head of a spec file, checks it against the refusal guards, then drives
 // `plan → implement → review` as fresh headless harness sessions — one child per
 // phase, each once, halting on anything that needs a human and stopping before
-// bump/PR. Contract shape — the HTML comment at the head of `.apex/work/specs/*.md`:
+// bump/PR. Contract shape — the HTML comment at the head of `.formula/work/specs/*.md`:
 //   <!-- verdict: <text> | gear: <int>
 //   drive: autopilot
 //   branch: <name>
@@ -431,7 +431,7 @@ export function phasePrompt(phase, specPath, correlation = {}) {
     `Follow the ${phase} skill's autopilot branch: never ask a question, never wait for a`,
     'human, and never push, bump a version, or open a PR.',
     'If anything is unresolvable, append a `BLOCKED` line with the reason to the run\'s',
-    `\`${STATUS_FILE_NAME}\` (in .apex/work/tasks/<spec-basename>/) and exit non-zero.`,
+    `\`${STATUS_FILE_NAME}\` (in .formula/work/tasks/<spec-basename>/) and exit non-zero.`,
     ...manifestReference,
     ...identity,
   ].join(' ');
@@ -552,7 +552,7 @@ function selectTaskResultProtocol(cwd, statusText, specName) {
   if (declared !== null && declared !== 2) throw new Error(`unsupported task result protocol ${declared}; ${exit}`);
   // Inspect only status-authorized immutable attempt paths, never scan work.
   for (const phase of PHASES) for (const attempt of replay.attemptsByScope[phase]) {
-    const path = `.apex/work/tasks/${specName}/context/phase-${phase}-attempt-${attempt}.json`;
+    const path = `.formula/work/tasks/${specName}/context/phase-${phase}-attempt-${attempt}.json`;
     if (!existsSync(join(cwd, path))) continue;
     const version = JSON.parse(readWorkPath(cwd, path, { encoding: 'utf8' })).contract?.taskResultProtocol;
     if (version !== 2) throw new Error(`unsupported task result protocol ${version ?? 1} in retained phase manifest ${path}; ${exit}`);
@@ -1051,7 +1051,7 @@ function repositoryPath(cwd, absolutePath, label) {
 }
 
 // Every phase input the conductor reads — the source spec, the approved plan, the
-// task-result index — is a work path (.apex/work/specs/**, .apex/work/plans/**, run
+// task-result index — is a work path (.formula/work/specs/**, .formula/work/plans/**, run
 // artifacts), so each rides the typed confined read of work-paths.mjs.
 function readArtifact(cwd, path) {
   return readWorkPath(cwd, path, { encoding: 'utf8' });
@@ -1060,24 +1060,24 @@ function readArtifact(cwd, path) {
 function phaseManifestInput({ phase, cwd, absSpec, runId, attempt, contract, baseline, taskResultVersion, resumeInputs, resolveHubContext = resolveGraphHubContext }) {
   const specPath = repositoryPath(cwd, absSpec, 'spec path');
   const specName = basename(absSpec, '.md');
-  const planPath = `.apex/work/plans/${specName}.md`;
-  const ledgerPath = `.apex/work/tasks/${specName}/ledger.md`;
-  const taskResultIndexPath = `.apex/work/tasks/${specName}/task-result-index.md`;
-  const branchDiffPath = `.apex/work/tasks/${specName}/branch-diff.txt`;
-  const criteriaPath = `.apex/work/tasks/${specName}/success-criteria.md`;
-  const evidencePath = `.apex/work/tasks/${specName}/evidence-report.md`;
-  const reviewReportPath = `.apex/work/tasks/${specName}/review-report.md`;
+  const planPath = `.formula/work/plans/${specName}.md`;
+  const ledgerPath = `.formula/work/tasks/${specName}/ledger.md`;
+  const taskResultIndexPath = `.formula/work/tasks/${specName}/task-result-index.md`;
+  const branchDiffPath = `.formula/work/tasks/${specName}/branch-diff.txt`;
+  const criteriaPath = `.formula/work/tasks/${specName}/success-criteria.md`;
+  const evidencePath = `.formula/work/tasks/${specName}/evidence-report.md`;
+  const reviewReportPath = `.formula/work/tasks/${specName}/review-report.md`;
   // The phase's surface context is the canonical graph's: the injected resolver (by default
   // `steepy-formula context resolve`) writes the run's own `hub-context/context.md`, and that
   // one path is what every implicated surface binds in the manifest.
-  const hubOutputPath = `.apex/work/tasks/${specName}/context/hub-context`;
+  const hubOutputPath = `.formula/work/tasks/${specName}/context/hub-context`;
   const contextPath = `${hubOutputPath}/context.md`;
   const graphHub = resolveHubContext({ repoRoot: cwd, outputPath: hubOutputPath });
   // The resolver is an injection seam: its answer must be the path requested.
   if (graphHub?.contextPath !== contextPath) {
     throw new Error(`hub context path must be '${contextPath}', got '${graphHub?.contextPath}'`);
   }
-  // The resolved `context.md` lives under `.apex/work/`, so it is read once through the typed
+  // The resolved `context.md` lives under `.formula/work/`, so it is read once through the typed
   // `hub-context` family of the work-paths primitive: an unsafe target or ancestor (a symlink
   // out of the repository) fails closed here, before any manifest names the path.
   readWorkPath(cwd, contextPath, { encoding: 'utf8', expect: 'work-output', family: 'hub-context' });
@@ -1878,7 +1878,7 @@ function runChild({
   });
 }
 
-// The conductor drives only canonical spec artifacts under .apex/work/specs/ —
+// The conductor drives only canonical spec artifacts under .formula/work/specs/ —
 // any other existing file is refused before spawn or work-dir write. A relative
 // argument must already be the canonical spelling (alias forms are rejected,
 // never normalized); an absolute argument is gated by where it lands. The
@@ -1963,8 +1963,8 @@ export async function runConductor(specPath, opts = {}) {
   let statusPath;
   try {
     const specName = assertSafeRelPath(basename(absSpec, '.md'), 'spec name');
-    runDir = join(cwd, '.apex', 'work', 'tasks', specName);
-    statusPath = parseWorkPath(`.apex/work/tasks/${specName}/${STATUS_FILE_NAME}`, 'work-output', 'status').path;
+    runDir = join(cwd, '.formula', 'work', 'tasks', specName);
+    statusPath = parseWorkPath(`.formula/work/tasks/${specName}/${STATUS_FILE_NAME}`, 'work-output', 'status').path;
   } catch (err) {
     console.error(`autopilot: refusing to drive ${absSpec}: ${err.message}`);
     return 1;
@@ -2008,7 +2008,7 @@ export async function runConductor(specPath, opts = {}) {
   }
   // The confined spec/status reads have already checked the physical work
   // ancestors. Acquire before creating or mutating any selected-run artifact.
-  const lockPath = join(cwd, '.apex', 'work', LOCK_DIRECTORY_NAME);
+  const lockPath = join(cwd, '.formula', 'work', LOCK_DIRECTORY_NAME);
   let lock;
   try {
     lock = await acquireRunLock(lockPath, opts);
@@ -2104,8 +2104,8 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
     .map((record) => correlatedIdentity(record.note, 'implement'))
     .filter((identity) => identity?.phase === 'implement');
   const retainedForAttempt = (identity) => {
-    const retained = captureRetainedApproval(cwd, { planPath: `.apex/work/plans/${specName}.md`,
-      indexPath: `.apex/work/tasks/${specName}/task-result-index.md`, runId: identity.runId, attempt: identity.attempt });
+    const retained = captureRetainedApproval(cwd, { planPath: `.formula/work/plans/${specName}.md`,
+      indexPath: `.formula/work/tasks/${specName}/task-result-index.md`, runId: identity.runId, attempt: identity.attempt });
     if (retained && !priorImplementSpawns.some((origin) => origin.runId === retained.runId && origin.attempt === retained.attempt)) {
       throw new Error('retained approval has no conductor-owned prior dispatch');
     }
@@ -2124,8 +2124,8 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
       const accepted = normalizeAutopilotStatus(statusBeforeRun).map(acceptedIdentity)
         .filter((identity) => identity?.phase === 'implement').at(-1);
       if (!accepted) throw new Error('missing accepted implement identity');
-      verifyImplementReviews(cwd, { planPath: `.apex/work/plans/${specName}.md`,
-        indexPath: `.apex/work/tasks/${specName}/task-result-index.md`, runId: accepted.runId, attempt: accepted.attempt,
+      verifyImplementReviews(cwd, { planPath: `.formula/work/plans/${specName}.md`,
+        indexPath: `.formula/work/tasks/${specName}/task-result-index.md`, runId: accepted.runId, attempt: accepted.attempt,
         retainedApproval: retainedForAttempt(accepted) });
     } catch (error) { return halt(`resume reviewer evidence rejected: ${error.message}`); }
   }
@@ -2181,7 +2181,7 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
       return halt(`${identity}: durable attempt reservation could not be reduced`);
     }
 
-    const manifestPath = `.apex/work/tasks/${specName}/context/phase-${phase}-attempt-${attempt}.json`;
+    const manifestPath = `.formula/work/tasks/${specName}/context/phase-${phase}-attempt-${attempt}.json`;
     let manifestResult;
     let retainedApproval = null;
     let route;
@@ -2336,7 +2336,7 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
 
     const observeUsage = createUsageObserver({
       repoRoot: cwd,
-      ledgerPath: `.apex/work/tasks/${specName}/${RESOURCE_USAGE_FILE_NAME}`,
+      ledgerPath: `.formula/work/tasks/${specName}/${RESOURCE_USAGE_FILE_NAME}`,
       requestedModelTier: route.modelTier,
       resolvedModel: routing.model,
       modelSelection: routing.selection,
@@ -2365,9 +2365,9 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
       cmd: command.cmd,
       args: command.args,
       cwd,
-      rawPath: `.apex/work/tasks/${specName}/${rawName}`,
-      readablePath: `.apex/work/tasks/${specName}/${readableName}`,
-      aggregatePath: `.apex/work/tasks/${specName}/${aggregateName}`,
+      rawPath: `.formula/work/tasks/${specName}/${rawName}`,
+      readablePath: `.formula/work/tasks/${specName}/${readableName}`,
+      aggregatePath: `.formula/work/tasks/${specName}/${aggregateName}`,
       logMode: contract.logMode,
       context: {
         runId, phase, attempt, harness: contract.harness, displayName,
@@ -2470,8 +2470,8 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
     if (phase === 'implement') {
       try {
         const reviewReceipt = verifyImplementReviews(cwd, {
-          planPath: `.apex/work/plans/${specName}.md`,
-          indexPath: `.apex/work/tasks/${specName}/task-result-index.md`, runId, attempt, retainedApproval,
+          planPath: `.formula/work/plans/${specName}.md`,
+          indexPath: `.formula/work/tasks/${specName}/task-result-index.md`, runId, attempt, retainedApproval,
         });
         if (reviewReceipt.retainedApproval) appendStatus(cwd, statusPath, 'CONDUCTOR', 'REVIEW_APPROVAL_REUSED',
           `${identity} origin-run-id=${retainedApproval.runId} origin-attempt=${retainedApproval.attempt} state=${retainedApproval.state} digest=${retainedApproval.digest}`);

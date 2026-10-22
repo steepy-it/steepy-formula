@@ -163,8 +163,8 @@ replay); exit 0 only when clean. A validated signed export now exists: the recov
 
    - **Remove the superseded bootstrap skill** — delete the old
      `.claude/skills/steepy-apex-bootstrap/` directory if present.
-   - **Restore the work area** — re-create `.apex/work/specs/` and `.apex/work/plans/` plus
-     `.apex/work/.gitignore` (exactly `*` then `!.gitignore`) from the staged copy, or fresh per
+   - **Restore the work area** — re-create `.formula/work/specs/` and `.formula/work/plans/` plus
+     `.formula/work/.gitignore` (exactly `*` then `!.gitignore`) from the staged copy, or fresh per
      init's Step 4 shape when nothing was staged.
 
    Any failure in this sub-step keeps the archive in place (the same fallback rule as the rest of

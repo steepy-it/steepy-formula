@@ -1,4 +1,4 @@
-// Records and verifies inception run state under `.apex/inception/`. The helper never asks
+// Records and verifies inception run state under `.formula/inception/`. The helper never asks
 // questions, chooses a phase, approves, or runs project commands: the inception skill decides,
 // and this module only validates and records. Run evidence is read by exact references;
 // the separate snapshot module inventories application roots without listing local work areas.
@@ -34,7 +34,7 @@ import { verifyGovernance as verifyCanonicalGovernance } from './inception-gover
 import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 export { RUN_SCHEMA_V2, createRunDescriptorV2 } from './inception-protocol.mjs';
 
-export const INCEPTION_AREA = '.apex/inception';
+export const INCEPTION_AREA = '.formula/inception';
 export const INCEPTION_GITIGNORE = `${INCEPTION_AREA}/.gitignore`;
 export const INCEPTION_GITIGNORE_BYTES = '*\n';
 export const RUN_DESCRIPTOR_PATH = `${INCEPTION_AREA}/run.json`;
@@ -301,7 +301,7 @@ function observeHub(root) {
 }
 
 function observeRun(root) {
-  if (!realDirectory(root, '.apex') || !realDirectory(root, INCEPTION_AREA)) return { run: 'none', descriptor: null, error: null };
+  if (!realDirectory(root, '.formula') || !realDirectory(root, INCEPTION_AREA)) return { run: 'none', descriptor: null, error: null };
   if (lstatOrNull(join(root, RUN_DESCRIPTOR_PATH)) === null) return { run: 'none', descriptor: null, error: null };
   try {
     const descriptor = parseRunDescriptor(decodeAreaText(readAreaFile(root, RUN_DESCRIPTOR_PATH), RUN_DESCRIPTOR_PATH));
@@ -313,18 +313,18 @@ function observeRun(root) {
 
 // Observes fixed paths only. Only ENOENT means absent; every other failure is invalid state.
 export function observeState(repoRoot) {
-  let apex;
+  let formulaDir;
   try {
-    apex = lstatOrNull(join(repoRoot, '.apex'));
+    formulaDir = lstatOrNull(join(repoRoot, '.formula'));
   } catch (error) {
-    return { hub: 'invalid', run: 'invalid', descriptor: null, error: `.apex cannot be inspected: ${message(error)}` };
+    return { hub: 'invalid', run: 'invalid', descriptor: null, error: `.formula cannot be inspected: ${message(error)}` };
   }
-  if (apex === null) {
+  if (formulaDir === null) {
     const hub = observeHub(repoRoot);
     return { hub: hub.hub, run: 'none', descriptor: null, error: hub.error };
   }
-  if (apex.isSymbolicLink() || !apex.isDirectory()) {
-    return { hub: 'invalid', run: 'invalid', descriptor: null, error: '.apex is not a real directory' };
+  if (formulaDir.isSymbolicLink() || !formulaDir.isDirectory()) {
+    return { hub: 'invalid', run: 'invalid', descriptor: null, error: '.formula is not a real directory' };
   }
   const hub = observeHub(repoRoot);
   let run;
@@ -522,13 +522,13 @@ function startRunUnlocked(repoRoot, {
   }
   try { validateSnapshotScope({ roots: ['.'], exclusions }); } catch (error) { throw refuse(`--exclusions-stdin: ${message(error)}`); }
 
-  const apexExists = realDirectory(root, '.apex');
+  const formulaExists = realDirectory(root, '.formula');
   const migrate = migrateRefusal(root);
   if (migrate !== null) throw refuse(migrate.message, migrate.code);
   if (lstatOrNull(join(root, GRAPH_BINDING_PATH)) !== null) {
     throw refuse(`${GRAPH_BINDING_PATH} exists: this project already has a graph hub binding`);
   }
-  const areaExists = apexExists && realDirectory(root, INCEPTION_AREA);
+  const areaExists = formulaExists && realDirectory(root, INCEPTION_AREA);
   let gitignoreExists = false;
   if (areaExists) {
     const abandoned = inspectAbandon(root);
@@ -561,7 +561,7 @@ function startRunUnlocked(repoRoot, {
   try { observeApplication(root, { exclusions }); } catch (error) {
     throw refuse(`cannot observe the application: ${message(error)}; declare exact dependency, cache or generated paths with --exclusions-stdin, never manifests, lockfiles, configuration or migrations`);
   }
-  if (!apexExists) createDirectory(root, '.apex');
+  if (!formulaExists) createDirectory(root, '.formula');
   if (!areaExists) createDirectory(root, INCEPTION_AREA);
   if (!gitignoreExists) {
     createFileExclusive(join(root, INCEPTION_GITIGNORE), INCEPTION_GITIGNORE_BYTES);
@@ -1097,7 +1097,7 @@ function assertRegistrationInput(input) {
   if (!['decision', 'research', 'bootstrap', 'check', 'publication', 'transition'].includes(input.kind)) throw refuse('unknown unit kind');
   if (!Array.isArray(input.inputs) || !Array.isArray(input.outputs) || !Array.isArray(input.allowedPaths)) throw refuse('unit input lists are required');
   input.inputs.forEach(r => validateRef(r));
-  input.allowedPaths.forEach(path => { validatePath(path); if (path.startsWith('.apex/inception') || path.startsWith('.apex/work') || path === '.formula' || path.startsWith('.formula/') || path === '.git' || path.startsWith('.git/')) throw refuse('reserved application scope'); });
+  input.allowedPaths.forEach(path => { validatePath(path); if (path.startsWith('.formula/inception') || path.startsWith('.formula/work') || path === '.formula' || path.startsWith('.formula/') || path === '.git' || path.startsWith('.git/')) throw refuse('reserved application scope'); });
   for (const output of input.outputs) {
     expectKeys(output, ['path', 'role'], 'unit output'); validatePath(output.path);
     // Only project/research working documents may be updated by a child. Run

@@ -12,12 +12,12 @@ test('source observations preserve literal route names, index changes, deletions
   const put = (path, text) => { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), text); };
   try {
     git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.test');
-    put('.gitignore', '.apex/work/\n'); put('deleted', 'old'); put('executable', 'old'); git('add', '.'); git('commit', '-qm', 'baseline');
+    put('.gitignore', '.formula/work/\n'); put('deleted', 'old'); put('executable', 'old'); git('add', '.'); git('commit', '-qm', 'baseline');
     const before = observeSource(root);
     const names = ['apps/web/app/admin/(protected)/generation/[id]/page.tsx', 'apps/web/app/admin/(protected)/generation/[id]/page.test.tsx', 'apps/web/app/admin/(protected)/issues/[id]/page.tsx', 'apps/web/app/admin/(protected)/issues/[id]/page.test.tsx', 'spaces ü,semi;\nline'];
     for (const name of names) put(name, name);
     chmodSync(join(root, 'executable'), 0o755); rmSync(join(root, 'deleted')); symlinkSync('missing', join(root, 'link'));
-    put('.apex/work/tasks/run/task-1-report.md', 'ignored');
+    put('.formula/work/tasks/run/task-1-report.md', 'ignored');
     const after = observeSource(root);
     assert.deepEqual(changedSourcePaths(before, after), [...names, 'deleted', 'executable', 'link'].sort());
     git('add', '--', names[0]);

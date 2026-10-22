@@ -1,5 +1,5 @@
 // Schema migration for the Stable Knowledge Graph (spec
-// .apex/work/specs/2026-08-11-stable-knowledge-graph.md §27 "Schema migration"; failure table row
+// .formula/work/specs/2026-08-11-stable-knowledge-graph.md §27 "Schema migration"; failure table row
 // "Schema version unsupported"). Task F4. The ENGINE-INDEPENDENT §27 procedure:
 //
 //   migrateSchema(port, { projectId, transform, options? })

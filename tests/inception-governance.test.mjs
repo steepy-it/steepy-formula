@@ -10,7 +10,7 @@ import { fixture as processFixture, governanceInput } from './helpers/inception-
 import * as governance from '../scripts/inception-governance.mjs';
 import { prepareGovernance, finishGovernance, validateGovernanceInput, GOVERNANCE_PENDING, GOVERNANCE_RECEIPT } from '../scripts/inception-governance.mjs';
 
-const area = '.apex/inception';
+const area = '.formula/inception';
 const put = (root, path, bytes) => { fs.mkdirSync(join(root, path, '..'), { recursive: true }); fs.writeFileSync(join(root, path), bytes); };
 const read = (root, path) => JSON.parse(fs.readFileSync(join(root, path)));
 const descriptor = root => read(root, `${area}/run.json`);
@@ -124,9 +124,9 @@ for (const git of [false, true]) for (const boundary of ['after-prepare', 'befor
     const f = processFixture(t, { phase: 'verification', git });
     f.manual('verified', ['app']); f.complete();
     const request = governanceInput(f); const run = f.snapshot(area);
-    const inputPath = f.json('.apex/work/init/input.json', request);
+    const inputPath = f.json('.formula/work/init/input.json', request);
     const plan = planProjectScaffold({ hubRoot: f.root, model: request.projectModel });
-    const planPath = f.json('.apex/work/init/plan.json', plan);
+    const planPath = f.json('.formula/work/init/plan.json', plan);
     const command = boundary === 'after-prepare' ? 'prepare' : 'finish';
     if (command === 'finish') {
       prepareGovernance(f.root, request);
@@ -134,7 +134,7 @@ for (const git of [false, true]) for (const boundary of ['after-prepare', 'befor
     }
     f.crash('inception-governance', `api.${command}Governance(root,${command === 'prepare' ? `${JSON.stringify(request)},` : ''}{fault:point=>{if(point===${JSON.stringify(boundary)})process.exit(73)}});`);
     const pending = f.read(GOVERNANCE_PENDING);
-    const reservation = `.apex/work/init-provenance/${pending.id}/reservation.json`;
+    const reservation = `.formula/work/init-provenance/${pending.id}/reservation.json`;
     // Compare every preexisting file except the exact dead active lease. Git
     // metadata is not application output; its stat cache may be refreshed.
     const retained = () => Object.fromEntries(Object.entries(f.snapshot()).filter(([path]) => !path.startsWith('.git/') && !path.startsWith('.steepy-project-scaffold.lock/')));
@@ -170,7 +170,7 @@ for (const command of ['prepare', 'finish']) {
   test(`FR-R1 ${command} rejects changed authority across the lease gap`, t => {
     const root = fixture(t); const request = input(root);
     const pending = prepareGovernance(root, request); apply(root, request);
-    const reservation = `.apex/work/init-provenance/${pending.id}/reservation.json`;
+    const reservation = `.formula/work/init-provenance/${pending.id}/reservation.json`;
     const invoke = options => command === 'prepare' ? prepareGovernance(root, request, options) : finishGovernance(root, options);
     const mutations = [
       [`${area}/run.json`, bytes => { const value = JSON.parse(bytes); value.revision++; return JSON.stringify(value); }],
@@ -261,7 +261,7 @@ for (const phase of ['prepare', 'finish']) {
     assert.throws(() => invoke({ fault: (point, info) => { if (point === 'after-stage') { stage = info.stage; throw Error('Crash'); } } }), /Crash/);
     const partial = fs.readFileSync(join(root, stage)).subarray(0, 80); fs.writeFileSync(join(root, stage), partial);
     const originalReadDir = fs.readdirSync;
-    fs.readdirSync = (path, ...args) => { assert.ok(!String(path).includes('/.apex/work'), 'no discovery inside work'); return originalReadDir(path, ...args); };
+    fs.readdirSync = (path, ...args) => { assert.ok(!String(path).includes('/.formula/work'), 'no discovery inside work'); return originalReadDir(path, ...args); };
     try { invoke(); } finally { fs.readdirSync = originalReadDir; }
     assert.deepEqual(fs.readFileSync(join(root, stage)), partial);
     if (phase === 'prepare') { apply(root, request); finishGovernance(root); }
@@ -274,12 +274,12 @@ test('foreign staging, invalid receipt, duplicate JSON keys and symlink scopes n
   let stage;
   assert.throws(() => prepareGovernance(root, request, { fault: (point, info) => { if (point === 'after-stage') { stage = info.stage; throw Error('Crash'); } } }), /Crash/);
   put(root, stage, 'foreign'); const before = metadata(root); assert.throws(() => prepareGovernance(root, request), /collision/); assert.deepEqual(metadata(root), before);
-  const cliInput = '.apex/work/input.json'; put(root, cliInput, '{"schema":"a","schema":"b"}');
+  const cliInput = '.formula/work/input.json'; put(root, cliInput, '{"schema":"a","schema":"b"}');
   const cli = spawnSync(process.execPath, [resolve('scripts/inception-governance.mjs'), 'prepare', '--repo-root', root, '--input', cliInput], { encoding: 'utf8' }); assert.equal(cli.status, 1); assert.match(cli.stderr, /duplicate/);
 });
 test('producer refuses alias staging ancestors without writing through them', t => {
-  const root = fixture(t); const request = input(root); fs.mkdirSync(join(root, '.apex/work'));
-  fs.symlinkSync(join(root, 'src'), join(root, '.apex/work/init-provenance'));
+  const root = fixture(t); const request = input(root); fs.mkdirSync(join(root, '.formula/work'));
+  fs.symlinkSync(join(root, 'src'), join(root, '.formula/work/init-provenance'));
   const before = fs.readFileSync(join(root, 'src/app.js')); assert.throws(() => prepareGovernance(root, request), /ancestor|alias/);
   assert.deepEqual(fs.readFileSync(join(root, 'src/app.js')), before); assert.equal(fs.existsSync(join(root, GOVERNANCE_PENDING)), false);
 });
@@ -321,7 +321,7 @@ test('a planner replacement that would discard unmanaged root bytes cannot becom
   const before = metadata(root); assert.throws(() => prepareGovernance(root, request), /unmanaged|managed/); assert.deepEqual(metadata(root), before);
 });
 test('CLI prepare/finish shares the typed API and keeps its exact input in work scope', t => {
-  const root = fixture(t); const request = input(root); const path = '.apex/work/init/input.json'; put(root, path, JSON.stringify(request));
+  const root = fixture(t); const request = input(root); const path = '.formula/work/init/input.json'; put(root, path, JSON.stringify(request));
   const run = command => spawnSync(process.execPath, [resolve('scripts/inception-governance.mjs'), command, '--repo-root', root, ...(command === 'prepare' ? ['--input', path] : [])], { encoding: 'utf8' });
   const prepared = run('prepare'); assert.equal(prepared.status, 0, prepared.stderr); assert.equal(JSON.parse(prepared.stdout).status, 'prepared');
   apply(root, request); const finished = run('finish'); assert.equal(finished.status, 0, finished.stderr); assert.equal(JSON.parse(finished.stdout).status, 'complete');
@@ -434,7 +434,7 @@ test('formula: governance certifies no Markdown document for any model and has n
   const withIndex = { ...request, projectModel, documents: [{ path: '.apex/_INDEX.md', content: '# Hub\n' }] };
   assert.throws(() => validateGovernanceInput(withIndex), /governance: documents must be empty: init certifies no Markdown hub document/);
   assert.equal('writeGovernanceDocuments' in governance, false, 'the documents writer is not exported');
-  const path = '.apex/work/init/input.json'; put(root, path, JSON.stringify(request));
+  const path = '.formula/work/init/input.json'; put(root, path, JSON.stringify(request));
   prepareGovernance(root, request); apply(root, request);
   const before = metadata(root);
   const cli = spawnSync(process.execPath, [resolve('scripts/inception-governance.mjs'), 'documents', '--repo-root', root, '--input', path], { encoding: 'utf8' });

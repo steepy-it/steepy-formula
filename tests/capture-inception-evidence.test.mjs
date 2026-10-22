@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import * as state from '../scripts/inception-state.mjs';
 import { createRunDescriptorV2, serializeRunDescriptorV2 } from '../scripts/inception-protocol.mjs';
 
-const area = '.apex/inception';
+const area = '.formula/inception';
 const script = fileURLToPath(new URL('../scripts/capture-inception-evidence.mjs', import.meta.url));
 const stateScript = fileURLToPath(new URL('../scripts/inception-state.mjs', import.meta.url));
 const environment = { tools: [], resources: [] };

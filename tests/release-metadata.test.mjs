@@ -230,7 +230,7 @@ test('npm package uses an explicit release files allowlist', () => {
   const filesText = pkg.files.join('\n');
   for (const localOnly of [
     '.claude/settings.local.json',
-    '.apex/work',
+    '.formula/work',
     'tests/',
     '.worktrees',
   ]) {
@@ -309,7 +309,7 @@ test('npm dry-run package excludes local development state', () => {
 
     for (const path of paths) {
       assert.ok(!path.startsWith('.claude/'), `package must not include ${path}`);
-      assert.ok(!path.startsWith('.apex/work/'), `package must not include ${path}`);
+      assert.ok(!path.startsWith('.formula/work/'), `package must not include ${path}`);
       assert.ok(!path.startsWith('tests/'), `package must not include ${path}`);
       assert.ok(!path.startsWith('.worktrees/'), `package must not include ${path}`);
     }
@@ -333,7 +333,7 @@ test('README and linked guides document install paths and release safety notes',
   assertNoBareWorkflowInvocations(readme, 'README');
 
   for (const required of [
-    'writes the gitignored `.apex/work/` local work area',
+    'writes the gitignored `.formula/work/` local work area',
     'graph-first init creates no other `.apex/` files',
     'writes Claude Code agent and skill artifacts',
     'runs Node.js scripts from the plugin package',
@@ -384,22 +384,22 @@ test('README describes a graph-only product: tagline, modes, gate timing, and no
   assert.match(migrateRow, /Migrate a steepy-apex `\.apex\/` hub into the graph/);
 });
 
-test('README pins the local .apex/work contract and drops stale stable-hub workflow claims', () => {
+test('README pins the local .formula/work contract and drops stale stable-hub workflow claims', () => {
   const readme = readFileSync(join(root, 'README.md'), 'utf8');
 
   assert.match(
     readme,
-    /the local `\.apex\/work\/` area for gitignored specs\/plans/,
-    'README quick start must promise the local .apex/work area for gitignored specs/plans',
+    /the local `\.formula\/work\/` area for gitignored specs\/plans/,
+    'README quick start must promise the local .formula/work area for gitignored specs/plans',
   );
   assert.match(
     readme,
-    /\/steepy-formula:init` - Initialize steepy-formula in your repo\.[\s\S]{0,250}the local `\.apex\/work\/` area for gitignored specs\/plans/,
-    'README quick start must tie init to the local .apex/work gitignored specs/plans promise',
+    /\/steepy-formula:init` - Initialize steepy-formula in your repo\.[\s\S]{0,250}the local `\.formula\/work\/` area for gitignored specs\/plans/,
+    'README quick start must tie init to the local .formula/work gitignored specs/plans promise',
   );
 
   for (const required of [
-    '.apex/work/',
+    '.formula/work/',
     'gitignored',
     'local work artifact',
   ]) {
@@ -502,9 +502,9 @@ test('RELEASE.md smoke test uses local gitignored apex work artifacts', () => {
   const release = readFileSync(join(root, 'RELEASE.md'), 'utf8');
 
   for (const required of [
-    '.apex/work/.gitignore',
-    '.apex/work/specs/',
-    '.apex/work/plans/',
+    '.formula/work/.gitignore',
+    '.formula/work/specs/',
+    '.formula/work/plans/',
   ]) {
     assert.ok(release.includes(required), `RELEASE.md smoke test must mention: ${required}`);
   }
@@ -792,7 +792,7 @@ test('COMMUNITY_SUBMISSION.md contains marketplace review copy and safety disclo
     '`claude-directory`',
     'five native harnesses',
     'Command-family effects matrix',
-    'writes the gitignored `.apex/work/` local work area',
+    'writes the gitignored `.formula/work/` local work area',
     'graph-first init creates no other `.apex/` files',
     'writes Claude Code agent and skill artifacts',
     'runs Node.js scripts from the plugin package',

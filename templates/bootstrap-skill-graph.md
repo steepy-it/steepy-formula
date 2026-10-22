@@ -36,8 +36,8 @@ Orientation comes from `steepy-formula hub-mode` and `steepy-formula context res
 
 For feature-shaped work, check where the task already sits in the steepy workflow chain and recommend the next command (advisory — each command is independently usable):
 
-- No spec for this task in `.apex/work/specs/` → recommend `/steepy-formula:brainstorm`.
-- A spec exists but no matching plan in `.apex/work/plans/` → recommend `/steepy-formula:plan`.
+- No spec for this task in `.formula/work/specs/` → recommend `/steepy-formula:brainstorm`.
+- A spec exists but no matching plan in `.formula/work/plans/` → recommend `/steepy-formula:plan`.
 - A plan exists but its tasks are not yet implemented → recommend `/steepy-formula:implement`.
 - Implementation is complete and unreviewed → recommend `/steepy-formula:review`.
 
@@ -90,7 +90,7 @@ in the verdict artifact. Never auto-assignment, never autonomy started silently.
 command) propose gear 4. On confirmation, interview the user on the goal contract fields — goal,
 surface, verifier (with explicit confirmation that it is deterministic), mode, metric-direction
 (if metric), budget, blast-radius (default: the surface's paths), notes — and write
-`.apex/work/loops/<YYYY-MM-DD>-<slug>/goal.md` with the verdict artifact (verdict + gear 4 +
+`.formula/work/loops/<YYYY-MM-DD>-<slug>/goal.md` with the verdict artifact (verdict + gear 4 +
 evidence) at its head. Fields already present (a partial `goal.md` and/or slash-command
 arguments passed through by the caller) are **confirmed, not re-asked**; only missing fields
 are interviewed. On refusal, fall back to the coverage × value gear (1–3). This branch may be
@@ -102,7 +102,7 @@ execution after the spec gate → gear 3 autopilot; otherwise → gear 3 manual.
 with no headless mode, autopilot is not offered (explicit degradation).
 
 **Verdict artifact:** record `verdict + gear + evidence` at the head of the task's spec under
-`.apex/work/`, or as a light one-line entry under `.apex/work/` when a gear-1 task produces no spec.
+`.formula/work/`, or as a light one-line entry under `.formula/work/` when a gear-1 task produces no spec.
 Downstream steepy commands read this artifact (see the workflow skills).
 
 ### Step 3 — Load the resolve layers
@@ -140,6 +140,6 @@ Summarize the task classification in one sentence, then hand off.
 
 ## Work-artifact boundary
 
-Do not ordinarily enumerate, search, or read under `.apex/work/**`.
+Do not ordinarily enumerate, search, or read under `.formula/work/**`.
 
 A workflow phase may consume only the exact work inputs named by an accepted handoff. A pathless workflow invocation may perform only bounded workflow-header recovery discovery. Exact paths or a broader work-area scope are permitted only when the user explicitly delimits them. This applies transitively to child agents: only the phase orchestrator interprets a handoff.

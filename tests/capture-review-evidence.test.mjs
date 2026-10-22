@@ -32,7 +32,7 @@ const CLEAN_GATE_ARGS = seedArgs(CLEAN_SEED);
 const RED_GATE_ARGS = seedArgs(RED_SEED);
 
 const scriptPath = new URL('../scripts/capture-review-evidence.mjs', import.meta.url);
-const EVIDENCE = '.apex/work/tasks/demo/evidence-report.md';
+const EVIDENCE = '.formula/work/tasks/demo/evidence-report.md';
 const GROUPS_SUPPORTED = process.platform === 'linux' || process.platform === 'darwin';
 
 function fixture() {
@@ -53,18 +53,18 @@ function nodeCommand(source) {
 test('work-path grammar admits only canonical task and loop review evidence reports', () => {
   assert.equal(classifyWorkPath(EVIDENCE).family, 'evidence');
   assert.equal(
-    classifyWorkPath('.apex/work/loops/2026-09-02-demo/evidence-report.md').family,
+    classifyWorkPath('.formula/work/loops/2026-09-02-demo/evidence-report.md').family,
     'evidence',
   );
-  assert.equal(classifyWorkPath('.apex/work/tasks/demo/review-report.md').family, 'review-report');
+  assert.equal(classifyWorkPath('.formula/work/tasks/demo/review-report.md').family, 'review-report');
   assert.equal(
-    classifyWorkPath('.apex/work/loops/2026-09-02-demo/review-report.md').family,
+    classifyWorkPath('.formula/work/loops/2026-09-02-demo/review-report.md').family,
     'review-report',
   );
   for (const path of [
-    '.apex/work/tasks/demo/evidence.txt',
-    '.apex/work/tasks/demo/nested/evidence-report.md',
-    '.apex/work/loops/demo/other.md',
+    '.formula/work/tasks/demo/evidence.txt',
+    '.formula/work/tasks/demo/nested/evidence-report.md',
+    '.formula/work/loops/demo/other.md',
   ]) {
     assert.throws(() => classifyWorkPath(path), /work path/u, path);
   }

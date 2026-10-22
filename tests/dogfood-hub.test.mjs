@@ -20,10 +20,10 @@
 // checkpoint). Since the Task 20 scaffold self-apply, the repo's own portable artifacts live on
 // disk as produced by `scripts/project-scaffold.mjs` in graph mode: the AGENTS.md spine, the
 // CLAUDE.md managed import channel, the per-mode bootstrap under `.agents/skills/`, its Claude
-// stub under `.claude/skills/`, and the per-surface claude/codex/opencode agent triads. `.apex/work/**`
+// stub under `.claude/skills/`, and the per-surface claude/codex/opencode agent triads. `.formula/work/**`
 // remains gitignored operational state: its tracked two-line .gitignore is retained (G2), but the
 // OpenCode adapter no longer depends on it — it registers project specialists only when the graph
-// binding `.formula/config.json` exists. The root .gitignore also ignores `/.apex/work/` (apex v1.0.0).
+// binding `.formula/config.json` exists. The root .gitignore also ignores `/.formula/work/` (apex v1.0.0).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -448,11 +448,10 @@ test('CLAUDE.md is the managed import channel for the AGENTS.md spine, never the
   assert.match(agents, /steepy-formula context resolve/, 'the imported spine points at the canonical resolver');
 });
 
-test('criterion 12: the archived Markdown hub is absent from normal reads (only .apex/work remains)', () => {
+test('criterion 12: the archived Markdown hub is absent from normal reads', () => {
   for (const f of ['_INDEX.md', 'conventions.md', 'glossary.md', 'testing-and-checklist.md', 'standards']) {
     assert.equal(existsSync(join(repoRoot, '.apex', f)), false, `.apex/${f} must be archived out of normal reads`);
   }
-  assert.equal(existsSync(join(repoRoot, '.apex', 'work')), true, '.apex/work stays as the gitignored operational state');
 });
 
 test('criterion 12: the session navigation layer points at the resolver, never the archived hub', () => {
@@ -475,15 +474,13 @@ test('criterion 12: the session navigation layer points at the resolver, never t
   }
 });
 
-test('the repo keeps .apex/work as gitignored operational state', () => {
-  const ignore = readFileSync(join(repoRoot, '.apex', 'work', '.gitignore'), 'utf8');
-  assert.equal(ignore, '*\n!.gitignore\n');
-});
-
-test('the repository ignores the entire local work tree from its root', () => {
-  // apex v1.0.0: local workflow artifacts must never enter release history.
-  assert.ok(readFileSync(join(repoRoot, '.gitignore'), 'utf8').split('\n').includes('/.apex/work/'),
-    'the repository must ignore the entire local work tree from its root');
+test('the repository ignores the local work tree and the legacy .apex area from its root', () => {
+  // Local workflow artifacts must never enter release history: `.formula/*` keeps everything but
+  // the committed binding local, and a leftover steepy-apex `.apex/` is never committed.
+  const lines = readFileSync(join(repoRoot, '.gitignore'), 'utf8').split('\n');
+  for (const line of ['.formula/*', '!.formula/config.json', '/.formula/work/', '/.apex/']) {
+    assert.ok(lines.includes(line), `the root .gitignore must carry '${line}'`);
+  }
 });
 
 test('terminal review evidence cannot report reviewed-clean when its owned graph gate is red', async () => {
@@ -493,7 +490,7 @@ test('terminal review evidence cannot report reviewed-clean when its owned graph
     const { file } = await buildSeed({ term: true });
     const receipt = await collectReviewEvidence({
       repoRoot: repo,
-      evidencePath: '.apex/work/loops/2026-09-04-red-hub/evidence-report.md',
+      evidencePath: '.formula/work/loops/2026-09-04-red-hub/evidence-report.md',
       testCommand: `${JSON.stringify(process.execPath)} -e ${JSON.stringify('process.exit(0)')}`,
       graphGateArgs: ['--port', 'memory', '--seed', file, '--project', SEED_PROJECT],
     });
@@ -665,8 +662,8 @@ test('stable documentation locks the context-efficient autopilot contract and ne
     const text = readFileSync(join(repoRoot, relativePath), 'utf8');
     assert.doesNotMatch(
       text,
-      /\]\([^)]*\.apex\/work\//,
-      `${relativePath} must not link stable documentation into local .apex/work artifacts`
+      /\]\([^)]*\.formula\/work\//,
+      `${relativePath} must not link stable documentation into local .formula/work artifacts`
     );
   }
 
@@ -775,7 +772,7 @@ test('init skill documents the persisted .formula/config.json binding and keeps 
 
 // v0.10.0 portable invariant, adapted for the graph-mode hub: stable Markdown (the
 // archived-hub successor surfaces — skills, templates, and the root instruction
-// docs) never links a concrete `.apex/work/**` artifact; the graph carries stable
+// docs) never links a concrete `.formula/work/**` artifact; the graph carries stable
 // knowledge and work artifacts stay unlinked local state.
 function stableMarkdownPaths(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -785,7 +782,7 @@ function stableMarkdownPaths(directory) {
   });
 }
 
-test('stable workflow Markdown never links a concrete .apex/work artifact', () => {
+test('stable workflow Markdown never links a concrete .formula/work artifact', () => {
   const surfaces = [
     join(repoRoot, 'skills'),
     join(repoRoot, 'templates'),
@@ -797,7 +794,7 @@ test('stable workflow Markdown never links a concrete .apex/work artifact', () =
     for (const path of stableMarkdownPaths(surface)) {
       assert.doesNotMatch(
         readFileSync(path, 'utf8'),
-        /\]\([^)]*\.apex\/work\//,
+        /\]\([^)]*\.formula\/work\//,
         `${path} must not link a concrete work artifact`,
       );
     }
@@ -805,7 +802,7 @@ test('stable workflow Markdown never links a concrete .apex/work artifact', () =
   for (const rootDoc of ['AGENTS.md', 'CLAUDE.md', 'README.md']) {
     assert.doesNotMatch(
       readFileSync(join(repoRoot, rootDoc), 'utf8'),
-      /\]\([^)]*\.apex\/work\//,
+      /\]\([^)]*\.formula\/work\//,
       `${rootDoc} must not link a concrete work artifact`,
     );
   }

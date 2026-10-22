@@ -21,7 +21,7 @@ export function assertSourcePath(path) {
     || path === '.git' || path.startsWith('.git/')) throw new Error('invalid literal source path');
   return path;
 }
-const included = (path) => path !== '.apex/work' && !path.startsWith('.apex/work/');
+const included = (path) => path !== '.formula/work' && !path.startsWith('.formula/work/');
 function git(root, ...args) { return execFileSync('git', args, { cwd: root, maxBuffer: 128 * 1024 * 1024 }); }
 function nulRecords(bytes) {
   if (bytes.length === 0) return [];

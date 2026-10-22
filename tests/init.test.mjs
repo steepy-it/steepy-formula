@@ -180,7 +180,7 @@ test('init Step 5 drives the structural-promotion helper, never a hand-built sce
 
   // the helper is the machine: structural input written under the gitignored work area
   assert.match(step5, /structural-promotion\.mjs/, 'the helper is invoked, its mapping never rebuilt agent-side');
-  assert.match(step5, /\.apex\/work\/init-structural\.json/, 'the structural input is a local, gitignored work artifact');
+  assert.match(step5, /\.formula\/work\/init-structural\.json/, 'the structural input is a local, gitignored work artifact');
   assert.match(step5, /createScenario/, 'the helper creates the draft through the core library');
   assert.match(step5, /Write `testCommand` ONLY for a surface whose verification Rule the human approved/,
     'the reachability judgment gates which surfaces carry a testCommand');
@@ -240,12 +240,12 @@ test('init interviews the git policy as a Rule and the per-surface verification 
     'the Check reachability judgment must be stated');
 });
 
-test('init creates a gitignored .apex/work area and never registers specs/plans sub-indexes', () => {
+test('init creates a gitignored .formula/work area and never registers specs/plans sub-indexes', () => {
   const text = readFileSync(join(root, 'skills', 'init', 'SKILL.md'), 'utf8');
-  assert.match(text, /\.apex\/work\/\.gitignore/);
+  assert.match(text, /\.formula\/work\/\.gitignore/);
   assert.match(text, /\*\n!\.gitignore/);
-  assert.match(text, /\.apex\/work\/specs\//);
-  assert.match(text, /\.apex\/work\/plans\//);
+  assert.match(text, /\.formula\/work\/specs\//);
+  assert.match(text, /\.formula\/work\/plans\//);
   assert.doesNotMatch(text, /templates\/specs-index\.md/);
   assert.doesNotMatch(text, /templates\/plans-index\.md/);
 });
@@ -305,7 +305,7 @@ test('init prepares the graph-mode governance after zero-conflict preview and be
   assert.deepEqual(input.documents, []);
   const flat = text.replace(/\s+/g, ' ');
   assert.match(flat, /Graph mode certifies no Markdown hub document/);
-  assert.match(flat, /\.apex\/work\/init\/.*governance-input\.json/);
+  assert.match(flat, /\.formula\/work\/init\/.*governance-input\.json/);
   assert.match(flat, /never write this input inside the completed run/i);
   assert.match(flat, /renderer step is skipped/i);
   assert.match(flat, /\.formula\/` is a reserved area of inception snapshots/);
@@ -320,7 +320,7 @@ test('init gives canonical receipt recovery precedence and keeps ordinary repair
   assert.match(flat, /ordinary repair is not certified/i);
   assert.match(flat, /Never exclude an entire provider directory/i);
   assert.match(flat, /verify-complete --repo-root <repo-root>/);
-  assert.match(flat, /Never list `\.apex\/inception\/` or read its document bodies for init/);
+  assert.match(flat, /Never list `\.formula\/inception\/` or read its document bodies for init/);
 });
 
 test('T11-R1 pending branch skips fresh work and applies a validated retained operation plan', () => {

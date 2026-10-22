@@ -77,7 +77,7 @@ more reason every port stays bound to `127.0.0.1`.
      and any initial Rules (Rules enter **only** through your explicit approval — never
      invented from stack detection);
    - after the gate, scaffolds only the disk-minimal harness assets: the gitignored
-     `.apex/work/` area, per-surface specialist agents, the project bootstrap skill, and the
+     `.formula/work/` area, per-surface specialist agents, the project bootstrap skill, and the
      root `CLAUDE.md`;
    - lands everything as one promotion scenario: `promotion preview` → your approval →
      `promotion apply` (interactive confirm) → `graph validate` + `context resolve` green.
@@ -180,7 +180,7 @@ steepy-formula graph validate --project <id>                            # final 
 - **Integrity is verifiable by construction.** The artifact is signed (digest) and the
   Revision trail is hash-chained: `graph validate` on the restored copy detects any
   out-of-band edit made to the file in transit.
-- **What does not travel:** `.apex/work/` (gitignored local specs and plans — disposable by
+- **What does not travel:** `.formula/work/` (gitignored local specs and plans — disposable by
   design), your local password, and engine-native backup files (ArcadeDB-specific; prefer the
   portable export across machines).
 

@@ -21,22 +21,22 @@ autopilot mode: a human answers its questions and approves the project.
 
 ## Boundaries
 
-- Work only inside `.apex/inception/` and the application's own files. Never create
+- Work only inside `.formula/inception/` and the application's own files. Never create
   hub documents, specialist adapters, a project bootstrap, or a graph
   binding (`steepy-formula graph init`, `.formula/`): those belong to the `init` skill after
-  completion. `.formula/` is a reserved area, like `.apex/work/`: never an application path.
-- One run per repository, at `.apex/inception/run.json`. Only the helper mutates the descriptor,
+  completion. `.formula/` is a reserved area, like `.formula/work/`: never an application path.
+- One run per repository, at `.formula/inception/run.json`. Only the helper mutates the descriptor,
   effect records, frozen evidence, snapshots, approvals, checkpoints and completion. Never edit
   these records or adopt an unbound file as evidence. Runs use the v2 descriptor; any other schema
   is an unsupported run format that every helper command refuses, with no migration, archive or
   automatic restart.
-- The first run write is `.apex/inception/.gitignore`, written by `start`. Never create or edit the
+- The first run write is `.formula/inception/.gitignore`, written by `start`. Never create or edit the
   root `.gitignore` for this area; an approved application generator may change it as an observed
   application effect.
 - Working documents and coordinator JSON inputs belong under `project/`, research reports under
   `research/`, and part/check reports under `bootstrap/`. The helper owns `units/`, `approvals/`,
   `snapshots/`, `checkpoints/`, `effects/`, `reconciliations/`, `resume-notes/`, all verification
-  evidence/results/reports, and archive records. `.apex/work/` is never a run input.
+  evidence/results/reports, and archive records. `.formula/work/` is never a run input.
 
 ## Helper commands
 
@@ -141,7 +141,7 @@ stopped but work is incomplete, non-capture closure requires this first exact ev
 
 <!-- example:close-incomplete -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs unit close-incomplete --repo-root . --id interrupted --reason=Writer-stopped --evidence .apex/inception/bootstrap/stopped.json
+node <engine-root>/scripts/inception-state.mjs unit close-incomplete --repo-root . --id interrupted --reason=Writer-stopped --evidence .formula/inception/bootstrap/stopped.json
 ```
 
 This is an explicit observation trust boundary: the helper validates identity/shape and freezes the
@@ -154,7 +154,7 @@ lineage; write the new registration at the declared retry input path, then:
 
 <!-- example:retry-begin -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id retry --input .apex/inception/bootstrap/retry-input.json --previous-unit interrupted
+node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id retry --input .formula/inception/bootstrap/retry-input.json --previous-unit interrupted
 ```
 
 Never infer previous-unit from recency or kind. `publish resume --reservation <id>` settles only
@@ -236,7 +236,7 @@ node <engine-root>/scripts/inception-state.mjs start --repo-root . --harness cod
 JSON
 ```
 
-**Resume:** use `inspect`, `.apex/inception/run.json`, and only the exact refs it binds; no directory
+**Resume:** use `inspect`, `.formula/inception/run.json`, and only the exact refs it binds; no directory
 listing, sibling/archived run discovery, or most-recent selection. The last note is not authority;
 notes only explain state established by the descriptor and evidence. Run this before any new writer:
 
@@ -275,7 +275,7 @@ node <engine-root>/scripts/inception-state.mjs resume-check --repo-root .
 ### Step 2 — Reconnaissance
 
 Begin a decision unit for the dialogue and exact reconnaissance output before work.
-Find out what exists and what the user wants. Create `.apex/inception/project/` as an ordinary
+Find out what exists and what the user wants. Create `.formula/inception/project/` as an ordinary
 directory if it is absent.
 
 1. Identify every determining material: code, images, exported designs, documents, links. Read
@@ -284,7 +284,7 @@ directory if it is absent.
 2. Record each element as **real** or **simulated**: mocks, stub calls, and hard-coded data stay
    simulations even when the screen looks complete.
 3. Ask the user what the materials do not answer, with the dialogue rules below.
-4. Write the reconnaissance record, `.apex/inception/project/reconnaissance.md`. It holds:
+4. Write the reconnaissance record, `.formula/inception/project/reconnaissance.md`. It holds:
    - product goals and main flows;
    - what works, what is fragile, and known defects;
    - materials to reuse and behaviors to preserve;
@@ -334,7 +334,7 @@ Ask with the Step 2 dialogue rules, and:
 - No foundational choice appears for the first time at final approval.
 
 Every significant decision enters the decision register,
-`.apex/inception/project/decision-register.md`. It is one table:
+`.formula/inception/project/decision-register.md`. It is one table:
 
 | ID | Category | Decision | Reason | Alternatives | Confirmed |
 |---|---|---|---|---|---|
@@ -360,7 +360,7 @@ Every foundational choice (runtime, framework, build tooling, generators, main d
 official source, an explicit version, a verification date, its support status, and a compatibility
 check. Versions you remember are not verified versions. Without network access, ask for official
 sources or block. Begin a research unit before investigation/experiments/child dispatch, with exact
-inputs and one report `.apex/inception/research/<unit-id>.md`. Use `research-prompt.md`, one child
+inputs and one report `.formula/inception/research/<unit-id>.md`. Use `research-prompt.md`, one child
 at a time, or do the same bounded work inline and record the degradation. Experiments stay in a
 new OS temporary directory outside the application repository and never become bootstrap silently.
 Review the complete report and observed diff before finishing the research unit.
@@ -376,7 +376,7 @@ and record it without repeating confirmed answers:
 In a decision unit, write the project documents and decision-register, including materials and
 simulations, constraints, components/contracts, sources/versions, reuse and preserved behaviors,
 one representative path, deploy scope and limits. Other flows remain future; never start them as
-a backlog. Write `.apex/inception/project/verification-contract.json` before human approval.
+a backlog. Write `.formula/inception/project/verification-contract.json` before human approval.
 The contract assigns automatic, manual or both to each check; subject, procedure, expected outcome,
 evidenceRequired, required boolean and applicable command/procedures are explicit. Declare roots
 (a root that bootstrap creates later may be absent at approval; it holds no files until then),
@@ -407,12 +407,12 @@ its unit; obtain each Ref from the actual existing input bytes (none in this ill
 
 <!-- example:project-unit -->
 ```json
-{"kind":"decision","inputs":[],"outputs":[{"path":".apex/inception/project/decision-register.md","role":"decision"},{"path":".apex/inception/project/verification-contract.json","role":"decision"},{"path":".apex/inception/project/project-report.md","role":"report"}],"allowedPaths":[]}
+{"kind":"decision","inputs":[],"outputs":[{"path":".formula/inception/project/decision-register.md","role":"decision"},{"path":".formula/inception/project/verification-contract.json","role":"decision"},{"path":".formula/inception/project/project-report.md","role":"report"}],"allowedPaths":[]}
 ```
 
 <!-- example:project-begin -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id project --input .apex/inception/project/project-unit.json
+node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id project --input .formula/inception/project/project-unit.json
 ```
 
 Write the contract at the canonical path and the full project report using this unit's delimiters:
@@ -435,7 +435,7 @@ illustration only, never substitute it for the user's answer:
 
 <!-- example:approve -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs approve --repo-root . --statement=Approved-project-and-contract --document .apex/inception/project/decision-register.md --contract .apex/inception/project/verification-contract.json
+node <engine-root>/scripts/inception-state.mjs approve --repo-root . --statement=Approved-project-and-contract --document .formula/inception/project/decision-register.md --contract .formula/inception/project/verification-contract.json
 ```
 
 Repeat `--document` for **all current project documents**, including any design/project prose beyond
@@ -453,7 +453,7 @@ return to approval first (add `--git-commits allowed|forbidden` for a policy cha
 unit, update documents/contract/register, finish, obtain the human decision and approve the full
 current set again. New approval invalidates old cycles even with identical application bytes.
 After an approval, register a new decision document (a `decision` output under
-`.apex/inception/project/`) only in the approval phase; elsewhere `unit begin` refuses it. Until the
+`.formula/inception/project/`) only in the approval phase; elsewhere `unit begin` refuses it. Until the
 latest approval covers every registered decision document, `resume-check` reports an approval
 divergence and forward transitions, verification commands and `verify-complete` refuse, naming the
 path.
@@ -471,7 +471,7 @@ context is paid on each turn. The note summarizes state and never grants a capab
 ### Step 7 — Bootstrap
 
 Build one representative path in dependency order: a contract's producer before consumers. Each
-part owns exact application paths and one `.apex/inception/bootstrap/<unit-id>.md` report. Begin a
+part owns exact application paths and one `.formula/inception/bootstrap/<unit-id>.md` report. Begin a
 bootstrap unit before dispatch or application writes, bind approved inputs, and supply unit ID,
 exact inputs/output, allowed paths and correlation in `bootstrap-part-prompt.md`. One child at a
 time; inline uses the same contract and records degradation. Child never mutates descriptor,
@@ -505,12 +505,12 @@ Write the intent input at `bootstrap/generate-intent.json` before execution:
 
 <!-- example:effect-intent-input -->
 ```json
-{"id":"generate","kind":"generator","summary":"Generate the assigned fixture file","command":{"executable":"node","args":["-e","require('node:fs').writeFileSync('generated.txt','generated\\n')"],"cwd":".","successExitCodes":[0]},"procedure":null,"scope":["generated.txt"],"authorization":null,"correlation":[{"name":"operation","value":"generate-1"}],"observation":{"procedure":"Read the generated file","expected":"Exact generated newline bytes","evidencePaths":[".apex/inception/bootstrap/generate-observation.json"]}}
+{"id":"generate","kind":"generator","summary":"Generate the assigned fixture file","command":{"executable":"node","args":["-e","require('node:fs').writeFileSync('generated.txt','generated\\n')"],"cwd":".","successExitCodes":[0]},"procedure":null,"scope":["generated.txt"],"authorization":null,"correlation":[{"name":"operation","value":"generate-1"}],"observation":{"procedure":"Read the generated file","expected":"Exact generated newline bytes","evidencePaths":[".formula/inception/bootstrap/generate-observation.json"]}}
 ```
 
 <!-- example:effect-intent -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs effect intent --repo-root . --id generate --input .apex/inception/bootstrap/generate-intent.json
+node <engine-root>/scripts/inception-state.mjs effect intent --repo-root . --id generate --input .formula/inception/bootstrap/generate-intent.json
 ```
 
 Execute the exact intent command once, then observe the file bytes before writing
@@ -525,12 +525,12 @@ Write `bootstrap/generate-outcome.json` with the same observed result/correlatio
 
 <!-- example:effect-outcome-input -->
 ```json
-{"result":"succeeded","observed":"The file contains exact generated newline bytes","correlation":[{"name":"operation","value":"generate-1"}],"evidence":[".apex/inception/bootstrap/generate-observation.json"]}
+{"result":"succeeded","observed":"The file contains exact generated newline bytes","correlation":[{"name":"operation","value":"generate-1"}],"evidence":[".formula/inception/bootstrap/generate-observation.json"]}
 ```
 
 <!-- example:effect-outcome -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs effect outcome --repo-root . --id generate --input .apex/inception/bootstrap/generate-outcome.json
+node <engine-root>/scripts/inception-state.mjs effect outcome --repo-root . --id generate --input .formula/inception/bootstrap/generate-outcome.json
 ```
 
 The general sequence is:
@@ -584,7 +584,7 @@ For the illustration only, write `project/environment.json` as follows:
 
 <!-- example:verification-begin -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs verification begin --repo-root . --environment .apex/inception/project/environment.json --reason=Bootstrap-ready
+node <engine-root>/scripts/inception-state.mjs verification begin --repo-root . --environment .formula/inception/project/environment.json --reason=Bootstrap-ready
 ```
 
 Read the returned `cycle.path`; never construct a record number. It binds approval, contract,
@@ -659,7 +659,7 @@ Write a JSON array of descriptive limits at `project/limits.json` (for example `
 
 <!-- example:summarize -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs verification summarize --repo-root . --cycle <cycle> --limits .apex/inception/project/limits.json
+node <engine-root>/scripts/inception-state.mjs verification summarize --repo-root . --cycle <cycle> --limits .formula/inception/project/limits.json
 ```
 
 The helper derives immutable summary/report from accepted evidence. Do not hand-edit outcomes,
@@ -779,12 +779,12 @@ sequence with kind research). Write `project/recon-input.json` first:
 
 <!-- example:blocking-unit -->
 ```json
-{"kind":"decision","inputs":[],"outputs":[{"path":".apex/inception/project/recon-report.md","role":"report"}],"allowedPaths":[]}
+{"kind":"decision","inputs":[],"outputs":[{"path":".formula/inception/project/recon-report.md","role":"report"}],"allowedPaths":[]}
 ```
 
 <!-- example:blocking-begin -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id recon --input .apex/inception/project/recon-input.json
+node <engine-root>/scripts/inception-state.mjs unit begin --repo-root . --id recon --input .formula/inception/project/recon-input.json
 ```
 
 If a required input is missing/unreadable, stop the incomplete reconnaissance and record the reason
@@ -802,7 +802,7 @@ Close the stopped unit incomplete, preserving any uncertain effects or unaccepte
 
 <!-- example:blocking-close -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs unit close-incomplete --repo-root . --id recon --reason=Required-material-unreadable --evidence .apex/inception/project/recon-stopped.json
+node <engine-root>/scripts/inception-state.mjs unit close-incomplete --repo-root . --id recon --reason=Required-material-unreadable --evidence .formula/inception/project/recon-stopped.json
 ```
 
 Read the closure response and descriptor; require activeUnit null, not completed work. Only then:
@@ -814,7 +814,7 @@ node <engine-root>/scripts/inception-state.mjs transition --repo-root . --to blo
 
 <!-- example:blocking-note -->
 ```bash
-node <engine-root>/scripts/inception-state.mjs resume-note --repo-root . --next=obtain-readable-required-material --need .apex/inception/project/recon-stopped.json
+node <engine-root>/scripts/inception-state.mjs resume-note --repo-root . --next=obtain-readable-required-material --need .formula/inception/project/recon-stopped.json
 ```
 
 The note describes how to obtain the missing material, not authority to retry the unit. Preserve
@@ -826,4 +826,4 @@ Only an explicit user abandon authorizes `abandon --reason=<text>`. First settle
 the helper archives intact, deleting nothing. An interrupted archive resumes via
 `abandon --repo-root . --resume` using canonical intent and exact children, even after run.json has
 moved. Never scan abandoned runs. A verified complete archive is not automatic restart permission:
-start a distinct run only on an explicit user request. Never delete `.apex/inception/`.
+start a distinct run only on an explicit user request. Never delete `.formula/inception/`.

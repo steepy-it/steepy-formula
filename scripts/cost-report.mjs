@@ -1,7 +1,7 @@
 // C1 — harness-neutral cost report. A read-only aggregator/reporter that reads
 // the two drive channels and emits one report:
 //
-//   headless    `.apex/work/tasks/<spec>/resource-usage.jsonl` (the autopilot
+//   headless    `.formula/work/tasks/<spec>/resource-usage.jsonl` (the autopilot
 //               conductor's per-dispatch usage ledger) plus the per-attempt
 //               `phase-<n>-attempt-<m>.raw.jsonl` raw event stream for volume;
 //   interactive session records located via the C2 descriptor
@@ -830,7 +830,7 @@ function phaseName(phaseNumber) {
   return PHASES[phaseNumber - 1] ?? `phase-${phaseNumber}`;
 }
 
-// Reads the headless channel from `<repo-root>/.apex/work/tasks/**`. Returns
+// Reads the headless channel from `<repo-root>/.formula/work/tasks/**`. Returns
 // `{ resourceUsageText: null }` when no ledger exists or it is unreadable. The
 // walk itself (does the tasks dir exist / can it be listed) is the only thing
 // that blanks the whole channel; each spec dir underneath gets its own
@@ -843,7 +843,7 @@ function phaseName(phaseNumber) {
 // or artifact is rejected instead of read, so zero bytes are read from outside
 // the repository however the tasks tree is shaped.
 function readHeadlessChannel(repoRoot) {
-  const tasksDir = join(repoRoot, '.apex', 'work', 'tasks');
+  const tasksDir = join(repoRoot, '.formula', 'work', 'tasks');
   const rawStreams = [];
   let resourceUsageText = null;
   let specNames;
@@ -856,7 +856,7 @@ function readHeadlessChannel(repoRoot) {
   let foundLedger = false;
   for (const specName of specNames) {
     const specDir = join(tasksDir, specName);
-    const entryPrefix = `.apex/work/tasks/${specName}`;
+    const entryPrefix = `.formula/work/tasks/${specName}`;
     try {
       if (!lstatSync(specDir).isDirectory()) continue;
       let ledgerStat = null;

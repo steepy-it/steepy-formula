@@ -6,17 +6,17 @@ import { join, dirname } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { beginTask, recordTaskResult, inspectTaskResult, projectTaskResults, verifyTaskResults, parseTaskResultProjection } from '../scripts/task-results.mjs';
 
-const dir = '.apex/work/tasks/run';
+const dir = '.formula/work/tasks/run';
 const indexPath = `${dir}/task-result-index.md`;
 const state = `${dir}/task-1-execution-1`;
-const config = { runId: 'test-run', attempt: 1, task: '1', execution: 1, role: 'implementer', report: `${dir}/task-1-report.md`, planPath: '.apex/work/plans/run.md' };
+const config = { runId: 'test-run', attempt: 1, task: '1', execution: 1, role: 'implementer', report: `${dir}/task-1-report.md`, planPath: '.formula/work/plans/run.md' };
 function fixture(fn) {
   const root = mkdtempSync(join(tmpdir(), 'steepy-task-results-'));
   const git = (...args) => execFileSync('git', args, { cwd: root });
   const put = (path, text) => { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), text); };
   try {
     git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.test');
-    put('.gitignore', '.apex/work/\n'); put('source', 'baseline'); git('add', '.'); git('commit', '-qm', 'baseline');
+    put('.gitignore', '.formula/work/\n'); put('source', 'baseline'); git('add', '.'); git('commit', '-qm', 'baseline');
     put(config.planPath, '# Plan\nTask 1 implement source\n'); put(indexPath, '# Index\nReviewer gate Task 1: retained\n');
     return fn({ root, git, put });
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -249,7 +249,7 @@ test('receipt replay binds source, raw response, closed schemas, generated proje
 });
 
 test('discovery persists through fixes, JSON semantics work, and only canonical plan lifecycle may change', () => fixture(({ root, put }) => {
-  const plan = '<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: .apex/work/specs/run.md\nconsumed-by: none\n-->\n# Plan\n';
+  const plan = '<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: .formula/work/specs/run.md\nconsumed-by: none\n-->\n# Plan\n';
   put(config.planPath, plan);
   beginTask(root, state, { ...config, format: 'json' }); put(config.report, 'discovery:unplanned details');
   const raw = JSON.stringify({ status: 'DONE_WITH_CONCERNS', artifact: config.report, signals: ['discovery:unplanned'] });

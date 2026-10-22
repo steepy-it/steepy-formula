@@ -36,9 +36,9 @@ const cliPath = join(repoRoot, 'scripts', 'formula', 'cli.mjs');
 // `label` names the test (default: the basename) where one script has several rows.
 const REFUSING_SCRIPTS = [
   // Read-only verification still refuses: the refusal fires right after parse for every mode.
-  { script: 'scripts/autopilot-context.mjs', args: (root) => ['--verify-plan', '--repo-root', root, '--plan', '.apex/work/plans/topic.md'] },
+  { script: 'scripts/autopilot-context.mjs', args: (root) => ['--verify-plan', '--repo-root', root, '--plan', '.formula/work/plans/topic.md'] },
   // The conductor CLI refuses before its spec checks, so no spec needs to exist.
-  { script: 'scripts/autopilot.mjs', args: () => ['.apex/work/specs/topic.md'] },
+  { script: 'scripts/autopilot.mjs', args: () => ['.formula/work/specs/topic.md'] },
   // The CLAUDE.md renderer refuses before it writes; its diagnostics carry the `steepy ` prefix.
   {
     script: 'scripts/render-claude-md.mjs',
@@ -51,7 +51,7 @@ const REFUSING_SCRIPTS = [
     script: 'scripts/loop-engineer.mjs',
     prefix: 'loop controller [MIGRATE_REQUIRED]',
     args: (root) => [
-      '--repo-root', root, '--goal', '.apex/work/loops/2026-10-21-topic/goal.md', '--harness', 'pi',
+      '--repo-root', root, '--goal', '.formula/work/loops/2026-10-21-topic/goal.md', '--harness', 'pi',
       '--commit-authorized', '--graph-target', 'apex:demo-project:surface:scripts',
     ],
   },
@@ -67,7 +67,7 @@ const REFUSING_SCRIPTS = [
   {
     script: 'scripts/inception-governance.mjs',
     label: 'inception-governance prepare',
-    args: (root) => ['prepare', '--repo-root', root, '--input', '.apex/work/init/input.json'],
+    args: (root) => ['prepare', '--repo-root', root, '--input', '.formula/work/init/input.json'],
   },
   // The project planner refuses after its arg parse and before it reads the model, so no model
   // file needs to exist; `--apply` proves the refusal precedes any scaffold write.
@@ -79,7 +79,7 @@ const REFUSING_SCRIPTS = [
     script: 'scripts/capture-review-evidence.mjs',
     prefix: 'steepy capture-review-evidence',
     args: (root) => [
-      '--repo-root', root, '--evidence', '.apex/work/tasks/demo/evidence-report.md',
+      '--repo-root', root, '--evidence', '.formula/work/tasks/demo/evidence-report.md',
       '--test-command', 'touch ran-surface-test', '--gate-command', 'true',
     ],
   },
@@ -92,11 +92,11 @@ const REFUSING_SCRIPTS = [
   // The autopilot task-result and reviewer-response helpers refuse before any work-area read or write.
   {
     script: 'scripts/task-results.mjs',
-    args: (root) => ['--repo-root', root, '--action', 'inspect', '--state', '.apex/work/tasks/topic/task-1-execution-1.json'],
+    args: (root) => ['--repo-root', root, '--action', 'inspect', '--state', '.formula/work/tasks/topic/task-1-execution-1.json'],
   },
   {
     script: 'scripts/reviewer-response.mjs',
-    args: (root) => ['--repo-root', root, '--action', 'inspect', '--state', '.apex/work/tasks/topic/review-1.json'],
+    args: (root) => ['--repo-root', root, '--action', 'inspect', '--state', '.formula/work/tasks/topic/review-1.json'],
   },
   // The structural draft helper refuses from the cwd before its input read or any engine connection.
   {
@@ -257,7 +257,7 @@ test('migrate state: applyProjectScaffold refuses with exitCode 25 before the pl
 
 test('migrate state: runLoopController refuses with MIGRATE_REQUIRED before its dependency checks', async () => {
   await assertLibraryRefuses(
-    (root) => runLoopController('.apex/work/loops/2026-10-21-topic/goal.md', { repoRoot: root }),
+    (root) => runLoopController('.formula/work/loops/2026-10-21-topic/goal.md', { repoRoot: root }),
     (error) => {
       assert.equal(error.code, 'MIGRATE_REQUIRED');
       assert.equal(error.message, `loop controller [MIGRATE_REQUIRED]: ${MIGRATE_REFUSAL_MESSAGE}`);

@@ -1,5 +1,5 @@
 // Structural canary suite (spec "Cross-harness canary criteria", CI-testable half of
-// criteria 1-5/9 — .apex/work/specs/2026-07-14-native-multi-harness-plugins.md).
+// criteria 1-5/9 — .formula/work/specs/2026-07-14-native-multi-harness-plugins.md).
 //
 // Without any live harness installed, proves the engine is structurally installable
 // and runnable anywhere: engine scripts resolve through the literal skill-relative

@@ -13,7 +13,7 @@ const SAFE_PATH_CHARS = /^[A-Za-z0-9.@_/-]+$/;
 
 // These repository entries are explicit mounts, including external hub/provider
 // storage. Descendant links remain subject to each caller's ordinary-file checks.
-export const PROJECT_MOUNTS = ['.apex', '.agents', '.claude', '.codex', '.opencode', 'AGENTS.md', 'CLAUDE.md'];
+export const PROJECT_MOUNTS = ['.formula', '.agents', '.claude', '.codex', '.opencode', 'AGENTS.md', 'CLAUDE.md'];
 
 export function bindProjectMount(root, artifactPath) {
   const [name, ...rest] = artifactPath.split('/');
@@ -35,16 +35,16 @@ export function bindProjectMount(root, artifactPath) {
   if (directory ? !stat.isDirectory() : !stat.isFile()) {
     throw new Error(`symlink mount ${name} has wrong target type`);
   }
-  if (name !== '.apex') {
+  if (name !== '.formula') {
     // Provider/instruction mounts may not physically enter a local gitignored area.
     for (const area of ['work', 'inception']) {
       let excluded;
-      try { excluded = realpathSync.native(join(root, '.apex', area)); }
+      try { excluded = realpathSync.native(join(root, '.formula', area)); }
       catch (error) { if (error.code !== 'ENOENT') throw error; }
       if (excluded) {
         const rel = relative(excluded, physical);
         if (rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))) {
-          throw new Error(`symlink mount ${name} enters excluded .apex/${area}`);
+          throw new Error(`symlink mount ${name} enters excluded .formula/${area}`);
         }
       }
     }
