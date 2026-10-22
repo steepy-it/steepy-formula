@@ -60,15 +60,15 @@ async function withDogfoodGraph(fn) {
   }
 }
 
-test('the dogfood export is the repo graph: head r20, B4-clean, chain intact', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
+test('the dogfood export is the repo graph: head r21, B4-clean, chain intact', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
   withDogfoodGraph(async (port) => {
     const validation = await validateGraph(port, { projectId: PROJECT });
     assert.equal(validation.ok, true, `migrated graph must validate clean: ${validation.violations.map((v) => v.message).join('; ')}`);
     assert.deepEqual(validation.violations, []);
 
     const chain = await readChain(port, { projectId: PROJECT });
-    assert.equal(chain.headRevision, qid('revision:r20'));
-    assert.equal(chain.revisions.length, 20);
+    assert.equal(chain.headRevision, qid('revision:r21'));
+    assert.equal(chain.revisions.length, 21);
     const verdict = await verifyChain(port, { projectId: PROJECT });
     assert.equal(verdict.ok, true, `the Revision chain must replay clean: ${JSON.stringify(verdict.violations)}`);
 
@@ -217,7 +217,7 @@ test('the apex v1.2.0 knowledge is promoted and the superseded rules are out of 
     assert.match(certify.properties.statement, /empty Markdown document set/);
     assert.match(certify.properties.statement, /init-provenance\.json/);
     const source = skills.get(qid('rule:discovery-inception-source-lands-through-one-graph-promotion'));
-    assert.match(source.properties.statement, /only in graph mode/);
+    assert.match(source.properties.statement, /only for a `complete` `steepy-inception-run\/v2` run/);
     assert.match(source.properties.statement, /one promotion scenario `inception-<runId>`/);
     const manual = skills.get(qid('rule:gear-2-short-circuits-to-implement'));
     assert.match(manual.properties.statement, /mutually exclusive/);
@@ -239,6 +239,47 @@ test('the apex v1.2.0 knowledge is promoted and the superseded rules are out of 
     }
     assert.ok(!scripts.has(qid('rule:prior-canonical-recognition-is-exact')), 'the superseded cohort rule is out of operational context');
     assert.equal(byId.get(qid('skill:inception'))?.properties?.status, 'active');
+  }));
+
+// graph-only promotion (r21): one graph-only Rule replaces the Markdown linter, Stop hook and
+// core/leaf-standard rules; the rules that carried a legacy branch state the graph-only rule alone.
+test('the graph-only rule is promoted and the Markdown-hub rules are out of context (r21)', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
+  withDogfoodGraph(async (port) => {
+    const rulesFor = async (surface) => {
+      const resolved = await resolveContext(port, { projectId: PROJECT, targets: [qid(`surface:${surface}`)] });
+      assert.equal(resolved.ok, true, JSON.stringify(resolved));
+      return new Map(resolved.context.rules.map((r) => [r.id, r]));
+    };
+    const served = new Map();
+    for (const surface of ['project', 'scripts', 'templates', 'skills']) {
+      for (const [id, rule] of await rulesFor(surface)) served.set(id, rule);
+    }
+    const graphOnly = served.get(qid('rule:formula-is-graph-only-a-steepy-apex-hub-is-migration-input-only'));
+    assert.ok(graphOnly, 'the graph-only rule must be served');
+    assert.match(graphOnly.properties.statement, /`\.apex\/_INDEX\.md`[\s\S]*`migrate`[\s\S]*`graph-migrate`/);
+    assert.match(graphOnly.properties.statement, /the coherence gate is `steepy-formula graph validate`/);
+
+    const curated = await withTransaction(port, (tx) => tx.listNodes({ namespace: 'curated' }));
+    const byId = new Map(curated.map((node) => [node.id, node]));
+    const supersedes = await withTransaction(port, (tx) => tx.listEdges({ namespace: 'curated' }));
+    for (const retired of ['rule:keep-the-hub-green-node-scripts-validate-hub-mjs', 'rule:validate-hub-mjs',
+      'rule:scripts-validate-hub-mjs-exits-0-coherent-no-hub-or-1-violations', 'rule:scripts-validate-hub-mjs-exits-only-0-or-1',
+      'rule:scripts-the-stop-hook', 'rule:templates-the-generated-markdown', 'rule:load-semantics']) {
+      assert.equal(byId.get(qid(retired))?.properties?.status, 'superseded', `${retired} must be superseded at r21`);
+      assert.ok(supersedes.some((edge) => edge.type === 'SUPERSEDES' && edge.fromId === graphOnly.id && edge.toId === qid(retired)),
+        `the graph-only rule must SUPERSEDE ${retired}`);
+      assert.ok(!served.has(qid(retired)), `${retired} is out of operational context`);
+    }
+
+    for (const rewritten of ['rule:specialist-adapters-orient-through-the-declared-hub-mode', 'rule:gear-4-runs-only-through-the-packaged-controller',
+      'rule:scaffold-repair-recognizes-only-current-or-own-legacy-renderings', 'rule:review-evidence-capture-is-deterministic-and-receipt-bounded',
+      'rule:discovery-inception-source-lands-through-one-graph-promotion', 'rule:inception-is-a-pre-hub-run-outside-the-chain']) {
+      const rule = served.get(qid(rewritten));
+      assert.ok(rule, `${rewritten} must be served`);
+      assert.doesNotMatch(rule.properties.statement, /legacy|validate-hub|_INDEX\.md|routing table|graph mode/i, `${rewritten} states the graph-only rule alone`);
+    }
+    assert.doesNotMatch(byId.get(qid('term:code-rendered-agent-rendered-template')).properties.ext_v1_definition,
+      /legacy|new-surface\.mjs|surface-standard|_INDEX\.md|routing-row/);
   }));
 
 test('the migrated graph serves representative context (by path and by target)', { skip: DOGFOOD_CHECKPOINT_SKIP }, () =>
