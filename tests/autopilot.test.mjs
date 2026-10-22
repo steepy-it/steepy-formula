@@ -901,7 +901,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
     writeFileSync(join(dir, '.gitignore'), '.formula/work/\n');
     // A project model pin is committed config, not work in progress: the
     // fresh-run preflight demands a clean tree, so it joins the baseline.
-    const trackedPaths = ['.gitignore', '.apex'];
+    const trackedPaths = ['.gitignore', '.formula'];
     if (opencodeModel !== undefined) {
       // `opencode.json` is the filename an opencode install actually reads at
       // the project root — the fixture must pin the way a real user does.
@@ -911,8 +911,8 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
       );
       trackedPaths.push(opencodeConfig);
     }
-    mkdirSync(join(dir, '.apex'), { recursive: true });
-    writeFileSync(join(dir, '.apex', '.gitkeep'), '');
+    mkdirSync(join(dir, '.formula'), { recursive: true });
+    writeFileSync(join(dir, '.formula', '.gitkeep'), '');
     execFileSync('git', ['add', ...trackedPaths], { cwd: dir });
     execFileSync('git', ['commit', '-q', '-m', 'baseline'], { cwd: dir });
     mkdirSync(join(dir, '.formula', 'work', 'specs'), { recursive: true });
@@ -4260,6 +4260,7 @@ if (process.argv[2] === '--version') {
       try {
         // The untracked hub file also dirties the tree: exit 25 (not the dirty-tree 1) proves
         // the refusal comes before every preflight.
+        mkdirSync(join(run.dir, '.apex'));
         writeFileSync(join(run.dir, '.apex', '_INDEX.md'), '# Markdown Hub\n');
         const { code, out, err } = await drive(run, {}, {
           commandFor: (harness, prompt) => {
@@ -4576,9 +4577,15 @@ describe('autopilot main(argv)', () => {
   }
 
   it('exits 1 when the spec path does not exist', async () => {
-    const { code, err } = await captured(['/nonexistent/spec-does-not-exist.md']);
-    assert.equal(code, 1);
-    assert.match(err, /spec-does-not-exist\.md/);
+    // An empty temp cwd: the CLI must not read the developer's own checkout.
+    const dir = mkdtempSync(join(tmpdir(), 'steepy-autopilot-'));
+    try {
+      const { code, err } = await captured(['/nonexistent/spec-does-not-exist.md'], { cwd: dir });
+      assert.equal(code, 1);
+      assert.match(err, /spec-does-not-exist\.md/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('runs the conductor in the given cwd, which refuses a manual-drive spec (no spawn)', async () => {

@@ -842,9 +842,11 @@ test('delayed stale contender cannot displace a newly published canonical lock',
 });
 
 test('strict CLI refuses unsupported runners and malformed resume pairs without inline fallback', async () => {
+  // A temp repo root: the CLI must not read the developer's own checkout.
+  const root = fixture();
   const writes = [];
   const status = await main([
-    '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
+    '--repo-root', root, '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
     '--graph-target', GRAPH_TARGET,
   ], {
     stdout: { write: (value) => writes.push(String(value)) },
@@ -854,16 +856,16 @@ test('strict CLI refuses unsupported runners and malformed resume pairs without 
   assert.match(writes.join(''), /runner-unavailable/u);
 
   assert.equal(await main([
-    '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized', '--resume',
+    '--repo-root', root, '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized', '--resume',
     '--graph-target', GRAPH_TARGET,
   ], { stdout: { write() {} }, stderr: { write() {} } }), 2);
   assert.equal(await main([
-    '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized', '--ledger', LEDGER_PATH,
+    '--repo-root', root, '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized', '--ledger', LEDGER_PATH,
     '--graph-target', GRAPH_TARGET,
   ], { stdout: { write() {} }, stderr: { write() {} } }), 2);
 
   const singletonFlags = [
-    ['--repo-root', '.'],
+    ['--repo-root', root],
     ['--goal', GOAL_PATH],
     ['--harness', 'pi'],
     ['--commit-authorized'],
@@ -872,7 +874,7 @@ test('strict CLI refuses unsupported runners and malformed resume pairs without 
     ['--graph-target', GRAPH_TARGET],
   ];
   const base = [
-    '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
+    '--repo-root', root, '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
     '--resume', '--ledger', LEDGER_PATH,
     '--graph-target', GRAPH_TARGET,
   ];
@@ -3897,8 +3899,10 @@ const USAGE_LINE = 'loop-engineer usage: --repo-root --validate-terminal --goal 
   + ' [--resume --ledger]\n';
 
 test('strict CLI accepts only the whole graph argument set; the retired routing flags are unknown options', async () => {
+  // A temp repo root: the CLI must not read the developer's own checkout.
+  const root = fixture();
   const graphRun = [
-    '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
+    '--repo-root', root, '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
     '--graph-target', GRAPH_TARGET,
   ];
   for (const argv of [graphRun, [...graphRun, '--resume', '--ledger', LEDGER_PATH]]) {
@@ -3912,18 +3916,18 @@ test('strict CLI accepts only the whole graph argument set; the retired routing 
   }
 
   const graphBase = [
-    '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized',
+    '--repo-root', root, '--goal', GOAL_PATH, '--harness', 'codex', '--commit-authorized',
   ];
   for (const [flag, argv] of [
     ['--routing-index', [...graphBase, '--graph-target', GRAPH_TARGET, '--routing-index', '.apex/_INDEX.md']],
     ['--standard', [...graphBase, '--graph-target', GRAPH_TARGET, '--standard', '.apex/standards/scripts.md']],
     // The whole retired Markdown-hub set no longer reaches the runner availability check.
     ['--routing-index', [
-      '--repo-root', '.', '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
+      '--repo-root', root, '--goal', GOAL_PATH, '--harness', 'pi', '--commit-authorized',
       '--routing-index', '.apex/_INDEX.md', '--standard', '.apex/standards/scripts.md',
     ]],
     ['--routing-index', [
-      '--repo-root', '.', '--validate-terminal', '--goal', GOAL_PATH, '--ledger', LEDGER_PATH,
+      '--repo-root', root, '--validate-terminal', '--goal', GOAL_PATH, '--ledger', LEDGER_PATH,
       '--routing-index', '.apex/_INDEX.md',
     ]],
   ]) {
@@ -3945,7 +3949,7 @@ test('strict CLI accepts only the whole graph argument set; the retired routing 
     [...graphBase, '--graph-target', '.apex/_INDEX.md'],
     [...graphBase, '--graph-target', ''],
     [...graphBase],
-    ['--repo-root', '.', '--validate-terminal', '--goal', GOAL_PATH, '--ledger', LEDGER_PATH, '--graph-target', GRAPH_TARGET],
+    ['--repo-root', root, '--validate-terminal', '--goal', GOAL_PATH, '--ledger', LEDGER_PATH, '--graph-target', GRAPH_TARGET],
   ]) {
     const stderr = [];
     assert.equal(

@@ -84,7 +84,7 @@ test('graph-active: a reachable, initialized engine decides graph, evidence reco
     ok: true,
     mode: 'graph',
     next: null,
-    evidence: { engine: { reachable: true, detail: 'http://localhost:2480' }, initialized: true, markdownHub: false },
+    evidence: { engine: { reachable: true, detail: 'http://localhost:2480' }, initialized: true, legacyArea: false, markdownHub: false },
   });
 });
 
@@ -96,6 +96,7 @@ test('engine-unreachable: an unreachable engine is evidence with a reason, and a
   assert.deepEqual(result.evidence, {
     engine: { reachable: false, reason: 'server status: absent (docker daemon not running)' },
     initialized: null,
+    legacyArea: false,
     markdownHub: false,
   });
 });
@@ -108,6 +109,7 @@ test('migrate: a present .apex/_INDEX.md decides migrate when the engine cannot 
   assert.deepEqual(result.evidence, {
     engine: { reachable: false, reason: 'server status: absent (docker daemon not running)' },
     initialized: null,
+    legacyArea: true,
     markdownHub: true,
   });
 });
@@ -122,7 +124,7 @@ test('precedence: an engine that is up but uninitialized is NOT graph — the ma
     ok: true,
     mode: 'migrate',
     next: 'graph-migrate',
-    evidence: { engine: { reachable: true, detail: 'memory-port' }, initialized: false, markdownHub: true },
+    evidence: { engine: { reachable: true, detail: 'memory-port' }, initialized: false, legacyArea: true, markdownHub: true },
   });
   // and without the markdown hub the same facts leave none — there is no fourth mode
   const none = await detectHubMode({
@@ -141,7 +143,7 @@ test('precedence: a present markdown hub decides migrate even over a reachable, 
     ok: true,
     mode: 'migrate',
     next: 'graph-migrate',
-    evidence: { engine: { reachable: true, detail: 'http://localhost:2480' }, initialized: true, markdownHub: true },
+    evidence: { engine: { reachable: true, detail: 'http://localhost:2480' }, initialized: true, legacyArea: true, markdownHub: true },
   });
 });
 
@@ -164,16 +166,35 @@ test('an unreachable engine ALWAYS carries a reason: a taciturn or throwing sour
   assert.equal(throwing.evidence.initialized, null);
 });
 
-test('the fs seam is the markdown-hub probe: an injected existsSync decides markdownHub', async () => {
+test('the fs seam carries both probes: lstatSync decides the area, existsSync the hub inside it', async () => {
   const root = tempDir('steepy-hub-mode-fs-');
-  const result = await detectHubMode({
-    projectId: 'demo',
-    facts: UNREACHABLE,
-    rootDir: root,
-    fs: { existsSync: (path) => path === join(root, '.apex/_INDEX.md') },
+  const area = (present) => (path) => {
+    if (present && path === join(root, '.apex')) return {};
+    throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+  };
+  const hub = (path) => path === join(root, '.apex/_INDEX.md');
+  const withHub = await detectHubMode({ projectId: 'demo', facts: UNREACHABLE, rootDir: root, fs: { lstatSync: area(true), existsSync: hub } });
+  assert.equal(withHub.mode, 'migrate');
+  assert.deepEqual([withHub.evidence.legacyArea, withHub.evidence.markdownHub], [true, true]);
+  const leftover = await detectHubMode({ projectId: 'demo', facts: UNREACHABLE, rootDir: root, fs: { lstatSync: area(true), existsSync: () => false } });
+  assert.equal(leftover.mode, 'migrate');
+  assert.deepEqual([leftover.evidence.legacyArea, leftover.evidence.markdownHub], [true, false]);
+  // the hub probe only counts inside a present area
+  const absent = await detectHubMode({ projectId: 'demo', facts: UNREACHABLE, rootDir: root, fs: { lstatSync: area(false), existsSync: hub } });
+  assert.equal(absent.mode, 'none');
+  assert.deepEqual([absent.evidence.legacyArea, absent.evidence.markdownHub], [false, false]);
+});
+
+test('migrate: leftover local state without a Markdown hub still decides migrate, even over an initialized engine', async () => {
+  const root = tempDir('steepy-hub-mode-leftover-');
+  mkdirSync(join(root, '.apex', 'work', 'specs'), { recursive: true });
+  const result = await detectHubMode({ projectId: 'demo', facts: LIVE_INITIALIZED, rootDir: root });
+  assert.deepEqual(result, {
+    ok: true,
+    mode: 'migrate',
+    next: 'graph-migrate',
+    evidence: { engine: { reachable: true, detail: 'http://localhost:2480' }, initialized: true, legacyArea: true, markdownHub: false },
   });
-  assert.equal(result.mode, 'migrate');
-  assert.equal(result.evidence.markdownHub, true);
 });
 
 test('portEngineFacts: the memory-port seam the CLI uses — a seeded port is initialized, an empty one is not', async (t) => {
@@ -219,7 +240,10 @@ test('detectHubMode throws only on programmer error: mis-shaped input, facts, fs
 // --- the CLI declaration (real subprocess, hermetic memory seam) ------------------------------------
 
 test("CLI: hub-mode on a seeded memory port declares graph (exit 0, mode line + evidence)", { skip: DOGFOOD_CHECKPOINT_SKIP }, () => {
-  const result = run(['hub-mode', '--project', 'steepy-formula', '--port', 'memory', '--seed', DOGFOOD_CHECKPOINT]);
+  // An empty temp cwd: the declaration must not read the developer's own checkout.
+  const result = run(['hub-mode', '--project', 'steepy-formula', '--port', 'memory', '--seed', DOGFOOD_CHECKPOINT], {
+    cwd: tempDir('steepy-hub-mode-seeded-'),
+  });
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /hub-mode 'steepy-formula'/);
   assert.match(result.stdout, /project:\s+steepy-formula \(flag\)/);
@@ -238,7 +262,7 @@ test('CLI: hub-mode on a buildSeed graph from an empty temp root declares graph 
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /mode:\s+graph$/m);
   assert.match(result.stdout, /initialized:\s+yes/);
-  assert.match(result.stdout, /\.apex\/_INDEX\.md:\s+absent/);
+  assert.match(result.stdout, /\.apex\/:\s+absent$/m);
   assert.equal(evidenceLines(result.stdout), 1, 'exactly one evidence: line');
   assert.equal(nextLines(result.stdout), 0, 'graph names no next step');
 });
@@ -250,7 +274,7 @@ test('CLI: hub-mode from a markdown-hub temp root on the memory seam declares mi
   assert.match(result.stdout, /project:\s+hub-seam \(flag\)/);
   assert.match(result.stdout, /mode:\s+migrate$/m);
   assert.match(result.stdout, /initialized:\s+no/);
-  assert.match(result.stdout, /\.apex\/_INDEX\.md:\s+present/);
+  assert.match(result.stdout, /\.apex\/:\s+present \(Markdown hub\)$/m);
   assert.equal(evidenceLines(result.stdout), 1, 'exactly one evidence: line');
   assert.equal(nextLines(result.stdout), 1, 'exactly one next: line');
   assert.match(result.stdout, /^ {2}next:\s+run the `graph-migrate` skill$/m);
@@ -262,7 +286,7 @@ test('CLI: hub-mode from an empty temp root on the memory seam declares none and
   assert.match(result.stdout, /project:\s+hub-seam \(flag\)/);
   assert.match(result.stdout, /mode:\s+none$/m);
   assert.match(result.stdout, /initialized:\s+no/);
-  assert.match(result.stdout, /\.apex\/_INDEX\.md:\s+absent/);
+  assert.match(result.stdout, /\.apex\/:\s+absent$/m);
   assert.equal(evidenceLines(result.stdout), 1, 'exactly one evidence: line');
   assert.equal(nextLines(result.stdout), 1, 'exactly one next: line');
   assert.match(result.stdout, /^ {2}next:\s+run the `init` skill$/m);

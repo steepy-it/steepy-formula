@@ -613,7 +613,7 @@ function usageError(message) {
   return EXIT.USAGE;
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), { cwd = process.cwd() } = {}) {
   let values;
   let positionals;
   try {
@@ -649,7 +649,7 @@ export async function main(argv = process.argv.slice(2)) {
   // The migrate state (G5): a repository that still carries a steepy-apex hub is refused before
   // the input read or any engine connection; the helper drafts for init, new-surface and
   // discovery, never for graph-migrate.
-  const refusal = migrateRefusal(process.cwd());
+  const refusal = migrateRefusal(cwd);
   if (refusal) {
     console.error(`steepy structural-promotion: ${refusal.message}`);
     return refusal.code;

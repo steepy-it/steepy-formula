@@ -321,14 +321,16 @@ test('the argv wrapper: usage errors exit 2, a memory-port dry-run exits 0', asy
   assert.equal(await main(['--project', PROJECT, '--port', 'memory', 's1']), 2, 'missing --input is a usage error');
   assert.equal(await main(['--project', PROJECT, '--port', 'memory', '--input', 'x.json']), 2, 'missing <scenarioId> is a usage error');
 
+  // The temp dir is also the cwd the migrate-state refusal probes, never the developer's checkout.
   const dir = mkdtempSync(join(tmpdir(), 'steepy-structural-'));
-  assert.equal(await main(['--project', PROJECT, '--port', 'memory', '--input', join(dir, 'missing.json'), 's1']), 2, 'an unreadable --input file is a usage error');
+  const io = { cwd: dir };
+  assert.equal(await main(['--project', PROJECT, '--port', 'memory', '--input', join(dir, 'missing.json'), 's1'], io), 2, 'an unreadable --input file is a usage error');
 
   const invalid = join(dir, 'invalid.json');
   writeFileSync(invalid, JSON.stringify({ project: { id: 'other' } }));
-  assert.equal(await main(['--project', PROJECT, '--port', 'memory', '--input', invalid, 's1']), 2, 'structural violations are a usage error');
+  assert.equal(await main(['--project', PROJECT, '--port', 'memory', '--input', invalid, 's1'], io), 2, 'structural violations are a usage error');
 
   const file = join(dir, 'structural.json');
   writeFileSync(file, JSON.stringify(structuralInput()));
-  assert.equal(await main(['--project', PROJECT, '--port', 'memory', '--input', file, 'dry-run-1']), 0, 'a memory-port run is a mapping/validation dry-run');
+  assert.equal(await main(['--project', PROJECT, '--port', 'memory', '--input', file, 'dry-run-1'], io), 0, 'a memory-port run is a mapping/validation dry-run');
 });

@@ -196,7 +196,7 @@ for (const git of [false, true]) test(`M08 complete → init → discovery sourc
   assert.equal(source.ok, true); assert.ok(source.inputPaths.includes(`${area}/run.json`));
   assert.ok(!source.inputPaths.some(p => p.includes('/captures/')));
   assert.deepEqual(f.snapshot(area), completed);
-  for (const path of ['src/app.js', '.agents/foreign.md', '.codex/config.toml', 'package-lock.json', '.apex/conventions.md', f.descriptor().completion.path]) {
+  for (const path of ['src/app.js', '.agents/foreign.md', '.codex/config.toml', 'package-lock.json', 'docs/conventions.md', f.descriptor().completion.path]) {
     const absolute = join(f.root, path); const previous = fs.existsSync(absolute) ? fs.readFileSync(absolute) : null;
     f.put(path, 'Drift or substituted evidence'); const before = f.snapshot();
     const rejected = f.refuse('verify-complete'); assert.equal(rejected.ok, false); assert.equal(rejected.inputPaths, undefined);

@@ -165,7 +165,7 @@ test('migrate state: hub-mode declares migrate over a seeded, initialized graph 
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stdout, /^ {2}mode:\s+migrate$/m);
   assert.match(result.stdout, /initialized:\s+yes/);
-  assert.match(result.stdout, /\.apex\/_INDEX\.md:\s+present/);
+  assert.match(result.stdout, /\.apex\/:\s+present \(Markdown hub\)$/m);
   assert.match(result.stdout, /^ {2}next:\s+run the `graph-migrate` skill$/m);
   assertNoRefusal(result);
 });

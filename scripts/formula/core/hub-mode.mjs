@@ -5,11 +5,11 @@
 //   graph    the Stable Knowledge Graph is operational — the engine is reachable AND the project's
 //            graph is initialized (the system record exists), the SAME facts `graph status` reads
 //            (server readiness + the system record `statusFacts` probes in cli.mjs) — AND no
-//            Markdown hub is left (`<rootDir>/.apex/_INDEX.md` absent). Next: nothing.
-//   migrate  a steepy-apex Markdown hub is still present — `<rootDir>/.apex/_INDEX.md` exists.
-//            Next: the `graph-migrate` skill moves it into the graph; until then the workflow
-//            scripts refuse (markdown-hub.mjs `migrateRefusal`) while the graph primitives
-//            (`graph *`, `promotion *`, `context resolve`, `hub-mode`) keep working.
+//            steepy-apex area is left (`<rootDir>/.apex` absent). Next: nothing.
+//   migrate  a steepy-apex `.apex/` area is still present, with or without a Markdown hub.
+//            Next: the `graph-migrate` skill moves a hub into the graph and removes the area;
+//            until then the workflow scripts refuse (markdown-hub.mjs `migrateRefusal`) while the
+//            graph primitives (`graph *`, `promotion *`, `context resolve`, `hub-mode`) keep working.
 //   none     neither. Next: the `init` skill.
 //
 //   detectHubMode({ projectId, facts?, fs?, rootDir? }) -> { ok: true, mode, next, evidence }
@@ -20,19 +20,21 @@
 //     mode      'graph' | 'migrate' | 'none' (the HUB_MODES vocabulary)
 //     next      the skill that comes next — HUB_MODE_NEXT_STEPS[mode]: 'graph-migrate' for
 //               migrate, 'init' for none, null for graph
-//     evidence  { engine: { reachable, detail?, reason? }, initialized, markdownHub }
+//     evidence  { engine: { reachable, detail?, reason? }, initialized, legacyArea, markdownHub }
 //               `initialized` is true/false once the engine answered, null when it could not;
 //               an unreachable engine ALWAYS carries a `reason` — evidence records why.
+//               `markdownHub` (only ever true inside a present `legacyArea`) tells graph-migrate
+//               whether there is a hub to extract or only leftover local state to remove.
 //
-// Precedence: `migrate` iff the Markdown hub file exists — it wins even over a reachable,
+// Precedence: `migrate` iff the `.apex` area exists — it wins even over a reachable,
 // initialized engine; otherwise `graph` iff reachable AND initialized; otherwise `none`. An engine
 // that is up but uninitialized is NOT graph — the scenario-arbitration rule (Task 3's precedence
 // case).
 //
 // DETECTION LIVES ONLY HERE (SC4, deferred proposal DP4): neither the CLI nor any skill prose
 // re-implements the decision. The CLI parses options, prints the declaration and exits; prose
-// invokes `steepy-formula hub-mode` and quotes the output. The Markdown-hub probe itself is the
-// fs-only `markdownHubPresent` (markdown-hub.mjs), shared with the refusing workflow scripts —
+// invokes `steepy-formula hub-mode` and quotes the output. The probes themselves are the fs-only
+// `legacyAreaPresent` and `markdownHubPresent` (markdown-hub.mjs), shared with the refusing workflow scripts —
 // this module imports it, never the reverse (this module pulls in the engine).
 //
 // CONVENTIONS (core-module standard of promotion.mjs): structured results, never exceptions on
@@ -44,9 +46,9 @@
 // contract) and `node:fs`. The module performs NO writes — detection is read-only, so nothing
 // ever needs sanitizing on this path.
 
-import { existsSync as defaultExistsSync } from 'node:fs';
+import { existsSync as defaultExistsSync, lstatSync as defaultLstatSync } from 'node:fs';
 import { isValidProjectId } from './ids.mjs';
-import { markdownHubPresent } from './markdown-hub.mjs';
+import { legacyAreaPresent, markdownHubPresent } from './markdown-hub.mjs';
 import { systemRecordId } from './validate-graph.mjs';
 import { SERVER_STATUS, containerNameFor, serverStatus } from '../engine/lifecycle.mjs';
 import { createArcadeDbPort, databaseNameFor } from '../engine/arcadedb.mjs';
@@ -162,9 +164,9 @@ export async function detectHubMode(input = {}) {
   if (typeof factsProvider !== 'function') {
     throw new TypeError('detectHubMode: facts must be a function of the projectId resolving to { reachable, initialized? }.');
   }
-  const fs = input.fs ?? { existsSync: defaultExistsSync };
-  if (typeof fs?.existsSync !== 'function') {
-    throw new TypeError('detectHubMode: fs must expose an existsSync(path) function.');
+  const fs = input.fs ?? { existsSync: defaultExistsSync, lstatSync: defaultLstatSync };
+  if (typeof fs?.existsSync !== 'function' || typeof fs?.lstatSync !== 'function') {
+    throw new TypeError('detectHubMode: fs must expose existsSync(path) and lstatSync(path) functions.');
   }
   const rootDir = input.rootDir ?? process.cwd();
   if (typeof rootDir !== 'string' || rootDir === '') {
@@ -179,8 +181,9 @@ export async function detectHubMode(input = {}) {
     resolved = { reachable: false, initialized: null, reason: error?.message ?? String(error) };
   }
   const { engine, initialized } = normalizeEngineFacts(resolved);
-  const markdownHub = markdownHubPresent(rootDir, fs);
+  const legacyArea = legacyAreaPresent(rootDir, fs);
+  const markdownHub = legacyArea && markdownHubPresent(rootDir, fs);
 
-  const mode = markdownHub ? 'migrate' : (engine.reachable && initialized ? 'graph' : 'none');
-  return { ok: true, mode, next: HUB_MODE_NEXT_STEPS[mode], evidence: { engine, initialized, markdownHub } };
+  const mode = legacyArea ? 'migrate' : (engine.reachable && initialized ? 'graph' : 'none');
+  return { ok: true, mode, next: HUB_MODE_NEXT_STEPS[mode], evidence: { engine, initialized, legacyArea, markdownHub } };
 }
