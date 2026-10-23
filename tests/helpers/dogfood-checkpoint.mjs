@@ -1,4 +1,4 @@
-// The dogfood checkpoint: the signed export of THIS repo's graph, a local-only recovery artifact
+// The dogfood checkpoint: the digest-verified export of THIS repo's graph, a local-only recovery artifact
 // (root .gitignore) that a fresh clone or CI never has. Tests that read it declare
 // `{ skip: DOGFOOD_CHECKPOINT_SKIP }`: they run when it is present and skip with one explicit
 // reason when it is absent; every test that does not read it keeps running either way.

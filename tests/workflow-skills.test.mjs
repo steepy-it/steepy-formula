@@ -2682,7 +2682,7 @@ test('graph-migrate: encodes the archive-then-remove closure and the no-dual-aut
   assert.match(text, /archive/i, 'step 10 must archive the legacy hub at cutover');
   assert.match(text, /\.apex-legacy-archive\//, 'step 10 must name the archive location convention');
   assert.match(text, /no[- ]dual[- ]authority/i, 'the no-dual-authority rule must be stated explicitly');
-  assert.match(text, /graph export/, 'the recovery checkpoint is a signed export (graph export)');
+  assert.match(text, /graph export/, 'the recovery checkpoint is a digest-verified export (graph export)');
   assert.match(text, /graph validate/, 'the recovery checkpoint must be a graph-validate-verified export');
   assert.match(
     text,
@@ -3118,4 +3118,23 @@ test('init and inception: migrate state stops before any scaffolding or run', ()
   assert.ok(step0.indexOf('steepy-formula hub-mode') !== -1 && step0.indexOf('steepy-formula hub-mode') < step0.indexOf('Stop and tell the user'),
     'inception runs hub-mode before its migrate stop');
   assert.match(inception, /exit 25/);
+});
+
+test('current export guidance states digest and chain integrity without author authentication', () => {
+  for (const file of ['README.md', 'docs/getting-started.md', 'docs/architecture.md', 'skills/graph-migrate/SKILL.md']) {
+    const text = readFileSync(join(root, file), 'utf8').replace(/\s+/g, ' ');
+    assert.match(text, /SHA-256/i, `${file}: export integrity uses SHA-256`);
+    assert.match(text, /hash.chain/i, `${file}: Revision trail is hash-chained`);
+    assert.match(text, /(?:does not|do not|no|without|not)[^.]*authenticat[^.]*author|author[^.]*authenticat[^.]*(?:not|absent)/i, `${file}: digest and chain do not authenticate the author`);
+    // Scope the rejection to current export claims, leaving historical quotations and Git signing alone.
+    assert.doesNotMatch(text, /(?:writes? (?:the |a )?|capture a state as a \*\*|portable artifact is the |checkpoint, the )(?:\*\*)?signed (?:export|state)|artifact is signed \(digest\)/i, `${file}: current exports must not be described as cryptographically signed`);
+  }
+});
+
+
+test('architecture scopes automatic export guarantees to configured callers', () => {
+  const text = readFileSync(join(root, 'docs/architecture.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(text, /(?:configures|configur(?:ed|able))[^.]*`?exportDir`?|`?exportDir`?[^.]*configur/i, 'automatic export requires caller configuration');
+  assert.match(text, /shipped CLI does not configure one today|shipped CLI[^.]*export: none/i, 'CLI does not claim automatic export');
+  assert.doesNotMatch(text, /RPO\s*=\s*0\s+by construction/i, 'optional automatic exports do not establish an unconditional zero-loss guarantee');
 });

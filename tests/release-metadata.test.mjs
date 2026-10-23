@@ -514,7 +514,7 @@ test('RELEASE.md smoke test uses the local gitignored .formula work artifacts', 
   assert.doesNotMatch(release, /\.apex\/plans\/_INDEX\.md/);
 });
 
-test('Installation guide documents native five-harness install journeys', () => {
+test('Installation guide retains supported and experimental harness install journeys', () => {
   const readme = readFileSync(join(root, 'docs/installation.md'), 'utf8');
 
   for (const heading of ['### Claude Code', '### Codex', '### OpenCode', '### Pi', '### DeepSeek Harness']) {
@@ -1023,4 +1023,50 @@ test('formula never names a local area under .apex/ outside migration input and 
     if (oldArea.test(text)) offenders.push(file);
   }
   assert.deepEqual(offenders, [], 'these files still name a formula local area under .apex/');
+});
+
+test('public entry guides scope supported hosts and platforms explicitly', () => {
+  for (const file of ['README.md', 'docs/installation.md', 'docs/getting-started.md']) {
+    const text = readFileSync(join(root, file), 'utf8').replace(/\s+/g, ' ');
+    assert.match(text, /supported[^.]*Claude Code[^.]*Codex|Claude Code[^.]*Codex[^.]*supported/i, `${file}: Claude Code and Codex are supported`);
+    assert.match(text, /macOS[^.]*Linux|Linux[^.]*macOS/i, `${file}: supported operating systems are macOS and Linux`);
+    assert.match(text, /Windows[^.]*unsupported|unsupported[^.]*Windows/i, `${file}: Windows is unsupported`);
+    for (const host of ['OpenCode', 'Pi', 'DeepSeek Harness']) {
+      const escaped = host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      assert.match(text, new RegExp(`experimental[^.]*\\b${escaped}\\b|\\b${escaped}\\b[^.]*experimental`, 'i'), `${file}: ${host} is explicitly experimental`);
+    }
+    assert.doesNotMatch(text, /supported harness[^\n]*— Claude Code, Codex, OpenCode, Pi, or DeepSeek Harness/i, `${file}: experimental adapters must not be advertised as supported`);
+  }
+});
+
+test('installation prepares runtime dependencies and CLI on PATH before init', () => {
+  const text = readFileSync(join(root, 'docs/installation.md'), 'utf8');
+  // The prerequisite section must precede the first actionable init instruction.
+  const firstInit = text.search(/(?:run|invoke)\s+(?:the\s+)?(?:`[^`]*init[^`]*`|init\s+skill)/i);
+  assert.ok(firstInit >= 0, 'installation has an actionable init instruction');
+  const prerequisites = text.slice(0, firstInit).replace(/\s+/g, ' ');
+  assert.match(prerequisites, /Node(?:\.js)?\s*(?:>=|≥)\s*24/i, 'Node 24 is required before init');
+  assert.match(prerequisites, /Docker/i, 'Docker is required before init');
+  assert.match(prerequisites, /npm ci --omit=dev/, 'local checkout dependencies are installed before init');
+  assert.match(prerequisites, /steepy-formula[^.]*PATH|PATH[^.]*steepy-formula/i, 'CLI availability on PATH is established before init');
+  assert.match(prerequisites, /command -v steepy-formula/, 'installation verifies CLI resolution on PATH before init');
+});
+
+
+test('both supported local installation routes prepare dependencies and verify CLI before init', () => {
+  const text = readFileSync(join(root, 'docs/installation.md'), 'utf8');
+  for (const host of ['Claude Code', 'Codex']) {
+    const start = text.indexOf(`### ${host}`);
+    assert.ok(start >= 0, `installation has a ${host} route`);
+    const end = text.indexOf('\n### ', start + 1);
+    const route = text.slice(start, end < 0 ? undefined : end);
+    const firstInit = route.search(/(?:run|invoke)\s+(?:the\s+)?(?:`[^`]*init[^`]*`|init\s+skill)/i);
+    assert.ok(firstInit >= 0, `${host}: route has an actionable init instruction`);
+    const preparation = route.slice(0, firstInit).replace(/\s+/g, ' ');
+    assert.match(preparation, /Node(?:\.js)?\s*(?:>=|≥)\s*24/i, `${host}: Node 24 is required before init`);
+    assert.match(preparation, /Docker/i, `${host}: Docker is required before init`);
+    assert.match(preparation, /npm ci --omit=dev/, `${host}: local dependencies are installed before init`);
+    assert.match(preparation, /steepy-formula[^.]*PATH|PATH[^.]*steepy-formula/i, `${host}: CLI is on PATH before init`);
+    assert.match(preparation, /command -v steepy-formula/, `${host}: CLI resolution on PATH is checked before init`);
+  }
 });

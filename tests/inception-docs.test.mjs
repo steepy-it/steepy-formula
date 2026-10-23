@@ -307,3 +307,13 @@ test('the graph promotes the pre-merge inception rules', { skip: DOGFOOD_CHECKPO
   assert.match(source, /Nothing is promoted until every decision is decided/);
   assert.match(source, /`apex:<projectId>:revision:r1`/);
 });
+
+test('first-run guides route new and existing projects through bootstrap and check', () => {
+  for (const file of ['README.md', 'docs/installation.md', 'docs/getting-started.md']) {
+    const text = read(...file.split('/')).replace(/\s+/g, ' ');
+    assert.match(text, /new (?:project|application|app)[^.]*inception|inception[^.]*new (?:project|application|app)/i, `${file}: new projects start with inception`);
+    assert.match(text, /existing (?:project|repository|repo|codebase)[^.]*init|init[^.]*existing (?:project|repository|repo|codebase)/i, `${file}: existing projects start with init`);
+    assert.match(text, /bootstrap/i, `${file}: generated bootstrap guides subsequent work`);
+    assert.match(text, /(?:steepy-formula:check|\$check|check`? skill|`check`)/i, `${file}: subsequent check is explicit`);
+  }
+});

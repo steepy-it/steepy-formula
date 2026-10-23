@@ -13,7 +13,7 @@
 //                        container (WAL recovery) and prove the head is exactly the last
 //                        acknowledged commit, verifyChain + validateGraph green, exact record
 //                        counts (no torn records, no partial writes).
-//   item 4  restore    — signed export -> destroy container + volume -> clean container -> import
+//   item 4  restore    — digest-verified export -> destroy container + volume -> clean container -> import
 //                        -> portable validation (validateGraph + verifyChain) green + byte-identical
 //                        resolveContext equivalence for representative inputs.
 //   item 5  OOB admin  — ADMIN writes a node+edge straight through the engine, bypassing the
@@ -114,7 +114,7 @@ if (!gate.ok) {
     };
   }
 
-  // Recursively sorts every object's keys, mirroring the signed export's canonicalization. The
+  // Recursively sorts every object's keys, mirroring the digest-verified export's canonicalization. The
   // export format stores property bags with sorted keys (deterministic artifact bytes); a source
   // graph authored with insertion-ordered bags therefore comes back from a restore with a
   // different key ORDER but identical VALUES. The restore drill compares the same graph's context
@@ -447,7 +447,7 @@ for (;;) {
 
   // --- item 4: restore drill --------------------------------------------------------------------
 
-  test('item 4 — restore drill: signed export -> clean container -> validation + context equivalence', { timeout: 300_000 }, async (t) => {
+  test('item 4 — restore drill: digest-verified export -> clean container -> validation + context equivalence', { timeout: 300_000 }, async (t) => {
     const name = CONTAINERS[2];
     const { server, database, port } = await setupServer(name);
     const projectId = PROJECT;
@@ -455,7 +455,7 @@ for (;;) {
     const filePath = join(tmpDir, 'export.jsonl');
     try {
       const smoke = generateFixture('restore-smoke', { scale: SMOKE_SCALE });
-      // Normalize the source fixture's property bags to the signed export's canonical key order
+      // Normalize the source fixture's property bags to the digest-verified export's canonical key order
       // (see `sortedKeys`): the export stores bags with sorted keys, so an insertion-ordered
       // source would come back from the restore with the same VALUES in a different key order, and
       // the drill's byte-for-byte context assertion must compare like with like.

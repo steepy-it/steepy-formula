@@ -1,7 +1,7 @@
 // The dogfood gate AFTER the G4 cutover: the repo's coherence authority is the CANONICAL GRAPH,
 // not the Markdown hub (spec criterion 12 — no Markdown in operational reads). This suite imports
 // the local-only recovery-checkpoint export (`tests/fixtures/dogfood-export.jsonl`, never pushed;
-// the signed export of THIS repo's graph at head `r16` — the migrated graph plus the apex-v0.8.x port's
+// the digest-verified export of THIS repo's graph at head `r16` — the migrated graph plus the apex-v0.8.x port's
 // promoted write-backs, the r14 retirement of `skill:graph-init` after PR #4 absorbed it
 // into `skill:init`, the r15 automated topology refresh that re-observed the repository
 // digest, and the r16 rename promotion that superseded `skill:steepy-apex-bootstrap`

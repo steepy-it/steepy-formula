@@ -3,16 +3,11 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PROJECT, buildSeed } from './helpers/graph-seed.mjs';
 
-// Locks the multi-harness release payload (spec criterion 11): everything a
-// Codex/OpenCode/Pi/Claude Code install needs must actually land in the npm tarball,
-// not just exist in the working tree. `npm pack --dry-run --json` is the only
-// authoritative source for "what files[] + .npmignore/.gitignore resolve to" — it's
-// somewhat slow (~1-3s), so it runs ONCE in before() and every test below shares the
-// parsed file list.
+// Inspect one actual offline archive: npm's dry-run names cannot prove shipped bytes or links.
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -20,31 +15,39 @@ const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 let paths;
 let cacheDir;
 let packFilename;
+let packedRoot;
 
 before(() => {
-  // A scratch --cache dir keeps this hermetic (no dependency on / mutation of the
-  // invoking machine's real npm cache) and matches tests/release-metadata.test.mjs's
-  // existing npm-pack-dry-run test. --dry-run means npm never writes a tarball to disk.
   cacheDir = mkdtempSync(join(tmpdir(), 'steepy-npm-pack-cache-'));
   const result = spawnSync(
     npmBin,
-    ['--cache', cacheDir, 'pack', '--dry-run', '--json'],
+    ['--cache', cacheDir, '--offline', '--ignore-scripts', 'pack', '--json', '--pack-destination', cacheDir],
     { cwd: root, encoding: 'utf8' },
   );
   assert.equal(
     result.status,
     0,
-    `npm pack --dry-run --json must exit 0 — stderr:\n${result.stderr || '(empty)'}\nstdout:\n${result.stdout || '(empty)'}`,
+    `npm pack --json must exit 0 — stderr:\n${result.stderr || '(empty)'}\nstdout:\n${result.stdout || '(empty)'}`,
   );
 
   let pack;
   try {
     [pack] = JSON.parse(result.stdout);
   } catch (err) {
-    throw new Error(`npm pack --dry-run --json produced non-JSON stdout: ${err.message}\n${result.stdout}`);
+    throw new Error(`npm pack --json produced non-JSON stdout: ${err.message}\n${result.stdout}`);
   }
-  paths = pack.files.map((file) => file.path);
   packFilename = pack.filename;
+  const archive = join(cacheDir, packFilename);
+  const listing = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8' });
+  assert.equal(listing.status, 0, listing.stderr);
+  paths = listing.stdout.trim().split('\n').filter((name) => !name.endsWith('/')).map((name) => {
+    assert.ok(name.startsWith('package/') && !name.split('/').includes('..'), `unsafe archive entry: ${name}`);
+    return name.slice('package/'.length);
+  });
+  assert.deepEqual([...paths].sort(), pack.files.map((file) => file.path).sort(), 'archive entries match npm metadata');
+  const extracted = spawnSync('tar', ['-xzf', archive, '-C', cacheDir], { encoding: 'utf8' });
+  assert.equal(extracted.status, 0, extracted.stderr);
+  packedRoot = join(cacheDir, 'package');
 });
 
 after(() => {
@@ -160,11 +163,11 @@ test('npm tarball includes the portable scaffold runtime, v1 sources, and canoni
   assert.equal(paths.some((p) => p.startsWith('templates/prior/')), false, 'tarball must not include templates/prior/');
 });
 
-test('npm pack dry-run leaves no repository tarball behind', () => {
+test('npm pack keeps the actual tarball outside the repository', () => {
   assert.equal(
     existsSync(join(root, packFilename)),
     false,
-    'npm pack --dry-run must not create its reported tarball in the repository',
+    'npm pack must write its tarball only in the scratch directory',
   );
 });
 
@@ -316,4 +319,37 @@ test('installed npm executable dispatches from paths with spaces and a symlinked
     assert.equal(result.stdout, '');
     assert.equal(result.stderr, '');
   });
+});
+
+// Resolve local Markdown targets from the bytes shipped to users, never the working tree.
+test('actual archive contains PRIVACY and every local public documentation link target', () => {
+  assertPacked(['PRIVACY.md']);
+  const publicDocs = paths.filter((path) => /^(?:docs\/.*|README|RELEASE|CONTRIBUTING|SECURITY|PRIVACY|CHANGELOG)\.md$/.test(path));
+  for (const source of publicDocs) {
+    const text = readFileSync(join(packedRoot, source), 'utf8');
+    const links = [
+      ...Array.from(text.matchAll(/!?\[[^\]]*\]\(<?([^\s)>]+)>?(?:\s+"[^"]*")?\)/g), (match) => match[1]),
+      ...Array.from(text.matchAll(/(?:href|src|srcset)="([^"\s]+)"/g), (match) => match[1]),
+      ...Array.from(text.matchAll(/^\[[^\]]+\]:\s*<?([^\s>]+)>?/gm), (match) => match[1]),
+    ];
+    for (let href of links) {
+      const repositoryTarget = /^https:\/\/github\.com\/steepy-it\/steepy-formula\/(?:blob|tree)\/main\/(.+)$/.exec(href);
+      if (repositoryTarget) href = `/${repositoryTarget[1]}`;
+      else if (/^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(href)) continue;
+      const target = decodeURIComponent(href.split(/[?#]/)[0]);
+      if (!target) continue;
+      const resolved = target.startsWith('/') ? target.slice(1) : posix.normalize(posix.join(posix.dirname(source), target));
+      assert.ok(paths.includes(resolved) || paths.some((path) => path.startsWith(`${resolved}/`)), `${source}: shipped link ${href} must resolve inside archive (${resolved})`);
+    }
+  }
+  for (const key of ['documentationUrl', 'privacyPolicyUrl', 'termsOfServiceUrl']) {
+    const manifest = JSON.parse(readFileSync(join(packedRoot, '.claude-plugin/plugin.json'), 'utf8'));
+    const target = manifest[key].split('/main/')[1];
+    assert.ok(paths.includes(target) || paths.some((path) => path.startsWith(`${target}/`)), `shipped plugin ${key} must resolve inside archive: ${target}`);
+  }
+});
+
+test('actual archive excludes ignored work, context, checkpoints, credentials and secrets', () => {
+  const forbidden = /(?:^|\/)(?:\.formula|\.apex|\.worktrees|node_modules|tests)(?:\/|$)|(?:^|\/)(?:context\.(?:json|md)|dogfood-export\.jsonl|secrets\.json|(?:checkpoint[^/]*|[^/]*-export)\.jsonl|[^/]+\.(?:pem|key)|\.env(?:\.[^/]*)?|id_rsa|id_ed25519)$/i;
+  assert.deepEqual(paths.filter((path) => forbidden.test(path)), [], 'archive must exclude local state and secret files');
 });

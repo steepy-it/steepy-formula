@@ -633,7 +633,7 @@ if (!gate.ok) {
       }
     }
 
-    test('seed the live engine and `graph export` the signed artifact (exit 0)', async () => {
+    test('seed the live engine and `graph export` the digest-verified artifact (exit 0)', async () => {
       await createDatabase(server, database);
       await withLivePort((port) => seedPort(projectId, port));
       const out = join(tempDir('steepy-f4-live-export-'), 'export.jsonl');
