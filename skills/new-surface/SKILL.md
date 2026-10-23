@@ -96,11 +96,14 @@ Knowledge Graph — no standards doc and no routing table exist.
    **yes**, commit the transaction:
 
    ```bash
-   steepy-formula promotion apply new-surface-<surface-name>
+   steepy-formula promotion apply new-surface-<surface-name> --yes [--approver <name>]
    ```
 
-   Run apply WITHOUT `--yes`, so the CLI itself prompts on stdin and refuses (exit 21) unless
-   the human confirms.
+   That yes IS the human gate, and the agent applies directly on it: pass `--yes` only after
+   the human's explicit yes, in an interactive session, for exactly the scenario just
+   previewed. A change re-previews and needs a new yes; a no applies nothing. The CLI refuses
+   (exit 20) an apply whose base revision moved after the preview. `--approver` names the
+   human who said yes (default: the OS user).
 
 6. **Verify** — run the graph coherence gate, then a resolver spot-check:
 

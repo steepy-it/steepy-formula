@@ -79,8 +79,8 @@ more reason every port stays bound to `127.0.0.1`.
    - after the gate, scaffolds only the disk-minimal harness assets: the gitignored
      `.formula/work/` area, per-surface specialist agents, the project bootstrap skill, and the
      root `CLAUDE.md`;
-   - lands everything as one promotion scenario: `promotion preview` → your approval →
-     `promotion apply` (interactive confirm) → `graph validate` + `context resolve` green.
+   - lands everything as one promotion scenario: `promotion preview` → your explicit yes →
+     the agent runs `promotion apply --yes` → `graph validate` + `context resolve` green.
 3. *(optional, existing codebase)* **`/steepy-formula:discovery`** — a seeded interview fills
    the graph from your code through a typed promotion scenario — every proposal confirmed by you.
 4. Arriving from steepy-apex — your repo still has an `.apex/` area?

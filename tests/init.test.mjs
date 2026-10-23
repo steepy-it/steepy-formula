@@ -101,7 +101,10 @@ test('init drives the engine: detect-stack proposals, the structural helper, pre
   ]) {
     assert.ok(text.includes(literal), `init must reference '${literal}'`);
   }
-  assert.match(text, /WITHOUT `--yes`/, 'promotion apply must run without --yes so the CLI prompts on stdin');
+  assert.match(text, /steepy-formula promotion apply <scenario-id> --yes \[--approver <name>\]/,
+    'the agent applies directly on the human gate');
+  assert.match(text, /pass `--yes` only after the\s+human's explicit yes, in an interactive session/,
+    '--yes is passed only after the human\'s explicit yes, in an interactive session');
   assert.match(text, /CLI and the shipped structural-promotion\s+helper/,
     'the machines are named: the CLI and the shipped structural-promotion helper');
   assert.match(text, /the only machines the skill\s+touches/, 'nothing else is a machine — the skill re-implements no core logic');

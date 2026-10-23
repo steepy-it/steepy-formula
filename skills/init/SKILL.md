@@ -420,12 +420,14 @@ they can inspect the proposed state. Approval is explicit, never assumed — one
 clear yes/change/no choice; never proceed on silence. On **yes**, commit the transaction:
 
 ```bash
-steepy-formula promotion apply <scenario-id>
+steepy-formula promotion apply <scenario-id> --yes [--approver <name>]
 ```
 
-Run apply WITHOUT `--yes`, so the CLI itself prompts on stdin and refuses (exit 21) unless the
-human confirms — the interview approval plus the CLI's own interactive confirmation
-double-gate the apply boundary.
+That yes IS the human gate, and the agent applies directly on it: pass `--yes` only after the
+human's explicit yes, in an interactive session, for exactly the scenario id just previewed. A
+change rebuilds and re-previews the scenario and needs a new yes; a no applies nothing. The
+CLI's stale check (exit 20) refuses an apply whose base revision moved after the preview.
+`--approver` names the human who said yes (default: the OS user).
 
 ### Step 7 — Gates: validate the graph and resolve the surface targets
 

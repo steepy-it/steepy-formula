@@ -131,18 +131,19 @@ Explorer view) and ask directly, one question, with a clear yes/subset/no choice
 
 ### Step 8 — Write the approved nodes and edges transactionally
 
-Drive `promotion apply` WITHOUT `--yes`, so the CLI itself prompts on stdin and refuses (exit 21)
-unless the human confirms:
+On Step 7's **Yes (full)** — or the yes on a re-previewed curated scenario — apply directly:
 
 ```bash
-steepy-formula promotion apply --project <project-id> <scenario-id>
+steepy-formula promotion apply --project <project-id> <scenario-id> --yes [--approver <name>]
 ```
 
-The apply boundary IS the commit of the migration transaction — Step 7's approval plus the CLI's
-own interactive confirmation double-gate it. The write is ONE transaction: the applied mutation
-and its Revision are committed together, so an interruption leaves the graph untouched. Read the
-report: the applied operations, the head revision, whether the scenario was consumed, and the
-export outcome. Exit 22/23/20 mean the scenario is invalid/empty/stale — fix and re-run; the
+The apply boundary IS the commit of the migration transaction, and Step 7's approval gates it:
+pass `--yes` only after the human's explicit yes, in an interactive session, for exactly the
+scenario id just previewed (a curated subset is a new scenario and needs its own yes).
+`--approver` names the human who said yes (default: the OS user). The write is ONE transaction:
+the applied mutation and its Revision are committed together, so an interruption leaves the
+graph untouched. Read the report: the applied operations, the head revision, whether the
+scenario was consumed, and the export outcome. Exit 22/23/20 mean the scenario is invalid/empty/stale — fix and re-run; the
 graph is untouched.
 
 ### Step 9 — Validate the graph and resolver behavior

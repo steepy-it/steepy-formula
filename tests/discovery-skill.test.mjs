@@ -343,7 +343,8 @@ test('discovery: SKILL.md graph write-back rides typed candidates → promotion 
   );
   assert.match(step25, /never an inline graph mutation/i,
     'the graph channel must forbid inline graph mutation');
-  assert.match(step25, /without `--yes`/, 'apply must run at the human gate, without --yes');
+  assert.match(step25, /passing `--yes` only after the human's explicit yes, in an\s+interactive session/,
+    'apply runs at the human gate: --yes only after the human\'s explicit yes');
   assert.match(step25, /scenario-assembly\.mjs/, 'the graph channel must name the closed-schema wrapper');
   assert.match(step25, /only interpreter/i, 'the wrapper must be the schema\'s only interpreter');
   // Flatten hard-wrapped prose so the pins lock the verbatim wording, not the wrap points.
@@ -698,7 +699,7 @@ test('discovery inception source (SC12): write-back is one typed promotion scena
     'steepy-formula promotion preview inception-<runId>',
     'steepy-formula promotion apply inception-<runId>',
   ]) assert.ok(raw.includes(command), `Step 2a must drive ${command}`);
-  assert.match(section, /apply only at the human gate, without `--yes`/);
+  assert.match(section, /apply only at the human gate, with `--yes` only after the human's explicit yes/);
   assert.doesNotMatch(section, /`conventions\.md`|`glossary\.md`|_INDEX\.md/, 'the graph channel writes no Markdown hub doc');
 });
 

@@ -88,8 +88,11 @@ test('new-surface skill: drives the structural-promotion helper with its real fl
   // Preview/apply flow through the ordinary promotion commands, human-gated.
   assert.match(graph, /steepy-formula promotion preview new-surface-<surface-name>/);
   assert.match(graph, /steepy-formula promotion apply new-surface-<surface-name>/);
-  assert.match(graph, /WITHOUT `--yes`/, 'apply must stay interactively human-gated');
-  assert.match(graph, /exit 21/, 'the CLI refusal exit code must be named');
+  assert.match(graph, /steepy-formula promotion apply new-surface-<surface-name> --yes \[--approver <name>\]/,
+    'the agent applies directly on the human gate');
+  assert.match(graph, /pass `--yes` only after\s+the human's explicit yes, in an interactive session/,
+    '--yes is passed only after the human\'s explicit yes, in an interactive session');
+  assert.match(graph, /The CLI refuses\s+\(exit 20\)/, 'the CLI refusal exit code for a moved base revision must be named');
   // Closing verification: graph gate + resolver spot-check serving the command back.
   assert.match(graph, /steepy-formula graph validate\n\s*steepy-formula context resolve --target apex:<projectId>:surface:<slug\(name\)>/,
     'the verify step must run graph validate then a target-based context resolve spot-check');

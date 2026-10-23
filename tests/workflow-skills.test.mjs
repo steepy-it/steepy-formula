@@ -693,6 +693,17 @@ test('review: Step 5 resolves a version bump (or no-release label) before offeri
   assert.match(step5, /version-gate\.yml/, 'Step 5 must scope-gate the bump on the target repo owning version-gate.yml');
 });
 
+test('review: Step 5 applies the scenario directly on the human\'s explicit yes, never in autopilot', () => {
+  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const step5 = sectionBetween(text, '### Step 5', '## Model Selection').replace(/\s+/g, ' ');
+  assert.match(step5, /steepy-formula promotion apply <scenario-id> --yes \[--approver <name>\]/,
+    'Step 5 applies the scenario directly on the human gate');
+  assert.match(step5, /pass `--yes` only after the human's explicit yes, only for the scenario id whose preview the human saw, never on silence/,
+    '--yes is passed only after the human\'s explicit yes, for the previewed scenario');
+  assert.match(step5, /never a `--yes` supplied by a conductor or in autopilot/,
+    'autopilot and conductors never supply --yes');
+});
+
 test('review: gains an autopilot branch — Step 0 BLOCKED note, Autopilot paragraph stops before bump/PR at READY_FOR_PR', () => {
   const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
 

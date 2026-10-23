@@ -141,7 +141,7 @@ Verify completed work with evidence. Never assert "done" without command output 
 - [ ] Confirm the receipt contains a green `coherence-gate` command result (Step 3)
 - [ ] Report: the declared hub-mode, whether the `coherence-gate` is green, the typed candidate list and the quoted typed diff, AND every regular criterion or Gear-4 terminal claim verified
       from real command output (Step 4)
-- [ ] Manual drive: apply the assembled Promotion Scenario here — `promotion apply` WITHOUT `--yes`; a refusal (exit 21) is a valid outcome, not an error (Step 5)
+- [ ] Manual drive: ask one explicit yes/change/no question on the assembled Promotion Scenario and, on yes, apply it here — `promotion apply <scenario-id> --yes`, passed only after the human's explicit yes; a no applies nothing (Step 5)
 - [ ] Resolve the version bump (or apply `no-release`) and offer a PR to `main` only for regular
       review or Gear-4 `GOAL_REACHED`, when the work landed on a separate branch with commits ahead;
       suppress release/PR for negative terminal outcomes (Step 5)
@@ -569,13 +569,16 @@ negative outcome has already stopped at Step 4 with no release/PR offer and a re
 goal contract before another run.
 
 **The human apply gate.** Before any PR: if Step 2 assembled a Promotion Scenario,
-it is applied here and only here, in manual drive: run `steepy-formula promotion apply
-<scenario-id>` WITHOUT `--yes` — the command prompts on stdin, and a refusal
-(exit 21) is a valid
-outcome, not an error. A refused scenario stays a draft for a later interactive session;
-`promotion discard` cleans it up if it is abandoned. Never apply inline at Step 2, and never a
-`--yes` supplied by an agent or a conductor — the confirmation at the prompt is the human's, and
-nothing else substitutes for it. In autopilot there is no scenario
+it is applied here and only here, in manual drive. Ask one explicit yes/change/no question on the
+quoted typed diff; on **yes**, apply it directly: run `steepy-formula promotion apply
+<scenario-id> --yes [--approver <name>]`. The human's explicit yes in this interactive session
+IS the approval: pass `--yes` only after the human's explicit yes, only for the scenario id
+whose preview the human saw, never on silence; `--approver` names the human who said yes
+(default: the OS user). A change re-previews and needs a new yes; the CLI's stale check
+(exit 20) refuses an apply whose base revision moved after the preview. On **no**, apply
+nothing: the scenario stays a draft for a later interactive session; `promotion discard`
+cleans it up if it is abandoned. Never apply inline at Step 2, and never a `--yes` supplied by
+a conductor or in autopilot — no human said yes there. In autopilot there is no scenario
 in this review's hands: skip straight to the PR flow below.
 
 Check the current branch. If it is `main`/`master`, or has no commits ahead of `main`, stop here — there is nothing to propose.

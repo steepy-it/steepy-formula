@@ -128,7 +128,9 @@
 // OS user (`os.userInfo().username`), recorded decision (create never applies, so the human-approval
 // boundary stays `promotion apply`). An already-taken scenario id is "nothing to do" (exit 4).
 // `promotion apply` is the human-approval boundary: WITHOUT `--yes` it prompts on stdin and REFUSES
-// (exit 21, visible on stdout) unless a `y`/`yes` confirmation is given. The APPROVER is typed via F1 `actor('human-approver', <name>)`
+// (exit 21, visible on stdout) unless a `y`/`yes` confirmation is given; `--yes` records an approval
+// already given — the workflow skills pass it only after the human's explicit yes in an interactive
+// session, for the scenario just previewed. The APPROVER is typed via F1 `actor('human-approver', <name>)`
 // where `<name>` is `--approver <name>` if given, ELSE the OS user (`os.userInfo().username`) —
 // recorded decision. The proposer comes from the scenario meta (D5 reads it). The CLI supplies the
 // provenance snapshot: `{ quotation, source: '<cli-provenance-source>', digest: sha256Hex(quotation) }`
