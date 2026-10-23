@@ -5,6 +5,10 @@
 // the same way D3's suite does.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as nodeFs from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { exportGraph } from '../scripts/formula/core/export.mjs';
 import { createMemoryPort } from '../scripts/formula/engine/memory.mjs';
 import { withTransaction } from '../scripts/formula/engine/port.mjs';
 import { SCENARIO_META_TYPE, scenarioMetaId, validateGraph } from '../scripts/formula/core/validate-graph.mjs';
@@ -1024,4 +1028,25 @@ test('an open scenario leaves validateGraph green when it is not named — the g
     assert.deepEqual(result.violations, []);
     assert.equal(result.ok, true);
   });
+});
+
+
+test('failed standalone export preserves the draft scenario and committed revision', async (t) => {
+  const dir = nodeFs.mkdtempSync(join(tmpdir(), 'scenario-export-fault-'));
+  const port = createMemoryPort();
+  t.after(async () => { await port.close(); nodeFs.rmSync(dir, { recursive: true, force: true }); });
+  await seedBaseGraph(port);
+  await createScenario(port, { projectId: PROJECT, scenarioId: SCENARIO, proposedBy: PROPOSED_BY, operations: [addNode('Term', qid('term:draft'))] });
+  const before = await inspectScenario(port, { projectId: PROJECT, scenarioId: SCENARIO });
+  const chain = await readChain(port, { projectId: PROJECT });
+  let writes = 0;
+  const result = await exportGraph(port, {
+    projectId: PROJECT, filePath: join(dir, 'export.jsonl'),
+    fs: { ...nodeFs, writeSync() { writes++; throw Object.assign(new Error('injected write failure'), { code: 'EIO' }); } },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(writes, 1);
+  assert.deepEqual(await inspectScenario(port, { projectId: PROJECT, scenarioId: SCENARIO }), before);
+  assert.deepEqual(await readChain(port, { projectId: PROJECT }), chain);
+  assert.deepEqual(nodeFs.readdirSync(dir), []);
 });

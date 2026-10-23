@@ -7,8 +7,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import * as nodeFs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { createMemoryPort } from '../scripts/formula/engine/memory.mjs';
 import { withTransaction } from '../scripts/formula/engine/port.mjs';
 import { validateGraph, systemRecordId } from '../scripts/formula/core/validate-graph.mjs';
@@ -608,4 +609,207 @@ test('pruneExportDirectory accepts an injected fs and never touches the real dis
   assert.deepEqual(decision.keep, ['export-new.jsonl']);
   assert.deepEqual(decision.drop, ['export-old.jsonl']);
   assert.deepEqual(deleted, ['export-old.jsonl']);
+});
+
+
+// Atomic publication contract: real disk with only syscall boundaries faulted.
+const ATOMIC_CLOCK = () => '2026-10-23T12:00:00.000Z';
+const ioError = (code = 'EIO') => Object.assign(new Error(`injected ${code}`), { code });
+
+async function atomicFixture(t) {
+  const dir = tmpDir();
+  const port = createMemoryPort();
+  t.after(async () => { await port.close(); rmSync(dir, { recursive: true, force: true }); });
+  await promoteValidGraph(port);
+  await applyOk(port, { operations: [
+    addNode('Term', 'apex:proj:term:unicode', { ext_v1_definition: 'caffè — 日本語 🫖' }),
+    addEdge('USED_BY', 'apex:proj:term:unicode', ID.project),
+  ] });
+  const artifact = await buildExportArtifact(port, { projectId: PROJECT, clock: ATOMIC_CLOCK });
+  const filePath = join(dir, 'export.jsonl');
+  const old = 'previous complete artifact\n';
+  writeFileSync(filePath, old, { mode: 0o640 });
+  return { dir, port, artifact, filePath, old };
+}
+
+function atomicFs(filePath, fault = null) {
+  const events = [];
+  const descriptors = new Map();
+  const owned = new Set();
+  let collisionPath;
+  let fired = false;
+  let writeCalls = 0;
+  const normalized = (path) => join(nodeFs.realpathSync(dirname(path)), basename(path));
+  const fail = (stage) => {
+    events.push(stage);
+    if (fault === stage && !fired) { fired = true; throw ioError(); }
+  };
+  const fs = {
+    ...nodeFs,
+    openSync(path, flags, mode) {
+      const creating = typeof flags === 'number' && (flags & nodeFs.constants.O_CREAT) !== 0;
+      if (creating) {
+        assert.notEqual(normalized(path), normalized(filePath), 'never open destination for writing');
+        assert.equal(flags & nodeFs.constants.O_EXCL, nodeFs.constants.O_EXCL);
+        assert.equal(flags & nodeFs.constants.O_NOFOLLOW, nodeFs.constants.O_NOFOLLOW);
+        assert.equal(mode & 0o777, 0o600, 'temporary file starts private');
+        if (fault === 'collision' && !fired) {
+          fired = true;
+          collisionPath = path;
+          nodeFs.writeFileSync(path, 'belongs to another writer');
+          throw ioError('EEXIST');
+        }
+        fail('open');
+      }
+      const fd = nodeFs.openSync(path, flags, mode);
+      descriptors.set(fd, nodeFs.fstatSync(fd).isDirectory() ? 'directory' : 'file');
+      if (creating) owned.add(path);
+      return fd;
+    },
+    writeSync(fd, buffer, offset, length, position) {
+      fail('write');
+      writeCalls++;
+      if (fault === 'partial-then-failure' && writeCalls > 1) { fired = true; throw ioError(); }
+      assert.equal(descriptors.get(fd), 'file');
+      if (fault === 'zero-write') { fired = true; return 0; }
+      if (fault === 'partial-write' || fault === 'partial-then-failure') {
+        fired = true;
+        assert.ok(Buffer.isBuffer(buffer), 'write byte buffers so partial UTF-8 writes resume correctly');
+        return nodeFs.writeSync(fd, buffer, offset, Math.min(length, 7), position);
+      }
+      return nodeFs.writeSync(fd, buffer, offset, length, position);
+    },
+    fsyncSync(fd) {
+      fail(descriptors.get(fd) === 'directory' ? 'directory-sync' : 'file-sync');
+      return nodeFs.fsyncSync(fd);
+    },
+    closeSync(fd) {
+      const kind = descriptors.get(fd);
+      nodeFs.closeSync(fd);
+      descriptors.delete(fd);
+      if (kind === 'file') fail('close');
+    },
+    renameSync(from, to) {
+      fail('rename');
+      assert.equal(normalized(to), normalized(filePath));
+      assert.ok(owned.has(from));
+      assert.ok(events.includes('file-sync'), 'sync file before publication');
+      assert.ok(events.includes('close'), 'close file before publication');
+      return nodeFs.renameSync(from, to);
+    },
+    unlinkSync(path) {
+      assert.ok(owned.has(path), 'only remove temporary files created by this invocation');
+      assert.notEqual(path, collisionPath);
+      return nodeFs.unlinkSync(path);
+    },
+  };
+  return { fs, events, descriptors, get collisionPath() { return collisionPath; }, get fired() { return fired; } };
+}
+
+function assertExportFailure(result) {
+  assert.equal(result.ok, false, 'an I/O fault is a structured failure');
+  assert.ok(Object.values(EXPORT_VIOLATION_CODES).includes(result.code), 'failure uses the exported code vocabulary');
+  assert.equal(typeof result.message, 'string');
+  assert.ok(result.identity && typeof result.identity === 'object');
+}
+
+test('atomic export preserves v1 bytes, replacement mode, and import/re-export identity at a fixed clock', async (t) => {
+  const f = await atomicFixture(t);
+  const seam = atomicFs(f.filePath, 'partial-write');
+  const result = await exportGraph(f.port, { projectId: PROJECT, filePath: f.filePath, clock: ATOMIC_CLOCK, fs: seam.fs });
+  assert.equal(result.ok, true);
+  assert.equal(seam.fired, true, 'partial writes were exercised');
+  assert.equal(nodeFs.readFileSync(f.filePath, 'utf8'), f.artifact.text);
+  assert.equal(nodeFs.statSync(f.filePath).mode & 0o777, 0o640);
+  assert.deepEqual(nodeFs.readdirSync(f.dir), ['export.jsonl']);
+  assert.equal(seam.descriptors.size, 0);
+  assert.ok(seam.events.indexOf('rename') < seam.events.indexOf('directory-sync'));
+  await withPort(async (restored) => {
+    assert.equal((await importGraph(restored, { filePath: f.filePath })).ok, true);
+    assert.equal((await validateGraph(restored, { projectId: PROJECT })).ok, true);
+    assert.equal((await verifyChain(restored, { projectId: PROJECT })).ok, true);
+    assert.equal((await buildExportArtifact(restored, { projectId: PROJECT, clock: ATOMIC_CLOCK })).text, f.artifact.text);
+  });
+});
+
+test('atomic export creates a new file with mode 0600 even under a permissive umask', async (t) => {
+  const f = await atomicFixture(t);
+  nodeFs.unlinkSync(f.filePath);
+  const previous = process.umask(0);
+  try {
+    assert.equal((await exportGraph(f.port, { projectId: PROJECT, filePath: f.filePath })).ok, true);
+    assert.equal(nodeFs.statSync(f.filePath).mode & 0o777, 0o600);
+  } finally { process.umask(previous); }
+});
+
+for (const fault of ['open', 'write', 'partial-then-failure', 'zero-write', 'file-sync', 'close', 'rename']) {
+  test(`atomic export ${fault} failure preserves old bytes and cleans only owned temporary state`, async (t) => {
+    const f = await atomicFixture(t);
+    const unrelated = join(f.dir, '.unrelated.tmp');
+    writeFileSync(unrelated, 'not ours');
+    const seam = atomicFs(f.filePath, fault);
+    const result = await exportGraph(f.port, { projectId: PROJECT, filePath: f.filePath, fs: seam.fs });
+    assertExportFailure(result);
+    assert.equal(seam.fired, true);
+    assert.equal(nodeFs.readFileSync(f.filePath, 'utf8'), f.old);
+    assert.equal(nodeFs.readFileSync(unrelated, 'utf8'), 'not ours');
+    assert.deepEqual(nodeFs.readdirSync(f.dir).sort(), ['.unrelated.tmp', 'export.jsonl']);
+    assert.equal(seam.descriptors.size, 0);
+    assert.ok(!seam.events.includes('directory-sync'));
+  });
+}
+
+test('atomic export directory-sync failure reports uncertain durability and keeps the published bytes', async (t) => {
+  const f = await atomicFixture(t);
+  const seam = atomicFs(f.filePath, 'directory-sync');
+  const result = await exportGraph(f.port, { projectId: PROJECT, filePath: f.filePath, clock: ATOMIC_CLOCK, fs: seam.fs });
+  assertExportFailure(result);
+  assert.equal(seam.fired, true);
+  assert.match(result.message, /durability|durable/i);
+  assert.match(result.message, /uncertain|not confirmed|cannot confirm/i);
+  assert.equal(nodeFs.readFileSync(f.filePath, 'utf8'), f.artifact.text);
+  assert.deepEqual(nodeFs.readdirSync(f.dir), ['export.jsonl']);
+  assert.equal(seam.descriptors.size, 0);
+});
+
+test('atomic export temporary-name collision never removes or overwrites the other writer file', async (t) => {
+  const f = await atomicFixture(t);
+  const seam = atomicFs(f.filePath, 'collision');
+  const result = await exportGraph(f.port, { projectId: PROJECT, filePath: f.filePath, clock: ATOMIC_CLOCK, fs: seam.fs });
+  assert.equal(seam.fired, true);
+  assert.equal(nodeFs.readFileSync(seam.collisionPath, 'utf8'), 'belongs to another writer');
+  // Either a bounded retry or a structured refusal is safe; no naming algorithm is prescribed.
+  if (result.ok) assert.equal(nodeFs.readFileSync(f.filePath, 'utf8'), f.artifact.text);
+  else { assertExportFailure(result); assert.equal(nodeFs.readFileSync(f.filePath, 'utf8'), f.old); }
+  assert.equal(nodeFs.readdirSync(f.dir).length, 2);
+  assert.equal(seam.descriptors.size, 0);
+});
+
+for (const kind of ['symlink', 'directory', 'hardlink', 'inner-parent-symlink', 'inner-parent-file']) {
+  test(`atomic export refuses ${kind} without damaging existing state`, async (t) => {
+    const f = await atomicFixture(t);
+    let destination = f.filePath;
+    if (kind === 'symlink') { destination = join(f.dir, 'link'); nodeFs.symlinkSync(f.filePath, destination); }
+    if (kind === 'directory') { destination = join(f.dir, 'directory'); nodeFs.mkdirSync(destination); }
+    if (kind === 'hardlink') { nodeFs.linkSync(f.filePath, join(f.dir, 'hardlink')); }
+    if (kind === 'inner-parent-symlink') {
+      const real = join(f.dir, 'real'); nodeFs.mkdirSync(real);
+      nodeFs.symlinkSync(real, join(f.dir, 'alias'));
+      destination = join(f.dir, 'alias', 'export.jsonl');
+    }
+    if (kind === 'inner-parent-file') destination = join(f.filePath, 'export.jsonl');
+    const before = nodeFs.readdirSync(f.dir).sort();
+    assertExportFailure(await exportGraph(f.port, { projectId: PROJECT, filePath: destination }));
+    assert.equal(nodeFs.readFileSync(f.filePath, 'utf8'), f.old);
+    assert.deepEqual(nodeFs.readdirSync(f.dir).sort(), before);
+    if (kind === 'symlink') assert.equal(nodeFs.lstatSync(destination).isSymbolicLink(), true);
+    if (kind === 'inner-parent-symlink') assert.deepEqual(nodeFs.readdirSync(join(f.dir, 'real')), []);
+  });
+}
+
+test('atomic export supports the ordinary OS temp-directory alias', async (t) => {
+  const f = await atomicFixture(t); // tmpdir() may be /var -> /private/var on macOS.
+  const result = await exportGraph(f.port, { projectId: PROJECT, filePath: f.filePath, clock: ATOMIC_CLOCK });
+  assert.equal(result.ok, true);
+  assert.equal(nodeFs.readFileSync(f.filePath, 'utf8'), f.artifact.text);
 });

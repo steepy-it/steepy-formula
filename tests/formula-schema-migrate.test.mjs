@@ -757,3 +757,89 @@ if (!gate.ok) {
     });
   });
 }
+
+
+for (const evidence of ['failed', 'corrupt']) {
+  test(`migration refuses ${evidence} backup evidence before any cutover`, async () => {
+    const port = await buildValidPort();
+    try {
+      const before = await buildExportArtifact(port, { projectId: PROJECT, clock: () => '2026-10-23T00:00:00.000Z' });
+      let cutovers = 0;
+      const hooks = memoryHooks({ primaryPort: port, cutoverImpl: async () => { cutovers++; throw new Error('must not cut over'); } });
+      hooks.backup = async () => ({ ok: evidence !== 'failed', text: evidence === 'failed' ? before.text : 'corrupt backup', filePath: '/unused' });
+      const result = await migrateSchema(port, { projectId: PROJECT, transform: renameTransform('body', 'ext_v1_body'), options: hooks });
+      assert.equal(result.ok, false);
+      assert.equal(result.code, MIGRATE_ERROR_CODES.VERIFIED_BACKUP_FAILED);
+      assert.equal(cutovers, 0);
+      assert.equal((await buildExportArtifact(port, { projectId: PROJECT, clock: () => '2026-10-23T00:00:00.000Z' })).text, before.text);
+    } finally { await port.close(); }
+  });
+}
+
+for (const failure of ['open', 'directory-sync', 'corrupt']) {
+  test(`CLI forced restore refuses ${failure} backup before destructive engine calls`, async () => {
+    const dir = tempDir('force-backup-fault-');
+    const port = await buildValidPort();
+    let seed;
+    try { seed = await buildExportArtifact(port, { projectId: PROJECT }); } finally { await port.close(); }
+    const seedFile = join(dir, 'seed.jsonl');
+    writeFileSync(seedFile, seed.text);
+    const runner = join(dir, 'runner.mjs');
+    const receipt = join(dir, 'receipt.json');
+    const moduleUrl = (path) => new URL(path, import.meta.url).href;
+    // Redirect only external engine/lifecycle edges. The seeded memory port, artifact parser,
+    // forced-restore orchestration and all graph transactions execute the production modules.
+    writeFileSync(runner, `
+      import fs from 'node:fs';
+      import { registerHooks, syncBuiltinESMExports } from 'node:module';
+      import { dirname } from 'node:path';
+      import { createMemoryPort } from ${JSON.stringify(moduleUrl('../scripts/formula/engine/memory.mjs'))};
+      import { importGraph, buildExportArtifact } from ${JSON.stringify(moduleUrl('../scripts/formula/core/export.mjs'))};
+      const port = createMemoryPort();
+      const seeded = await importGraph(port, { filePath: ${JSON.stringify(seedFile)} });
+      if (!seeded.ok) throw new Error('seed import failed');
+      const clock = () => '2026-10-23T00:00:00.000Z';
+      const before = (await buildExportArtifact(port, { projectId: ${JSON.stringify(PROJECT)}, clock })).text;
+      const calls = [];
+      globalThis.restoreTestPort = { ...port, close: async () => {} };
+      globalThis.restoreTestCalls = calls;
+      registerHooks({ load(url, context, next) {
+        if (url === ${JSON.stringify(moduleUrl('../scripts/formula/engine/arcadedb.mjs'))}) return { format: 'module', shortCircuit: true, source: \
+          "export * from " + JSON.stringify(url + '?original') + "; export const createArcadeDbPort = () => globalThis.restoreTestPort; export const databaseNameFor = p => p; export const listDatabases = async () => [" + JSON.stringify(${JSON.stringify(PROJECT)}) + "]; export const dropDatabase = async () => { globalThis.restoreTestCalls.push('drop'); }; export const createDatabase = async () => { globalThis.restoreTestCalls.push('create'); };" };
+        if (url === ${JSON.stringify(moduleUrl('../scripts/formula/engine/lifecycle.mjs'))}) return { format: 'module', shortCircuit: true, source: \
+          "export * from " + JSON.stringify(url + '?original') + "; export const SERVER_STATUS = { READY: 'ready' }; export const serverStatus = async () => ({ status: 'ready' });" };
+        return next(url, context);
+      }});
+      const open = fs.openSync, sync = fs.fsyncSync, read = fs.readFileSync, mkdir = fs.mkdtempSync;
+      const dirs = new Set(), dirFds = new Set();
+      let fired = false;
+      fs.mkdtempSync = (prefix, ...args) => {
+        if (String(prefix).includes('steepy-formula-prestore-')) { const path = mkdir(${JSON.stringify(join(dir, 'prestore-'))}, ...args); dirs.add(fs.realpathSync(path)); return path; }
+        return mkdir(prefix, ...args);
+      };
+      fs.openSync = (path, flags, mode) => {
+        if (${JSON.stringify(failure)} === 'open' && typeof flags === 'number' && (flags & fs.constants.O_CREAT) && dirs.has(fs.realpathSync(dirname(String(path))))) {
+          fired = true; throw Object.assign(new Error('injected backup open failure'), { code: 'EIO' });
+        }
+        const fd = open(path, flags, mode); if (fs.fstatSync(fd).isDirectory() && dirs.has(fs.realpathSync(path))) dirFds.add(fd); return fd;
+      };
+      fs.fsyncSync = (fd) => { if (${JSON.stringify(failure)} === 'directory-sync' && dirFds.has(fd)) { fired = true; throw Object.assign(new Error('injected directory sync failure'), { code: 'EIO' }); } return sync(fd); };
+      fs.readFileSync = (path, ...args) => { if (${JSON.stringify(failure)} === 'corrupt' && String(path).endsWith('-pre-restore.jsonl')) { fired = true; return 'corrupt backup'; } return read(path, ...args); };
+      syncBuiltinESMExports();
+      const { main } = await import(${JSON.stringify(moduleUrl('../scripts/formula/cli.mjs'))});
+      const status = await main(['graph', 'restore', '--project', ${JSON.stringify(PROJECT)}, '--from', ${JSON.stringify(seedFile)}, '--force']);
+      const after = (await buildExportArtifact(port, { projectId: ${JSON.stringify(PROJECT)}, clock })).text;
+      fs.writeFileSync(${JSON.stringify(receipt)}, JSON.stringify({ calls, unchanged: before === after, fired }));
+      await port.close(); process.exitCode = status;
+    `);
+    const result = spawnSync(process.execPath, [runner], { encoding: 'utf8', env: process.env });
+    assert.ok(existsSync(receipt), result.stdout + result.stderr);
+    const observed = JSON.parse(readFileSync(receipt, 'utf8'));
+    assert.equal(observed.fired, true, 'the requested backup boundary was exercised');
+    assert.equal(result.status, 3, result.stdout + result.stderr);
+    assert.deepEqual(observed.calls, [], 'never drop or recreate after a failed or unverified backup');
+    assert.equal(observed.unchanged, true);
+    assert.equal(result.stdout, '');
+    assert.doesNotMatch(result.stderr, /internal error|TypeError/);
+  });
+}

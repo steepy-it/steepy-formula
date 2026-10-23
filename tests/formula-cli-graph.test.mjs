@@ -442,3 +442,141 @@ if (!gate.ok) {
     });
   });
 }
+
+// Faults stay at filesystem/engine boundaries; CLI dispatch and graph logic remain real.
+for (const command of ['export', 'backup']) {
+  test(`CLI ${command} refuses an unsafe destination without reporting success`, async () => {
+    const { file } = await buildSeed();
+    const dir = tempDir('cli-unsafe-export-');
+    const fs = await import('node:fs');
+    const victim = join(dir, 'victim');
+    fs.writeFileSync(victim, 'preserve me');
+    const alias = join(dir, 'alias');
+    fs.symlinkSync(victim, alias);
+    const args = command === 'export' ? ['--out', alias] : ['--to', join(alias, 'backup')];
+    const result = run(['graph', command, '--project', PROJECT, '--port', 'memory', '--seed', file, ...args]);
+    assert.equal(result.status, 3, result.stdout + result.stderr);
+    assert.equal(result.stdout, '', 'no successful export or backup receipt on refusal');
+    assert.doesNotMatch(result.stderr, /internal error|TypeError/);
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'preserve me');
+    assert.equal(fs.lstatSync(alias).isSymbolicLink(), true);
+  });
+}
+
+for (const command of ['export', 'backup', 'migrate-schema']) {
+  test(`CLI ${command} treats post-rename durability failure as operational`, async () => {
+    const { file } = await buildSeed();
+    const dir = tempDir('cli-durability-');
+    const hook = join(dir, 'fault.mjs');
+    // Installed in the child only. Match files under the invocation-owned output directories.
+    writeFileSync(hook, `
+      import fs from 'node:fs';
+      import { syncBuiltinESMExports } from 'node:module';
+      const open = fs.openSync, sync = fs.fsyncSync, mkdir = fs.mkdtempSync;
+      const dirs = new Set([fs.realpathSync(${JSON.stringify(dir)})]);
+      const fds = new Set();
+      fs.mkdtempSync = (prefix, ...args) => {
+        if (String(prefix).includes('steepy-formula-verified-backup-')) {
+          const path = mkdir(${JSON.stringify(join(dir, 'verified-backup-'))}, ...args); dirs.add(fs.realpathSync(path)); return path;
+        }
+        return mkdir(prefix, ...args);
+      };
+      fs.openSync = (path, flags, mode) => {
+        const fd = open(path, flags, mode);
+        if (fs.fstatSync(fd).isDirectory() && dirs.has(fs.realpathSync(path))) fds.add(fd);
+        return fd;
+      };
+      fs.fsyncSync = (fd) => {
+        if (fds.has(fd)) { fs.appendFileSync(${JSON.stringify(join(dir, 'fault-fired'))}, 'sync'); throw Object.assign(new Error('injected directory sync failure'), { code: 'EIO' }); }
+        return sync(fd);
+      };
+      syncBuiltinESMExports();
+    `);
+    const args = command === 'export' ? ['--out', join(dir, 'export.jsonl')] : command === 'backup' ? ['--to', dir] : ['--to', '1'];
+    const result = spawnSync(process.execPath, ['--import', hook, cliPath, 'graph', command, '--project', PROJECT, '--port', 'memory', '--seed', file, ...args], { encoding: 'utf8', env: process.env });
+    const fs = await import('node:fs');
+    assert.equal(result.status, 3, result.stdout + result.stderr);
+    assert.ok(fs.existsSync(join(dir, 'fault-fired')), 'directory fsync fault was exercised');
+    assert.equal(result.stdout, '', 'failed publication must not emit success');
+    assert.doesNotMatch(result.stderr, /internal error|TypeError/);
+    if (command === 'migrate-schema') {
+      assert.doesNotMatch(result.stderr, /a verified backup exists/i, 'uncertain publication is not verified recovery evidence');
+    }
+  });
+}
+
+
+for (const failure of ['backup-open', 'cutover']) {
+  test(`CLI migration recovery advice distinguishes ${failure} from verified backup evidence`, async () => {
+    const { file } = await buildSeed();
+    const dir = tempDir('cli-migration-recovery-');
+    const hook = join(dir, 'fault.mjs');
+    const marker = join(dir, 'fault-fired');
+    const memoryUrl = new URL('../scripts/formula/engine/memory.mjs', import.meta.url).href;
+    // Keep the real factory and transactions; fault only the adapter's destructive call.
+    const memoryWrapper = `
+      import fs from 'node:fs';
+      import { createMemoryPort as realFactory } from ${JSON.stringify(`${memoryUrl}?recovery-real`)};
+      let created = 0;
+      export function createMemoryPort(...args) {
+        const port = realFactory(...args);
+        if (++created !== 1) return port;
+        return { ...port, async begin(...args) {
+          const tx = await port.begin(...args);
+          return { ...tx, async deleteEdge() {
+            fs.appendFileSync(${JSON.stringify(marker)}, 'cutover');
+            throw Object.assign(new Error('injected cutover failure'), { code: 'EIO' });
+          }};
+        }};
+      }
+    `;
+    writeFileSync(hook, `
+      import fs from 'node:fs';
+      import { dirname } from 'node:path';
+      import { registerHooks, syncBuiltinESMExports } from 'node:module';
+      const mkdir = fs.mkdtempSync, open = fs.openSync;
+      const backupDirs = new Set();
+      fs.mkdtempSync = (prefix, ...args) => {
+        if (String(prefix).includes('steepy-formula-verified-backup-')) {
+          const path = mkdir(${JSON.stringify(join(dir, 'backup-'))}, ...args);
+          backupDirs.add(fs.realpathSync(path)); return path;
+        }
+        return mkdir(prefix, ...args);
+      };
+      fs.openSync = (path, flags, mode) => {
+        if (${JSON.stringify(failure)} === 'backup-open' && typeof flags === 'number' && (flags & fs.constants.O_CREAT) && backupDirs.has(fs.realpathSync(dirname(String(path))))) {
+          fs.appendFileSync(${JSON.stringify(marker)}, 'backup-open');
+          throw Object.assign(new Error('injected backup staging open failure'), { code: 'ENOSPC' });
+        }
+        return open(path, flags, mode);
+      };
+      syncBuiltinESMExports();
+      if (${JSON.stringify(failure)} === 'cutover') registerHooks({ load(url, context, next) {
+        if (url === ${JSON.stringify(memoryUrl)}) return { format: 'module', shortCircuit: true, source: ${JSON.stringify(memoryWrapper)} };
+        return next(url, context);
+      }});
+    `);
+    const result = spawnSync(process.execPath, ['--import', hook, cliPath, 'graph', 'migrate-schema', '--project', PROJECT, '--port', 'memory', '--seed', file, '--to', '1'], { encoding: 'utf8', env: process.env });
+    const fs = await import('node:fs');
+    assert.equal(result.status, 3, result.stdout + result.stderr);
+    assert.equal(fs.readFileSync(marker, 'utf8'), failure, 'the intended boundary must have been exercised');
+    assert.equal(result.stdout, '');
+    assert.doesNotMatch(result.stderr, /internal error|TypeError/);
+    const backupDirs = fs.readdirSync(dir).filter(name => name.startsWith('backup-'));
+    assert.equal(backupDirs.length, 1);
+    const backupFiles = fs.readdirSync(join(dir, backupDirs[0]));
+    if (failure === 'backup-open') {
+      assert.deepEqual(backupFiles, [], 'no recovery artifact exists after staging open fails');
+      assert.match(result.stderr, /injected backup staging open failure/);
+      assert.doesNotMatch(result.stderr, /a verified backup exists/i, 'a generated digest does not prove that a backup exists');
+    } else {
+      assert.equal(backupFiles.length, 1);
+      const { parseExportArtifact } = await import('../scripts/formula/core/export.mjs');
+      const artifact = parseExportArtifact(fs.readFileSync(join(dir, backupDirs[0], backupFiles[0]), 'utf8'));
+      assert.equal(artifact.ok, true);
+      assert.match(result.stderr, /injected cutover failure/);
+      assert.match(result.stderr, /a verified backup exists/i, 'retain recovery guidance after actual verified backup and failed cutover');
+      assert.ok(result.stderr.includes(artifact.trailer.digest.slice(0, 16)), 'recovery guidance identifies the actual on-disk verified backup');
+    }
+  });
+}

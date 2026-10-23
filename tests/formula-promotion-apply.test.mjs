@@ -8,6 +8,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from 'node:fs';
+import * as nodeFs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -485,18 +486,20 @@ test('a mid-apply injected failure rolls back atomically: prior revision stays r
   });
 });
 
-test('a post-commit export failure is REPORTED, never rolled back: the promotion is durable', async () => {
+test('a post-commit export failure is REPORTED, never rolled back: the promotion is durable', async (t) => {
+  const exportDir = mkdtempSync(join(tmpdir(), 'promotion-export-failure-'));
+  t.after(() => rmSync(exportDir, { recursive: true, force: true }));
   await withPort(async (port) => {
     await seedBaseGraph(port);
     await createScenario(port, { projectId: PROJECT, scenarioId: SCENARIO, proposedBy: PROPOSED_BY, operations: promotableOps() });
-    const failingFs = { writeFileSync() { throw new Error('disk full'); } };
+    const failingFs = { ...nodeFs, openSync() { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); } };
 
     const result = await applyPromotion(port, {
       projectId: PROJECT,
       scenarioId: SCENARIO,
       approver: APPROVER,
       provenance: PROVENANCE,
-      exportDir: '/nowhere',
+      exportDir,
       fs: failingFs,
     });
     // the promotion committed and the scenario was consumed...
@@ -630,6 +633,55 @@ if (!gate.ok) {
         assert.equal((await scenarioRecords(port, SCENARIO)).nodes.length, 3);
       } finally {
         await port.close();
+      }
+    });
+  });
+}
+
+
+for (const failure of ['export', 'prune']) {
+  test(`post-commit ${failure} failure reports the committed head without replay advice`, async (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'promotion-atomic-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    await withPort(async (port) => {
+      await seedBaseGraph(port);
+      await createScenario(port, { projectId: PROJECT, scenarioId: SCENARIO, proposedBy: PROPOSED_BY, operations: promotableOps() });
+      let pruneCalls = 0;
+      let exportCalls = 0;
+      const fs = {
+        ...nodeFs,
+        openSync(path, flags, mode) {
+          if (typeof flags === 'number' && (flags & nodeFs.constants.O_CREAT)) {
+            exportCalls++;
+            if (failure === 'export') throw Object.assign(new Error('export disk full'), { code: 'ENOSPC' });
+          }
+          return nodeFs.openSync(path, flags, mode);
+        },
+        readdirSync(path) { pruneCalls++; throw Object.assign(new Error('retention unavailable'), { code: 'EIO' }); },
+      };
+      const result = await applyPromotion(port, {
+        projectId: PROJECT, scenarioId: SCENARIO, approver: APPROVER, provenance: PROVENANCE,
+        exportDir: dir, fs, clock: () => '2026-10-23T12:00:00.000Z',
+      });
+      assert.equal(result.ok, true);
+      assert.equal(result.headRevision, 'apex:proj:revision:r4');
+      assert.equal(result.scenarioConsumed, true);
+      assert.equal(result.export.ok, false);
+      assert.equal(result.export.code, PROMOTION_ERROR_CODES.EXPORT_WRITE_FAILED);
+      assert.equal(result.export.identity.headRevision, result.headRevision);
+      assert.match(result.export.message, /committed/i);
+      assert.doesNotMatch(result.export.message, /roll\s*back|replay|re-?apply|retry.*promotion/i);
+      assert.equal(exportCalls, 1);
+      assert.equal(pruneCalls, failure === 'export' ? 0 : 1, 'failed export must never trigger retention');
+      assert.equal((await readChain(port, { projectId: PROJECT })).headRevision, result.headRevision);
+      assert.equal((await verifyChain(port, { projectId: PROJECT })).ok, true);
+      assert.deepEqual((await scenarioRecords(port, SCENARIO)).nodes, []);
+      const files = nodeFs.readdirSync(dir);
+      assert.equal(files.length, failure === 'export' ? 0 : 1);
+      if (failure === 'prune') {
+        const artifact = parseExportArtifact(nodeFs.readFileSync(join(dir, files[0]), 'utf8'));
+        assert.equal(artifact.ok, true);
+        assert.equal(artifact.header.headRevision, result.headRevision);
       }
     });
   });
