@@ -564,3 +564,105 @@ test('directoryPaths keeps every inception helper, reached engine module, and sk
   ];
   assert.deepEqual(directoryPaths(list), list);
 });
+
+// Version equality is insufficient: only the filtered Git tree defines payload identity.
+test('same-version retained blob divergence refuses without changing the remote', () => {
+  withFixture((fx) => {
+    const previous = publish(fx);
+    fx.write('README.md', 'changed payload, unchanged version\n');
+    fx.git(fx.work, 'add', 'README.md');
+    fx.git(fx.work, 'commit', '-qm', 'same version divergent payload');
+    for (const args of [[], ['--push']]) {
+      const result = fx.run(args);
+      assert.equal(result.status, 1, 'same version must not disguise a different tree');
+      assert.match(result.stderr, /diverg|tree|identity/i);
+      assert.equal(fx.remoteHead(BRANCH), previous);
+    }
+  });
+});
+
+test('a changed source with only excluded paths still has identical directory payload', () => {
+  withFixture((fx) => {
+    const previous = publish(fx);
+    fx.write('tests/a.test.mjs', 'excluded new bytes\n');
+    fx.git(fx.work, 'add', 'tests/a.test.mjs');
+    fx.git(fx.work, 'commit', '-qm', 'excluded-only change');
+    const result = fx.run(['--push']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /nothing to publish/);
+    assert.equal(fx.remoteHead(BRANCH), previous);
+  });
+});
+
+test('same-version executable-mode divergence is also a different payload', () => {
+  withFixture((fx) => {
+    const previous = publish(fx);
+    fx.git(fx.work, 'update-index', '--chmod=+x', 'scripts/tool.mjs');
+    fx.git(fx.work, 'commit', '-qm', 'change executable mode only');
+    const result = fx.run(['--push']);
+    assert.equal(result.status, 1);
+    assert.equal(fx.remoteHead(BRANCH), previous);
+  });
+});
+
+test('separately authorized correction appends only for the exact source and old tree', () => {
+  withFixture((fx) => {
+    const previous = publish(fx);
+    const oldTree = fx.git(fx.work, 'rev-parse', `${previous}^{tree}`);
+    fx.write('README.md', 'corrected same-version payload\n');
+    fx.git(fx.work, 'add', 'README.md');
+    fx.git(fx.work, 'commit', '-qm', 'correct payload');
+    const source = fx.git(fx.work, 'rev-parse', 'HEAD');
+    const args = ['--push', '--corrective', '--expected-source', source, '--expected-old-tree', oldTree];
+    for (const bad of [
+      ['--push', '--corrective'],
+      ['--push', '--expected-source', source, '--expected-old-tree', oldTree],
+      ['--push', '--corrective', '--expected-source', previous, '--expected-old-tree', oldTree],
+      ['--push', '--corrective', '--expected-source', source, '--expected-old-tree', '0'.repeat(40)],
+    ]) {
+      const refused = fx.run(bad);
+      assert.notEqual(refused.status, 0, `must refuse ${bad.join(' ')}`);
+      assert.equal(fx.remoteHead(BRANCH), previous);
+    }
+    const result = fx.run(args);
+    assert.equal(result.status, 0, result.stderr);
+    const next = fx.remoteHead(BRANCH);
+    assert.notEqual(next, previous);
+    assert.equal(fx.git(fx.work, 'rev-parse', `${next}^`), previous, 'correction preserves old history');
+    assert.equal(fx.git(fx.work, 'show', `${next}:README.md`), 'corrected same-version payload');
+    assert.match(fx.git(fx.work, 'log', '-1', '--format=%B', next), new RegExp(`Source-Commit: ${source}`));
+  });
+});
+
+test('publication directory push refuses main advancing after payload preparation', () => {
+  withFixture((fx) => {
+    const previous = publish(fx);
+    const candidate = fx.commitVersion('1.1.0');
+    fx.git(fx.work, 'push', '-q', 'origin', `${candidate}:refs/heads/main`);
+    const newer = fx.commitVersion('1.2.0');
+    const shimEnv = gitShim(fx, [
+      'if [ "$1" = commit-tree ]; then',
+      '  "$STEEPY_TEST_REAL_GIT" push --quiet origin "$STEEPY_TEST_NEW_MAIN:refs/heads/main" || exit 99',
+      'fi',
+    ]);
+    const result = fx.run(['--source', candidate, '--expected-main', candidate, '--push'], {
+      ...shimEnv, STEEPY_TEST_NEW_MAIN: newer,
+    });
+    assert.equal(result.status, 1, 'main recheck is a publication refusal, not unknown CLI usage');
+    assert.match(result.stderr, /main|supersed|stale/i);
+    assert.equal(fx.remoteHead('main'), newer, 'fixture must actually advance main after preparing payload');
+    assert.equal(fx.remoteHead(BRANCH), previous, 'no stale directory payload is pushed');
+  });
+});
+
+test('publication directory push refuses invalid launch evidence before remote mutation', () => {
+  withFixture((fx) => {
+    const previous = publish(fx);
+    const candidate = fx.commitVersion('1.1.0');
+    fx.git(fx.work, 'push', '-q', 'origin', `${candidate}:refs/heads/main`);
+    const result = fx.run(['--source', candidate, '--expected-main', candidate, '--publication', '--push']);
+    assert.equal(result.status, 1, 'invalid evidence is a publication refusal, not unknown CLI usage');
+    assert.match(result.stderr, /evidence|publication|validation/i);
+    assert.equal(fx.remoteHead(BRANCH), previous);
+  });
+});

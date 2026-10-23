@@ -35,66 +35,24 @@ test('release.yml: publishing explicitly needs successful validation and alone g
   assert.equal((workflow.match(/contents:\s*write/g) ?? []).length, 1);
 });
 
-test('release.yml: checks out full history and reads the version from plugin.json via node', () => {
+test('release.yml: delegates publication to the tested coordinator on the exact candidate', () => {
   const workflow = readWorkflow('.github/workflows/release.yml');
-
-  assert.match(workflow, /actions\/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1/);
-  assert.match(workflow, /fetch-depth:\s*0/);
-  assert.ok(
-    workflow.includes("require('./.claude-plugin/plugin.json').version"),
-    'release.yml must read the version out of .claude-plugin/plugin.json via node, not grep/sed',
-  );
+  assert.match(workflow, /fetch-depth:\s*0/, 'publication needs full history');
+  assert.match(workflow, /node scripts\/release-publication\.mjs --source "\$GITHUB_SHA"/, 'workflow must invoke the behavior-tested coordinator');
+  assert.match(workflow, /GH_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/, 'only publication uses its GitHub token');
+  assert.doesNotMatch(workflow, /git push|gh release create|publish-directory-branch\.mjs/, 'all external mutations pass through the coordinator');
+  assert.doesNotMatch(workflow, /--force|force-with-lease|--corrective/, 'automatic publication cannot authorize correction or force');
 });
 
-test('release.yml: is idempotent — checks whether the v<version> tag already exists', () => {
+test('release.yml: serializes publication without cancelling an in-flight mutation', () => {
   const workflow = readWorkflow('.github/workflows/release.yml');
-
-  assert.match(workflow, /git fetch --tags/);
-  assert.match(workflow, /git rev-parse -q --verify "refs\/tags\/v\$V"/);
-});
-
-test('release.yml: creates and pushes the v-prefixed tag on $GITHUB_SHA', () => {
-  const workflow = readWorkflow('.github/workflows/release.yml');
-
-  assert.match(workflow, /git tag "\$TAG" "\$GITHUB_SHA"/);
-  assert.match(workflow, /git push origin "\$TAG"/);
-});
-
-test('release.yml: creates the GitHub Release from extract-changelog.mjs output, with GH_TOKEN', () => {
-  const workflow = readWorkflow('.github/workflows/release.yml');
-
-  assert.ok(
-    workflow.includes('scripts/extract-changelog.mjs'),
-    'release.yml must call extract-changelog.mjs for the release body',
-  );
-  assert.match(workflow, /gh release create "\$TAG" --title "\$TAG" --notes-file/);
-  assert.match(workflow, /GH_TOKEN:\s*\$\{\{\s*github\.token\s*\}\}/);
-});
-
-test('release.yml: tag creation and Release creation are independently idempotent (stranded-tag recovery)', () => {
-  const workflow = readWorkflow('.github/workflows/release.yml');
-
-  // Two separate steps, not one combined step gated only on tag existence — a tag
-  // can exist without a Release (e.g. a prior run pushed the tag then failed before
-  // publishing); gating everything on tag existence would strand that version
-  // forever with no way to recover on a later run.
-  assert.match(
-    workflow,
-    /name:\s*Create tag\s*\n\s*if:\s*steps\.tag_check\.outputs\.exists == 'false'/,
-  );
-  assert.match(workflow, /name:\s*Create GitHub Release/);
-
-  // The Release step checks for an existing Release independently of the tag check,
-  // so a tag-exists-but-no-release run still creates the Release on a later run.
-  assert.match(workflow, /gh release view "\$TAG"/);
-});
-
-test('release.yml: falls back to a stock release body when changelog extraction fails', () => {
-  const workflow = readWorkflow('.github/workflows/release.yml');
-
-  // The release must never fail for a missing prose section: the fallback text sits
-  // on the failure branch of the extract-changelog.mjs call.
-  assert.match(workflow, /if node scripts\/extract-changelog\.mjs "\$V" > "\$NOTES_FILE"[\s\S]*?else[\s\S]*?see CHANGELOG\.md/);
+  assert.match(workflow, /concurrency:[\s\S]*?group:\s*[^\n]+[\s\S]*?cancel-in-progress:\s*false/, 'release runs serialize and recheck remote main');
+  const group = /concurrency:\s*\n\s*group:\s*([^\n]+)/.exec(workflow)?.[1];
+  assert.ok(group, 'publication concurrency declares a stable group');
+  assert.doesNotMatch(group, /github\.(?:run_id|run_number|run_attempt|sha)\b/, 'per-run or per-commit groups cannot serialize publication');
+  for (const [, expression] of group.matchAll(/\$\{\{(.*?)\}\}/g)) {
+    assert.match(expression.trim(), /^github\.(?:repository|workflow|ref|ref_name)$/, 'publication group expressions must use a stable repository, workflow or branch scope');
+  }
 });
 
 test('version-gate.yml: dedicated workflow (not a job in ci.yml), reacts to label toggles on PRs', () => {
@@ -173,35 +131,14 @@ test('ci.yml invokes reusable validation without requiring unavailable live evid
   assert.doesNotMatch(workflow, /require-release-evidence:\s*true/);
 });
 
-test('release.yml: appends the Claude directory payload after the GitHub Release, never forced', () => {
-  const workflow = readWorkflow('.github/workflows/release.yml');
-
-  const releaseIdx = workflow.indexOf('name: Create GitHub Release');
-  const dirIdx = workflow.indexOf('name: Publish Claude directory branch');
-
-  assert.ok(releaseIdx >= 0, 'should have Create GitHub Release step');
-  assert.ok(dirIdx >= 0, 'should have Publish Claude directory branch step');
-  assert.ok(dirIdx > releaseIdx, 'directory step should come after Release step');
-
-  assert.match(
-    workflow.slice(dirIdx),
-    /run:\s*node scripts\/publish-directory-branch\.mjs --source "\$GITHUB_SHA" --branch claude-directory --push\s*$/m,
-  );
-
-  const dirSlice = workflow.slice(dirIdx);
-  assert.ok(dirSlice.includes("GIT_AUTHOR_NAME: 'github-actions[bot]'"), 'should have GIT_AUTHOR_NAME');
-  assert.ok(dirSlice.includes("GIT_COMMITTER_NAME: 'github-actions[bot]'"), 'should have GIT_COMMITTER_NAME');
-  assert.ok(
-    dirSlice.includes("GIT_AUTHOR_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'"),
-    'should have GIT_AUTHOR_EMAIL',
-  );
-  assert.ok(
-    dirSlice.includes("GIT_COMMITTER_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'"),
-    'should have GIT_COMMITTER_EMAIL',
-  );
-
-  assert.doesNotMatch(workflow, /--force|force-with-lease/);
-
-  const usesMatches = (workflow.match(/^\s*(?:-\s*)?uses:/gm) ?? []).length;
-  assert.equal(usesMatches, 3, 'should have exactly 3 uses entries (no new actions)');
+test('workflows: external Actions remain SHA-pinned and PR validation stays read-only and credential-free', () => {
+  for (const path of ['release.yml', 'validate.yml', 'ci.yml', 'version-gate.yml']) {
+    const workflow = readWorkflow(`.github/workflows/${path}`);
+    for (const [, action] of workflow.matchAll(/uses:\s*([^\s#]+)/g)) {
+      if (!action.startsWith('./')) assert.match(action, /@[a-f0-9]{40}$/, `${path}: ${action} must be pinned`);
+    }
+    if (path !== 'release.yml') {
+      assert.doesNotMatch(workflow, /contents:\s*write|secrets\.|secrets:\s*inherit|GH_TOKEN:|ANTHROPIC_API_KEY|OPENAI_API_KEY/, `${path}: ordinary PR validation needs no native credentials or write token`);
+    }
+  }
 });
