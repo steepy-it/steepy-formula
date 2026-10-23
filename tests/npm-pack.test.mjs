@@ -1,10 +1,11 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { PROJECT, buildSeed } from './helpers/graph-seed.mjs';
 
 // Locks the multi-harness release payload (spec criterion 11): everything a
 // Codex/OpenCode/Pi/Claude Code install needs must actually land in the npm tarball,
@@ -249,4 +250,70 @@ test('the plugin bin/ shim is executable and forwards to the graph CLI', { skip:
   assert.equal(viaShim.status, direct.status);
   assert.equal(viaShim.stdout, direct.stdout);
   assert.equal(viaShim.stderr, direct.stderr);
+});
+
+// Exercise npm's actual generated link, rather than equating two possibly silent routes.
+test('installed npm executable dispatches from paths with spaces and a symlinked prefix', { skip: process.platform === 'win32' }, async (t) => {
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'steepy installed package ')));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const cache = join(scratch, 'npm cache');
+  const archives = join(scratch, 'local archives');
+  const prefix = join(scratch, 'install prefix');
+  const cwd = join(scratch, 'working directory');
+  for (const directory of [archives, prefix, cwd]) mkdirSync(directory, { recursive: true });
+  const npm = (args, directory) => {
+    const result = spawnSync(npmBin, ['--cache', cache, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', ...args], { cwd: directory, encoding: 'utf8', timeout: 120_000 });
+    assert.equal(result.status, 0, `local npm ${args[0]} failed: ${result.error ?? ''}\n${result.stderr}\n${result.stdout}`);
+    return result;
+  };
+  const pack = (directory) => {
+    const result = npm(['pack', '--json', '--pack-destination', archives], directory);
+    return join(archives, JSON.parse(result.stdout)[0].filename);
+  };
+  const tarball = pack(root);
+  // Prepare every already-installed dependency as a local archive. Passing them together
+  // satisfies transitive ranges without a registry, shared npm cache or global install.
+  const dependencies = [];
+  for (const entry of readdirSync(join(root, 'node_modules'), { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    const directory = join(root, 'node_modules', entry.name);
+    if (entry.name.startsWith('@')) {
+      for (const child of readdirSync(directory)) dependencies.push(pack(join(directory, child)));
+    } else if (existsSync(join(directory, 'package.json'))) dependencies.push(pack(directory));
+  }
+  writeFileSync(join(prefix, 'package.json'), JSON.stringify({ private: true }));
+  npm(['install', '--package-lock=false', tarball, ...dependencies], prefix);
+  const linkedPrefix = join(scratch, 'linked installation');
+  symlinkSync(prefix, linkedPrefix, 'dir');
+  const packageRoot = join(prefix, 'node_modules', 'steepy-formula');
+  const { file } = await buildSeed();
+  const routes = [
+    ['npm executable', join(prefix, 'node_modules', '.bin', 'steepy-formula'), []],
+    ['npm executable through linked prefix', join(linkedPrefix, 'node_modules', '.bin', 'steepy-formula'), []],
+    ['direct Node', process.execPath, [join(packageRoot, 'scripts', 'formula', 'cli.mjs')]],
+    ['Claude wrapper', join(packageRoot, 'bin', 'steepy-formula'), []],
+  ];
+  for (const [label, command, leading] of routes) {
+    await t.test(`${label}: hub-mode emits a meaningful report`, () => {
+      const result = spawnSync(command, [...leading, 'hub-mode', '--project', PROJECT, '--port', 'memory', '--seed', file], { cwd, encoding: 'utf8' });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /mode:\s+graph\b/, 'exit 0 must include a hub-mode report');
+      assert.match(result.stdout + result.stderr, /project:\s+cli-proj \(flag\)/);
+    });
+    await t.test(`${label}: invalid invocation visibly refuses with documented exit 2`, () => {
+      const result = spawnSync(command, [...leading, 'graph', 'not-a-command'], { cwd, encoding: 'utf8' });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 2, `invalid invocation must not silently succeed: ${result.stdout}${result.stderr}`);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /unknown subcommand|usage:/);
+    });
+  }
+  await t.test('installed CLI import has no dispatch or output side effects', () => {
+    const url = pathToFileURL(join(packageRoot, 'scripts', 'formula', 'cli.mjs')).href;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `const cli = await import(${JSON.stringify(url)}); if (typeof cli.main !== 'function') throw new Error('missing main');`], { cwd, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+  });
 });
