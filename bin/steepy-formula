@@ -1,6 +1,6 @@
 #!/bin/sh
 # The `steepy-formula` graph CLI by name. Claude Code puts an enabled plugin's bin/ on the Bash
 # tool's PATH, so skills and generated project instructions can call `steepy-formula` directly;
-# the npm package exposes the same entry through package.json `bin`.
+# the npm package uses a separate Node launcher through package.json `bin`.
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 1
 exec node "$here/../scripts/formula/cli.mjs" "$@"

@@ -221,6 +221,7 @@ test('npm package uses an explicit release files allowlist', () => {
     'CHANGELOG.md',
     'CONTRIBUTING.md',
     'SECURITY.md',
+    'PRIVACY.md',
     'LICENSE',
     'NOTICE',
     'RELEASE.md',

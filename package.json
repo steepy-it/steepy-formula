@@ -35,7 +35,7 @@
   },
   "main": "./adapters/opencode/steepy-formula.js",
   "bin": {
-    "steepy-formula": "scripts/formula/cli.mjs"
+    "steepy-formula": "scripts/formula/npm-cli.mjs"
   },
   "exports": {
     ".": "./adapters/opencode/steepy-formula.js",
@@ -69,6 +69,7 @@
     "CHANGELOG.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
+    "PRIVACY.md",
     "LICENSE",
     "NOTICE",
     "RELEASE.md",
