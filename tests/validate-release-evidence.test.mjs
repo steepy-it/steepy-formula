@@ -14,8 +14,13 @@ import {
   collectNpmPackagePaths,
   computePayloadIdentity,
   validateProductState,
-  validateReleaseEvidence,
+  validateReleaseEvidence as validateEvidence,
 } from '../scripts/validate-release-evidence.mjs';
+
+// Schema 1 is retained solely as an explicitly requested historical audit.
+const validateReleaseEvidence = (evidence, options) => validateEvidence(evidence, {
+  ...options, allowLegacyAudit: true,
+});
 
 const OBSERVED_AT = '2026-09-01';
 const NOW = new Date('2026-09-12T12:00:00Z');
@@ -97,9 +102,15 @@ function makeFixture() {
 function withFixture(fn) {
   const fixture = makeFixture();
   try {
-    return fn(fixture);
-  } finally {
+    const result = fn(fixture);
+    if (result && typeof result.then === 'function') {
+      return result.finally(() => rmSync(fixture.root, { recursive: true, force: true }));
+    }
     rmSync(fixture.root, { recursive: true, force: true });
+    return result;
+  } catch (error) {
+    rmSync(fixture.root, { recursive: true, force: true });
+    throw error;
   }
 }
 
@@ -414,5 +425,385 @@ test('product validation rejects malformed, divergent, or incomplete bump state'
 
     writeFileSync(join(root, 'CHANGELOG.md'), '## v1.2.2 (2026-08-01)\n');
     assert.throws(() => validateProductState(root, packagePaths), /CHANGELOG/);
+  });
+});
+
+// Synthetic validation inputs only: these are never native acceptance observations.
+const LAUNCH_ROWS = ['candidate-preflight', 'claude-code/macos', 'claude-code/linux', 'codex/macos', 'codex/linux'];
+const SKILLS = ['inception', 'init', 'check', 'new-surface', 'discovery', 'brainstorm', 'plan', 'implement', 'review', 'loop-engineer', 'graph-migrate'];
+const INCEPTION_CASES = [
+  'inception-a', 'inception-b',
+  'reconnaissance-architecture-interruption', 'research-child-interruption',
+  'approval-interruption', 'bootstrap-intent-outcome-interruption',
+  'verification-capture-interruption', 'complete-closing-note-interruption',
+  'required-check-fails', 'manual-confirmation-missing', 'application-fix-verification',
+  'unchanged-verification-resume', 'complete-init-discovery', 'application-drift-after-complete-init',
+  'final-abandon-interrupted', 'publication-before-staging', 'publication-after-staging',
+  'publication-ordered-target-prefixes', 'publication-final-descriptor-replacement',
+  'publication-foreign-divergent-targets', 'v1-descriptor-refusal-all-commands',
+  'collector-zero-red-command', 'versioned-copy-validation',
+];
+const PREFLIGHT_CASES = ['manifest-version-lockstep', 'version-transaction-complete', 'npm-package-composition', 'hub-coherence'];
+const NATIVE_CASES = ['clean-install-load', 'eleven-skill-discovery', 'skill-invocation', 'init-bootstrap',
+  'specialist-behavior-dispatch', 'discovery-context-coherence', 'brainstorm-plan-implement-review', ...INCEPTION_CASES];
+
+const HUMAN_GATED_CASES = ['init-bootstrap', 'discovery-context-coherence',
+  'brainstorm-plan-implement-review', 'inception-a', 'inception-b',
+  'approval-interruption', 'complete-init-discovery'];
+
+function withLaunchFixture(fn) {
+  return withFixture((fixture) => {
+    const records = LAUNCH_ROWS.map((id) => {
+      const preflight = id === 'candidate-preflight';
+      const [name, os] = preflight ? ['candidate-preflight', 'linux'] : id.split('/');
+      return {
+        ...structuredClone(fixture.evidence.records[0]), id,
+        host: { name, version: name === 'claude-code' ? '2.1.207' : name === 'codex' ? '0.144.0-alpha.4' : '24.22.1',
+          platform: os, architecture: 'arm64', profile: 'isolated-release-canary' },
+        installation: { method: 'native local-package install', composition: ['final npm payload', 'isolated host profile'],
+          clean: true, installedReleaseDisabled: true },
+        checks: (preflight ? PREFLIGHT_CASES : NATIVE_CASES).map((capability) => ({
+          capability, command: `synthetic unit procedure for ${capability}`, result: 'PASS',
+          observation: `synthetic unit observation for ${capability}`,
+          humanApprovals: !HUMAN_GATED_CASES.includes(capability) ? [] : [{ kind: 'human', approver: 'synthetic-fixture-human', response: 'Synthetic fixture approval; validation input only' }],
+          degradation: 'none',
+        })),
+        ...(preflight ? {} : { skills: [...SKILLS] }),
+      };
+    });
+    const evidence = { schemaVersion: 2, records };
+    return fn({ ...fixture, evidence, validate: (value = evidence) => validateEvidence(value, {
+      root: fixture.root, packagePaths: fixture.packagePaths, now: NOW,
+    }) });
+  });
+}
+
+test('schema 2 accepts the candidate and four distinct launch host/OS rows', () => {
+  withLaunchFixture(({ validate, payloadSha256, sourceRevision }) => {
+    assert.deepEqual(validate(), { productVersion: '1.2.3', payloadSha256, sourceRevisions: [sourceRevision] });
+  });
+});
+
+test('publication refuses legacy schema 1 unless explicitly requested as an optional audit', () => {
+  withFixture(({ evidence, root, packagePaths }) => {
+    assert.throws(() => validateEvidence(evidence, { root, packagePaths, now: NOW }));
+    assert.doesNotThrow(() => validateEvidence(evidence, { root, packagePaths, now: NOW, allowLegacyAudit: true }));
+  });
+});
+
+test('schema 2 rejects every absent row and experimental substitutions', async (t) => {
+  await withLaunchFixture(async ({ evidence, validate }) => {
+    for (const id of LAUNCH_ROWS) await t.test(`missing ${id}`, () => {
+      assert.throws(() => validate({ ...evidence, records: evidence.records.filter((r) => r.id !== id) }));
+    });
+    for (const id of ['opencode', 'pi', 'deepseek-harness', 'unknown']) await t.test(`substitution ${id}`, () => {
+      const copy = structuredClone(evidence); copy.records[1].id = id;
+      assert.throws(() => validate(copy));
+    });
+    await t.test('duplicate row', () => assert.throws(() => validate({ ...evidence, records: [...evidence.records, evidence.records[1]] })));
+  });
+});
+
+test('schema 2 independently requires every launch observation, including the full inception inventory', async (t) => {
+  // Keep cases explicit rather than deriving expected requirements from implementation exports.
+  for (const capability of NATIVE_CASES) await t.test(capability, () => withLaunchFixture(({ evidence, validate }) => {
+    const copy = structuredClone(evidence);
+    copy.records[1].checks = copy.records[1].checks.filter((c) => c.capability !== capability);
+    assert.throws(() => validate(copy));
+  }));
+});
+
+test('schema 2 rejects malformed identity, environment, lifecycle and case evidence', async (t) => {
+  const mutations = {
+    'unsupported schema version': (r, document) => { document.schemaVersion = 99; },
+    'duplicate check': (r) => r.checks.push(r.checks[0]),
+    'unknown check': (r) => { r.checks[0].capability = 'invented'; },
+    'missing observation': (r) => { delete r.checks[0].observation; },
+    'blank observation': (r) => { r.checks[0].observation = ''; },
+    'missing procedure': (r) => { delete r.checks[0].command; },
+    'unknown case key': (r) => { r.checks[0].invented = true; },
+    'unknown record key': (r) => { r.invented = true; },
+    'unknown host key': (r) => { r.host.invented = true; },
+    'wrong platform': (r) => { r.host.platform = 'windows'; },
+    'wrong host': (r) => { r.host.name = 'codex'; },
+    'malformed version': (r) => { r.host.version = 'latest'; },
+    'missing architecture': (r) => { delete r.host.architecture; },
+    'malformed architecture': (r) => { r.host.architecture = 'invalid architecture!'; },
+    'unclean installation': (r) => { r.installation.clean = false; },
+    'installed release active': (r) => { r.installation.installedReleaseDisabled = false; },
+    'missing skill': (r) => { r.skills.pop(); },
+    'duplicate skill': (r) => { r.skills[0] = r.skills[1]; },
+    'unknown skill': (r) => { r.skills[0] = 'invented'; },
+    'missing approval': (r) => { r.checks.find((c) => c.capability === 'approval-interruption').humanApprovals = []; },
+    'model self approval': (r) => { r.checks.find((c) => c.capability === 'approval-interruption').humanApprovals[0].kind = 'model'; },
+    'missing degradation': (r) => { delete r.checks[0].degradation; },
+    'malformed date': (r) => { r.observedAt = '2026-02-30'; },
+    'noncanonical date': (r) => { r.observedAt = '2026-9-1'; },
+    '31 days old': (r) => { r.observedAt = '2026-08-12'; },
+    'future date': (r) => { r.observedAt = '2026-09-13'; },
+    'wrong product version': (r) => { r.productVersion = '1.2.2'; },
+    'wrong payload': (r) => { r.payloadSha256 = 'b'.repeat(64); },
+    'unreachable source': (r) => { r.sourceRevision = 'a'.repeat(40); },
+    'wrong artifact digest': (r) => { r.artifact.sha256 = 'a'.repeat(64); },
+    'wrong artifact path': (r) => { r.artifact.path = 'docs/native-test-evidence-copy.md'; },
+    'credential in observation': (r) => { r.checks[0].observation = 'Authorization: Bearer unredacted-value'; },
+    'credential in procedure': (r) => { r.checks[0].command = 'tool --token unredacted-value'; },
+    'credential in approval': (r) => { r.checks.find((c) => c.capability === 'approval-interruption').humanApprovals[0].response = 'API_KEY=unredacted-value'; },
+    'credential in degradation': (r) => { r.checks[0].degradation = 'TOKEN=unredacted-value'; },
+  };
+  for (const result of ['FAIL', 'SKIPPED', 'NOT RUN', 'PENDING']) {
+    mutations[`record ${result}`] = (r) => { r.result = result; };
+    mutations[`case ${result}`] = (r) => { r.checks[0].result = result; };
+  }
+  for (const [name, mutate] of Object.entries(mutations)) await t.test(name, () => withLaunchFixture(({ evidence, validate }) => {
+    const copy = structuredClone(evidence); mutate(copy.records[1], copy); assert.throws(() => validate(copy));
+  }));
+});
+
+test('schema 2 accepts exactly 30-day evidence and evidence-only follow-up commits', () => {
+  withLaunchFixture(({ root, evidence, validate }) => {
+    for (const r of evidence.records) r.observedAt = '2026-08-13';
+    writeFileSync(join(root, 'docs', 'release-audit-remediation.md'), 'evidence-only follow-up\n');
+    writeJson(join(root, 'docs', 'native-test-evidence.json'), evidence);
+    git(root, ['add', '--all']); git(root, ['commit', '-m', 'evidence-only follow-up']);
+    assert.doesNotThrow(() => validate());
+  });
+});
+
+test('schema 2 binds launch evidence to shipped documentation bytes, modes and paths', async (t) => {
+  for (const mutation of ['bytes', 'mode', 'path']) await t.test(mutation, () => withLaunchFixture(({ root, evidence, packagePaths }) => {
+    let paths = packagePaths;
+    if (mutation === 'bytes') writeFileSync(join(root, 'adapters', 'index.js'), 'changed product\n');
+    if (mutation === 'mode') chmodSync(join(root, 'adapters', 'index.js'), 0o755);
+    if (mutation === 'path') {
+      writeFileSync(join(root, 'docs', 'ordinary-product.md'), 'shipped documentation\n');
+      paths = [...paths, 'docs/ordinary-product.md'];
+    }
+    const payloadSha256 = computePayloadIdentity(root, paths);
+    for (const r of evidence.records) r.payloadSha256 = payloadSha256;
+    assert.throws(() => validateEvidence(evidence, { root, packagePaths: paths, now: NOW }));
+  }));
+});
+
+test('schema 2 rejects credential-bearing artifacts even with the matching digest', () => {
+  withLaunchFixture(({ root, evidence, validate }) => {
+    writeFileSync(join(root, EVIDENCE_ARTIFACT_PATH), 'Authorization: Bearer unredacted-value\n');
+    for (const r of evidence.records) r.artifact.sha256 = sha256(readFileSync(join(root, EVIDENCE_ARTIFACT_PATH)));
+    assert.throws(() => validate());
+  });
+});
+
+test('schema 2 independently requires attributed human responses for each human-gated flow', async (t) => {
+  await withLaunchFixture(async ({ evidence, validate }) => {
+    const mutations = {
+      'missing approvals': (check) => { delete check.humanApprovals; },
+      'empty approvals': (check) => { check.humanApprovals = []; },
+      'missing approver': (check) => { delete check.humanApprovals[0].approver; },
+      'blank approver': (check) => { check.humanApprovals[0].approver = ''; },
+      'missing response': (check) => { delete check.humanApprovals[0].response; },
+      'blank response': (check) => { check.humanApprovals[0].response = ''; },
+      'missing attribution kind': (check) => { delete check.humanApprovals[0].kind; },
+      'model self approval': (check) => { check.humanApprovals[0].kind = 'model'; },
+    };
+    for (const capability of HUMAN_GATED_CASES) {
+      for (const [name, mutate] of Object.entries(mutations)) await t.test(`${capability}: ${name}`, () => {
+        const copy = structuredClone(evidence);
+        mutate(copy.records[1].checks.find((check) => check.capability === capability));
+        assert.throws(() => validate(copy));
+      });
+    }
+  });
+});
+
+test('schema 2 allows empty approval arrays on checks without a human gate', () => {
+  withLaunchFixture(({ evidence, validate }) => {
+    for (const record of evidence.records) {
+      for (const check of record.checks) {
+        if (!HUMAN_GATED_CASES.includes(check.capability)) assert.deepEqual(check.humanApprovals, []);
+      }
+    }
+    assert.doesNotThrow(() => validate());
+  });
+});
+
+test('schema 2 independently validates every candidate-preflight check', async (t) => {
+  await withLaunchFixture(async ({ evidence, validate }) => {
+    for (const capability of PREFLIGHT_CASES) await t.test(`missing ${capability}`, () => {
+      const copy = structuredClone(evidence);
+      copy.records[0].checks = copy.records[0].checks.filter((check) => check.capability !== capability);
+      assert.throws(() => validate(copy));
+    });
+    const mutations = {
+      'empty inventory': (record) => { record.checks = []; },
+      'duplicate check': (record) => { record.checks.push(structuredClone(record.checks[0])); },
+      'unknown check': (record) => { record.checks[0].capability = 'invented'; },
+    };
+    for (const result of ['FAIL', 'SKIPPED', 'NOT RUN', 'PENDING']) {
+      mutations[`check ${result}`] = (record) => { record.checks[0].result = result; };
+    }
+    for (const [name, mutate] of Object.entries(mutations)) await t.test(name, () => {
+      const copy = structuredClone(evidence); mutate(copy.records[0]);
+      assert.throws(() => validate(copy));
+    });
+  });
+});
+
+test('schema 2 rejects unknown fields at every remaining closed-object boundary', async (t) => {
+  await withLaunchFixture(async ({ evidence, validate }) => {
+    const mutations = {
+      document: (copy) => { copy.invented = true; },
+      installation: (copy) => { copy.records[1].installation.invented = true; },
+      artifact: (copy) => { copy.records[1].artifact.invented = true; },
+      approval: (copy) => {
+        copy.records[1].checks.find((check) => check.capability === 'approval-interruption').humanApprovals[0].invented = true;
+      },
+    };
+    for (const [name, mutate] of Object.entries(mutations)) await t.test(name, () => {
+      const copy = structuredClone(evidence); mutate(copy);
+      assert.throws(() => validate(copy));
+    });
+  });
+});
+
+// Exercise the shared credential scanner through complete schema-2 inputs, not
+// through an implementation regex export. Every value below is synthetic.
+const QUOTED_CREDENTIAL_FORMS = [
+  ['assignment', (value) => `API_KEY=${value}`],
+  ['flag whitespace', (value) => `tool --token ${value}`],
+  ['flag equals', (value) => `tool --password=${value}`],
+  ['authorization header', (value) => `Authorization: Bearer ${value}`],
+  ['API header', (value) => `X-Api-Key: ${value}`],
+  ['cookie header', (value) => `Cookie: session=${value}`],
+];
+
+function replaceArtifact(root, evidence, text) {
+  const bytes = Buffer.from(`${text}\n`);
+  writeFileSync(join(root, EVIDENCE_ARTIFACT_PATH), bytes);
+  for (const record of evidence.records) record.artifact.sha256 = sha256(bytes);
+}
+
+test('schema 2 rejects quoted credentials in fields and matching-digest artifacts', async (t) => {
+  await withLaunchFixture(async ({ root, evidence, validate }) => {
+    for (const quote of ['"', "'"]) {
+      for (const [form, format] of QUOTED_CREDENTIAL_FORMS) {
+        const credential = format(`${quote}synthetic secret with whitespace${quote}`);
+        for (const field of ['command', 'observation', 'degradation', 'human response']) {
+          await t.test(`${form}, ${quote}, ${field}`, () => {
+            const copy = structuredClone(evidence);
+            const check = copy.records[1].checks.find((c) => c.capability === 'approval-interruption');
+            if (field === 'human response') check.humanApprovals[0].response = credential;
+            else check[field] = credential;
+            assert.throws(() => validate(copy), /credential/i);
+          });
+        }
+        await t.test(`${form}, ${quote}, artifact`, () => {
+          const copy = structuredClone(evidence);
+          replaceArtifact(root, copy, credential);
+          try { assert.throws(() => validate(copy), /credential/i); }
+          finally { writeFileSync(join(root, EVIDENCE_ARTIFACT_PATH), 'redacted live evidence\n'); }
+        });
+      }
+    }
+  });
+});
+
+test('schema 2 accepts quoted complete redaction markers but rejects markers with extra content', async (t) => {
+  await withLaunchFixture(async ({ root, evidence, validate }) => {
+    for (const quote of ['"', "'"]) {
+      for (const marker of ['<redacted>', '[redacted]', 'REDACTED']) {
+        await t.test(`complete ${quote}${marker}${quote}`, () => {
+          const copy = structuredClone(evidence);
+          const commands = QUOTED_CREDENTIAL_FORMS.map(([, format]) => format(`${quote}${marker}${quote}`));
+          copy.records[1].checks[0].command = commands.join('; ');
+          replaceArtifact(root, copy, commands.join('\n'));
+          try { assert.doesNotThrow(() => validate(copy)); }
+          finally { writeFileSync(join(root, EVIDENCE_ARTIFACT_PATH), 'redacted live evidence\n'); }
+        });
+        for (const suffix of [' extra-secret', '-extra-secret']) {
+          await t.test(`incomplete marker ${quote}${marker}${suffix}${quote}`, () => {
+            const copy = structuredClone(evidence);
+            copy.records[1].checks[0].command = `tool --token ${quote}${marker}${suffix}${quote}`;
+            assert.throws(() => validate(copy), /credential/i);
+          });
+        }
+      }
+    }
+  });
+});
+
+test('schema 2 rejects normalized absence placeholders at each mandatory human gate', async (t) => {
+  await withLaunchFixture(async ({ evidence, validate }) => {
+    for (const capability of HUMAN_GATED_CASES) {
+      for (const field of ['approver', 'response']) {
+        for (const placeholder of ['none', ' NoNe ', 'NOT RUN', ' not   run ', 'PENDING', ' PeNdInG ']) {
+          await t.test(`${capability}: ${field}=${JSON.stringify(placeholder)}`, () => {
+            const copy = structuredClone(evidence);
+            copy.records[1].checks.find((check) => check.capability === capability).humanApprovals[0][field] = placeholder;
+            assert.throws(() => validate(copy));
+          });
+        }
+      }
+    }
+    // The baseline carries actual attributed fixture text on gated checks and
+    // empty arrays on ungated checks; placeholder rejection must preserve it.
+    await t.test('attributed human text and ungated empty arrays remain valid', () => {
+      assert.doesNotThrow(() => validate());
+    });
+  });
+});
+
+test('schema 2 credential boundaries require a complete marker across adjacent chunks', async (t) => {
+  const boundaryCases = [
+    ['unquoted marker plus text chunk, assignment', (q) => `API_KEY=REDACTED${q}synthetic-secret${q}`],
+    ['unquoted marker plus space chunk, flag', (q) => `tool --token REDACTED${q} synthetic-secret${q}`],
+    ['unquoted marker plus semicolon chunk, API header', (q) => `X-Api-Key: REDACTED${q};synthetic-secret${q}`],
+    ['quoted marker plus unquoted suffix, cookie', (q) => `Cookie: session=${q}REDACTED${q}synthetic-secret`],
+    ['quoted marker plus quoted suffix, flag equals', (q) => `tool --password=${q}REDACTED${q}${q} synthetic-secret${q}`],
+    ['outer-quoted authorization header with content before close', (q) => `curl -H ${q}Authorization: Bearer REDACTED synthetic-secret${q}`],
+    ['outer-quoted cookie with semicolon content before close', (q) => `curl -H ${q}Cookie: session=REDACTED;synthetic-secret${q}`],
+    ['unterminated quoted marker, assignment', (q) => `API_KEY=${q}REDACTED`],
+    ['mismatched quoted marker, flag', (q) => `tool --token ${q}REDACTED${q === '"' ? "'" : '"'}`],
+    ['empty quoted value, API header', (q) => `X-Api-Key: ${q}${q}`],
+    ['unterminated suffix after marker, cookie', (q) => `Cookie: session=REDACTED${q} synthetic-secret`],
+    ['empty unquoted value, assignment', () => 'API_KEY='],
+  ];
+  await withLaunchFixture(async ({ root, evidence, validate }) => {
+    for (const quote of ['"', "'"]) {
+      for (const [name, format] of boundaryCases) {
+        const text = format(quote);
+        await t.test(`${name}, ${quote}, field`, () => {
+          const copy = structuredClone(evidence);
+          copy.records[1].checks[0].command = text;
+          assert.throws(() => validate(copy), /credential/i);
+        });
+        await t.test(`${name}, ${quote}, matching-digest artifact`, () => {
+          const copy = structuredClone(evidence);
+          replaceArtifact(root, copy, text);
+          try { assert.throws(() => validate(copy), /credential/i); }
+          finally { writeFileSync(join(root, EVIDENCE_ARTIFACT_PATH), 'redacted live evidence\n'); }
+        });
+      }
+    }
+  });
+});
+
+test('schema 2 credential boundaries preserve complete markers and outer-quoted redacted headers', async (t) => {
+  await withLaunchFixture(async ({ root, evidence, validate }) => {
+    for (const marker of ['<redacted>', '[redacted]', 'REDACTED']) {
+      for (const quote of ['"', "'"]) await t.test(`${quote}${marker}${quote}`, () => {
+        const texts = [
+          `API_KEY=${marker}`, `tool --token ${marker}`, `Cookie: session=${marker}`,
+          `API_KEY=${quote}${marker}${quote}`, `tool --token ${quote}${marker}${quote}`,
+          `curl -H ${quote}Authorization: Bearer ${marker}${quote}`,
+          `curl -H ${quote}X-Api-Key: ${marker}${quote}`,
+          `curl -H ${quote}Cookie: session=${marker}${quote}`,
+        ];
+        const copy = structuredClone(evidence);
+        copy.records[1].checks[0].command = texts.join('; ');
+        replaceArtifact(root, copy, texts.join('\n'));
+        try { assert.doesNotThrow(() => validate(copy)); }
+        finally { writeFileSync(join(root, EVIDENCE_ARTIFACT_PATH), 'redacted live evidence\n'); }
+      });
+    }
   });
 });
