@@ -4,7 +4,7 @@ Use this checklist alongside [RELEASE.md](../RELEASE.md). It describes the proce
 publishing a release to a public channel; the CI run and GitHub settings on the final commit
 establish current status. The Release workflow produces the GitHub release line (tag, GitHub
 Release, and the `claude-directory` payload commit); npm publication, marketplace submissions,
-and optional audit evidence are separate steps.
+and optional schema-1 historical audit are separate steps. Required schema-2 launch evidence gates publication remote mutation.
 
 ## Before publishing
 
@@ -59,3 +59,10 @@ Use a fresh environment without stored GitHub credentials to check:
 A local tarball install validates packaging, not anonymous GitHub access or native host
 behavior. Record those checks separately. See [installation](installation.md) for commands
 and [the release checklist](../RELEASE.md#public-distribution-checklist) for later channels.
+
+
+## Launch evidence gate
+
+Claude Code and Codex on macOS and Linux are the supported launch combinations with Node 24. Windows is unsupported. Packed OpenCode, Pi and DeepSeek Harness integrations remain experimental. Run the exact candidate through all four clean host/OS installations and the complete [schema-2 capability inventory](release-evidence.md), including real skill-driven full-chain and inception A/B/recovery flows, human approvals, degradation records and clean versioned-copy validation. Every unobserved case remains NOT RUN in the [acceptance matrix](inception-acceptance.md#four-combination-launch-matrix). Preserve prior dated observations as history. Existing prerelease evidence files remain unchanged until actual acceptance supplies observations.
+
+Before any remote tag, release or directory mutation, `node scripts/validate-release-evidence.mjs` must accept source/payload/version-bound schema 2 with fresh redacted artifacts and independently reviewed provenance. `--product-only`, synthetic fixtures, descriptor-nonce responses and optional `--legacy-audit` cannot authorize publication. The coordinator checks current remote main and exact existing identities at each stage, serializes publication and reobserves uncertain outcomes on retry. A same-version directory payload must match exact source identity and bytes; never treat a version match alone as success. No npm or store availability is established until that channel is observed.

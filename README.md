@@ -18,7 +18,9 @@
 
 Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation.
 
-Requires **Node.js >= 24**, **Docker** for the local graph engine, and a supported coding agent: Claude Code, Codex, OpenCode, Pi, or DeepSeek Harness. Release notes are in the [changelog](CHANGELOG.md).
+Supported launch hosts are Claude Code and Codex on macOS and Linux with Node.js >= 24. Windows is unsupported. OpenCode, Pi, and DeepSeek Harness are experimental integrations; their adapters remain packed, but they do not substitute for launch acceptance. Observed host versions and architectures are evidence metadata, not minimum-version or architecture-support promises.
+
+Requires **Node.js >= 24**, **Docker** for the local graph engine, and Claude Code or Codex on macOS or Linux. Release notes are in the [changelog](CHANGELOG.md).
 
 ## Why steepy-formula?
 
@@ -27,10 +29,10 @@ In motorsport, the **formula** is the rulebook: the technical regulations every 
 - **Start from an idea** — `/steepy-formula:inception` turns an idea, a design, or a prototype into a verified, runnable first version before any hub exists, then hands off to `init` and `discovery`.
 - **Canonical graph as authority** — the Stable Knowledge Graph is the single source of stable knowledge; a steepy-apex `.apex/` Markdown hub is only a **one-time migration source** for `/steepy-formula:graph-migrate`, never a second authority.
 - **Deterministic context resolution** — `context resolve` returns the rules, owners, checks, skills, and rationale applicable to a task path or target, each with the graph path that made it applicable.
-- **Human-approved promotion** — every change to stable knowledge is a reviewed, isolated scenario applied by a human-approved promotion transaction and recorded in a hash-chained revision. The core can auto-export on every promotion (configurable export directory + retention); `graph export` / `graph backup` capture a signed state at any time.
+- **Human-approved promotion** — every change to stable knowledge is a reviewed, isolated scenario applied by a human-approved promotion transaction and recorded in a hash-chained revision. The core can auto-export on every promotion (configurable export directory + retention); `graph export` / `graph backup` capture a SHA-256 integrity-checked state at any time.
 - **A real graph engine, pinned** — ArcadeDB (pinned release) behind a portable engine adapter, with **Studio** as the professional Explorer; an in-memory reference port runs without Docker for development and tests.
-- **Local-first** — the engine runs in a local docker lifecycle bound to localhost; your graph never leaves your machine.
-- **Audit by construction** — a hash-chained in-graph Revision trail with replay detection: any out-of-band write is caught by `graph validate`.
+- **Local-first** — the engine runs in a local docker lifecycle bound to localhost; graph storage stays local; resolved context can reach your harness provider (see [privacy](PRIVACY.md)).
+- **Audit by construction** — a hash-chained in-graph Revision trail with replay detection: out-of-band writes inconsistent with retained history are reported by `graph validate`.
 - **Graph-aware workflow chain** — a self-contained `brainstorm → plan → implement → review` flow where stable knowledge stays coherent, local specs/plans live under `.formula/work/`, and review's insight sweep assembles the durable decisions it discovers into a Promotion Scenario, applied only at an explicit human gate before work is declared done. Small fixes stay fast; a closed design with a machine-verifiable goal can run as a bounded autonomous loop.
 - **Complexity-matched models** — plans rate every task's complexity; implementation dispatches the cheapest model tier that can carry it and records each choice in a run ledger. [Provider-aware model selection](docs/workflow.md#model-selection) adapts to the harness; hosts without per-task selection use the session model.
 
@@ -44,6 +46,17 @@ local alternatives and troubleshooting are in [the installation guide](docs/inst
 
 ### Claude Code
 
+Before init, in the complete local plugin checkout, prepare Node.js >= 24 and a running Docker daemon, then install dependencies and put `steepy-formula` on PATH:
+
+```sh
+cd /absolute/path/to/steepy-formula
+npm ci --omit=dev
+export PATH="$PWD/bin:$PATH"
+command -v steepy-formula
+```
+
+Keep that absolute bin directory on the harness shell PATH too; verify `command -v steepy-formula` there before continuing. Dependency installation and PATH setup are explicit local steps.
+
 Run inside Claude Code:
 
 ```text
@@ -51,10 +64,21 @@ Run inside Claude Code:
 /plugin install steepy-formula@steepy-formula
 ```
 
-Reload plugins, open your project, then run `/steepy-formula:init`.
+Reload plugins and open the target repository. Set `export STEEPY_PROJECT=your-project-id` in the harness shell; configure a local database credential as [getting started](docs/getting-started.md#3-credentials-before-the-first-graph-init) describes, never in Git. For a new project run `/steepy-formula:inception`; for an existing repository run `/steepy-formula:init`, then `/steepy-formula:discovery`. Inception hands off to init/discovery. Approve the exact graph promotion preview before apply, invoke the generated project bootstrap, then `/steepy-formula:check`.
 [Details](docs/installation.md#claude-code).
 
 ### Codex
+
+Before init, in the complete local plugin checkout, prepare Node.js >= 24 and a running Docker daemon, then install dependencies and put `steepy-formula` on PATH:
+
+```sh
+cd /absolute/path/to/steepy-formula
+npm ci --omit=dev
+export PATH="$PWD/bin:$PATH"
+command -v steepy-formula
+```
+
+Keep that absolute bin directory on the harness shell PATH too; verify `command -v steepy-formula` there before continuing. Dependency installation and PATH setup are explicit local steps.
 
 Run in your terminal:
 
@@ -63,10 +87,10 @@ codex plugin marketplace add steepy-it/steepy-formula
 codex plugin add steepy-formula@steepy-formula
 ```
 
-Start a new Codex session in your project and select steepy-formula's `init` skill (`$init`).
+Start a new Codex session in the target repository. Set `export STEEPY_PROJECT=your-project-id` in its shell and configure the local database credential as [getting started](docs/getting-started.md#3-credentials-before-the-first-graph-init) describes, never in Git. For a new project use `$inception`; for an existing repository use steepy-formula's `$init`, then `$discovery`. Inception hands off to init/discovery. Approve the exact graph promotion preview before apply, invoke the generated project bootstrap, then `$check`.
 [Details](docs/installation.md#codex).
 
-### OpenCode
+### OpenCode (experimental)
 
 Clone the complete package to a permanent location:
 
@@ -83,7 +107,7 @@ Add its absolute file URL to the `plugin` array in your project's `opencode.json
 Restart OpenCode in your project, run `/steepy-formula-init`, and approve access to the
 checkout when prompted. [Details](docs/installation.md#opencode).
 
-### Pi
+### Pi (experimental)
 
 ```sh
 pi install git:github.com/steepy-it/steepy-formula
@@ -92,7 +116,7 @@ pi install git:github.com/steepy-it/steepy-formula
 Start Pi in your project and run `/skill:init`.
 [Details](docs/installation.md#pi).
 
-### DeepSeek Harness
+### DeepSeek Harness (experimental)
 
 Clone the package, then install it into your configured profile (replace `<name>`):
 
@@ -159,8 +183,10 @@ Every read command refuses an unsupported schema version (exit 1); `graph migrat
 - **One local container per project** — `apex-graph-<project-id>`, pinned ArcadeDB image, every port bound to `127.0.0.1`; host ports are chosen by docker, and the `graph init` output prints the exact engine/Studio URL. The project id resolves through a fixed chain — `--project` flag > `STEEPY_PROJECT` env > the committed `.formula/config.json` binding written by init > the `demo` fallback — so a bound repo needs no flag; re-pointing a bound repo requires an explicit `graph init --force`.
 - **Lifecycle** — `graph init` is idempotent (creates, starts, or reuses the server); stop it with `docker stop apex-graph-<project-id>` (there is no CLI stop command).
 - **Explore** — ArcadeDB Studio at the `engine:` URL (user `root` + the password from the secret chain), the typed `promotion preview` diff, `context resolve`, or `--port memory --seed <export>` without docker.
-- **Save a state** — `graph export --out <file>` writes the signed export (full graph + revision chain + head + digest); `graph backup` adds the engine-native copy; `graph restore --from <file>` validates and replays the chain (`--force` overwrites a non-empty database after a verified pre-restore backup).
-- **Share with a colleague** — the graph lives in your local container, not the repo: hand over the signed export and have them `graph init` + `graph restore` with the same project id on their machine. Credentials never travel inside the export.
+- **Save a state** — `graph export --out <file>` writes the SHA-256 integrity-checked export (full graph + revision chain + head + digest); `graph backup` adds the engine-native copy; `graph restore --from <file>` validates and replays the chain (`--force` overwrites a non-empty database after a verified pre-restore backup).
+- **Share with a colleague** — the graph lives in your local container, not the repo: hand over the SHA-256 integrity-checked export and have them `graph init` + `graph restore` with the same project id on their machine. Credentials never travel inside the export.
+
+Portable exports use a SHA-256 digest and a hash-chained retained Revision history. Validation detects changes inconsistent with that retained history; it does not authenticate the author or producer. An attacker who rewrites the full history and recomputes every checksum can evade those integrity checks. Keep independently trusted checkpoints when provenance matters.
 
 ### MCP server
 
@@ -191,7 +217,7 @@ steepy-formula never commits or pushes without your say-so:
 
 The coherence gate runs at `check`/`review` time on every harness — the plugin wires no end-of-turn gate — and the migration hint reaches you through `steepy-formula hub-mode` and the generated bootstrap at the start of a task: a repository still carrying a steepy-apex `.apex/` area reports `migrate` and is pointed at `/steepy-formula:graph-migrate`.
 
-The canonical gate is the graph: `steepy-formula graph validate` checks the portable invariants and replays the Revision chain to detect any out-of-band write. Run `/steepy-formula:check` any time you want the gate on demand.
+The canonical gate is the graph: `steepy-formula graph validate` checks the portable invariants and replays the Revision chain to detect writes inconsistent with retained history. Run `/steepy-formula:check` any time you want the gate on demand.
 
 For deeper drift, run `/steepy-formula:discovery` periodically: a seeded interview walks the codebase and proposes updates as item cards with `file:line` evidence and a write-back preview. It's re-runnable — additive and diff-gated, so a second run only surfaces what's new or changed.
 
@@ -200,7 +226,7 @@ For deeper drift, run `/steepy-formula:discovery` periodically: a seeded intervi
 steepy-formula has no server and sends no telemetry: no data reaches steepy-it. Your graph runs in
 a local container bound to `127.0.0.1`; specs, plans, and workflow logs stay in your repository
 under the gitignored `.formula/work/`; autopilot logs are redacted by default (`log-mode: safe`).
-These skills reach services outside your agent session:
+Ordinary agent use can send resolved graph context, prompts, repository content and tool output to your selected harness/model provider. These additional skill operations reach services outside your agent session:
 
 | Skill | Service | What is sent |
 |---|---|---|

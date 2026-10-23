@@ -18,7 +18,7 @@ Detailed references:
 
 - [Publication checklist](docs/publication-readiness.md).
 
-- [Optional audit evidence schema, capabilities and provenance](docs/release-evidence.md).
+- [Required launch evidence schema, capabilities and provenance](docs/release-evidence.md).
 
 - The inception skill's native acceptance runs are a separate release gate, defined in
   [docs/inception-acceptance.md](docs/inception-acceptance.md).
@@ -46,9 +46,9 @@ With the local engine available, `node scripts/formula/cli.mjs graph validate` m
 on this repository's own graph; CI cannot run that gate, so it stays a release-time check.
 
 Inside Claude Code, `/plugin validate .` provides plugin validation.
-Optional audit verification: `node scripts/validate-release-evidence.mjs` reads `docs/native-test-evidence.json` and referenced artifacts
+Required publication verification: `node scripts/validate-release-evidence.mjs` reads `docs/native-test-evidence.json` and referenced artifacts
 in `docs/native-test-evidence.md`. It checks recorded evidence; it does not run providers
-or generate missing evidence. audit evidence is not required by the release workflow.
+or generate missing evidence. Schema 2 is mandatory before publication remote mutation; only `--legacy-audit` is optional historical verification.
 
 ## Smoke test
 
@@ -438,16 +438,15 @@ downgraded PR versions. A PR with no user-facing change (docs-only, CI-only) can
 `no-release` label, which skips only the increment requirement; canonical parsing and
 downgrade rejection still apply.
 
-**Tag at merge.** The `Release` workflow (`.github/workflows/release.yml`) runs on every
+**Candidate-bound publication at merge.** The `Release` workflow (`.github/workflows/release.yml`) runs on every
 push to main, but can publish only after tests, version and package validation succeed
 (the graph coherence gate needs a local engine, so it stays a release-time preflight).
 If tag `vX.Y.Z` for the current version doesn't exist yet, it creates and pushes it. It then
-independently creates the GitHub Release, with the body pulled from the matching
+creates the matching nondraft GitHub Release only after schema-2 evidence and candidate checks, with the body pulled from the matching
 `CHANGELOG.md` section via `scripts/extract-changelog.mjs` (falls back to a stock
 body if extraction fails). Last, it appends one Claude directory payload commit for a new
 version to the `claude-directory` branch (see
-[Claude directory submission](#claude-directory-submission)). All three publication steps are
-idempotent.
+[Claude directory submission](#claude-directory-submission)). The coordinator serializes runs, checks exact source/tag/release identity and remote main before each stage, and reobserves uncertain outcomes on retry. Existing directory versions are accepted only for an identical payload/source identity; mismatches fail closed.
 
 **Direct pushes to main.** A repo-local PreToolUse hook (`.claude/settings.json` →
 `scripts/push-version-guard.mjs`) blocks a `git push` on main for a known invalid version,
@@ -505,11 +504,10 @@ any plugin directory. Store approval is separate from technical validation.
 - [ ] Review Git history and tracked release contents before publishing to a new channel.
 - [ ] Configure main-branch protection/rulesets with the actual CI and version-gate check names.
 - [ ] Run preflight above on the exact candidate. The supported CI runtime is Node 24 on Linux;
-  native installation and macOS/Windows claims need their own applicable checks.
-- [ ] Refresh the live-canary matrix above for the harnesses the change affects. The optional
-  audit schema is not required for publication.
+  native installation on macOS and Linux requires its four launch rows; Windows is unsupported.
+- [ ] Refresh the live-canary matrix above for the harnesses the change affects. Schema-2 native evidence is required for publication; optional schema-1 historical audit is separate.
 - [ ] Prepare listing copy, logo, support contact, starter prompts, and a short demo. Use
-  [community submission copy](https://github.com/steepy-it/steepy-formula/blob/main/COMMUNITY_SUBMISSION.md)
+  [installation and support copy](docs/installation.md)
   as the starting point. Keep advanced runner limitations and the Docker requirement visible.
 - [ ] Merge the reviewed candidate, wait for Release validation/publication, and confirm the tag
   resolves to the intended commit. Existing tags are not moved by the workflow.
@@ -589,3 +587,10 @@ If a release has an install or runtime problem:
    release" above): bump `patch` at PR time, merge — the `Release` workflow tags and
    publishes it automatically.
 5. Re-run the local and GitHub marketplace smoke tests before updating release notes.
+
+
+## Current launch acceptance status
+
+Supported launch scope is Claude Code and Codex on macOS and Linux with Node 24. Windows is unsupported. OpenCode, Pi and DeepSeek Harness remain packed experimental integrations. Dated tables above are historical evidence of their named versions and original flow, never schema-2 launch proof. The [four-combination matrix](docs/inception-acceptance.md#four-combination-launch-matrix) and [schema-2 inventory](docs/release-evidence.md) require every case on every host/OS. Candidate preflight and all four host rows remain NOT RUN until observed; no native acceptance or public channel availability is claimed here.
+
+Default `node scripts/validate-release-evidence.mjs` requires current candidate-bound schema 2 before tag, GitHub Release or directory push. Product-only CI checks do not replace it. The coordinator rechecks source/payload, evidence, remote main and existing identities before remote stages. Recovery after an uncertain remote result must reobserve its identity before retrying; never move an existing tag or overwrite conflicting release/directory state. Optional `--legacy-audit` validates schema-1 history only. Preserve prerelease evidence files until actual native acceptance produces reviewed observations; never generate PASS from hermetic fixtures, nonce canaries or these instructions.

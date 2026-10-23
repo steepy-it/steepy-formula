@@ -1,6 +1,8 @@
 # Installation
 
-steepy-formula installs natively in five harnesses — [Claude Code](https://docs.claude.com/en/docs/claude-code), [Codex](https://developers.openai.com/codex), [OpenCode](https://opencode.ai), [Pi Coding Agent](https://github.com/badlogic/pi-mono), and DeepSeek Harness (dsh) — from one shared package: a single canonical `skills/` tree plus thin per-harness adapters and manifests. Pick your harness.
+Supported launch hosts are Claude Code and Codex on macOS and Linux with Node.js >= 24. Windows is unsupported. OpenCode, Pi, and DeepSeek Harness are experimental integrations; their adapters remain packed, but they do not substitute for launch acceptance. Observed host versions and architectures are evidence metadata, not minimum-version or architecture-support promises.
+
+steepy-formula packages integrations for five harnesses — [Claude Code](https://docs.claude.com/en/docs/claude-code), [Codex](https://developers.openai.com/codex), [OpenCode](https://opencode.ai), [Pi Coding Agent](https://github.com/badlogic/pi-mono), and DeepSeek Harness (dsh) — from one shared package: a single canonical `skills/` tree plus thin per-harness adapters and manifests. Pick your harness.
 
 GitHub installation requires access to this repository. Install the harness itself first,
 keep Node.js >= 24 and Git available on your PATH, and have Docker running for the local graph
@@ -8,6 +10,17 @@ engine. Public availability, marketplace approval, and npm publication are separ
 steps; a GitHub tag does not establish a store listing. See the [distribution checklist](../RELEASE.md#public-distribution-checklist).
 
 ### Claude Code
+
+Before init, in the complete local plugin checkout, prepare Node.js >= 24 and a running Docker daemon, then install dependencies and put `steepy-formula` on PATH:
+
+```sh
+cd /absolute/path/to/steepy-formula
+npm ci --omit=dev
+export PATH="$PWD/bin:$PATH"
+command -v steepy-formula
+```
+
+Keep that absolute bin directory on the harness shell PATH too; verify `command -v steepy-formula` there before continuing. Dependency installation and PATH setup are explicit local steps.
 
 **From GitHub:**
 
@@ -30,7 +43,7 @@ steps; a GitHub tag does not establish a store listing. See the [distribution ch
 /plugin install steepy-formula@steepy-formula
 ```
 
-Then restart Claude Code (or reload plugins) and run `/steepy-formula:init`.
+Then restart Claude Code (or reload plugins), open the target repository, and explicitly select `export STEEPY_PROJECT=your-project-id` in its shell before you run `/steepy-formula:init`. For a new project use `/steepy-formula:inception` first; for an existing repository follow init with `/steepy-formula:discovery`. Invoke the generated project bootstrap and `/steepy-formula:check` afterward. Configure the local database credential using [getting started](getting-started.md#3-credentials-before-the-first-graph-init); never commit it. Preview graph promotion and approve its exact changes as a human before apply.
 
 When Claude Code caches the plugin it installs the one npm dependency (`neo4j-driver`) from the
 committed lockfile and puts the plugin's `bin/` on the Bash tool's PATH, so the `steepy-formula`
@@ -38,6 +51,17 @@ graph CLI works by name. A plugin loaded in place from a local checkout gets no 
 run `npm ci --omit=dev` in that checkout first.
 
 ### Codex
+
+Before init, in the complete local plugin checkout, prepare Node.js >= 24 and a running Docker daemon, then install dependencies and put `steepy-formula` on PATH:
+
+```sh
+cd /absolute/path/to/steepy-formula
+npm ci --omit=dev
+export PATH="$PWD/bin:$PATH"
+command -v steepy-formula
+```
+
+Keep that absolute bin directory on the harness shell PATH too; verify `command -v steepy-formula` there before continuing. Dependency installation and PATH setup are explicit local steps.
 
 **From a local checkout** (for development):
 
@@ -53,7 +77,7 @@ codex plugin marketplace add steepy-it/steepy-formula
 codex plugin add steepy-formula@steepy-formula
 ```
 
-The checkout is itself a marketplace root (`.agents/plugins/marketplace.json` + `.codex-plugin/plugin.json` ship in the repo). Skills are invoked with `$<skill>` or picked automatically; run the `init` skill first.
+The checkout is itself a marketplace root (`.agents/plugins/marketplace.json` + `.codex-plugin/plugin.json` ship in the repo). Skills are invoked with `$<skill>` or picked automatically. Open the target repository and explicitly select `export STEEPY_PROJECT=your-project-id` in its shell before you run the `init` skill (`$init`). For a new project use `$inception` first; for an existing repository follow init with `$discovery`. Invoke the generated project bootstrap and `$check` afterward. Configure the local database credential using [getting started](getting-started.md#3-credentials-before-the-first-graph-init); never commit it. Preview graph promotion and approve its exact changes as a human before apply.
 
 ### OpenCode
 
@@ -113,7 +137,7 @@ The adapter registers eleven `steepy-formula-<skill>` commands, a model-invocabl
 
 ### Requirements
 
-- **A supported harness** — Claude Code, Codex, OpenCode, Pi Coding Agent, or DeepSeek Harness. One canonical skill set serves all five; where a harness lacks a capability (subagent dispatch, per-dispatch model choice), the skills degrade along a declared path — stated in the output, never silent.
+- **A supported harness** — Claude Code or Codex on macOS or Linux. OpenCode, Pi Coding Agent, and DeepSeek Harness are experimental. One canonical skill set serves all five; where a harness lacks a capability (subagent dispatch, per-dispatch model choice), the skills degrade along a declared path — stated in the output, never silent.
 - **Node.js >= 24** — the graph CLI (`steepy-formula`) and the scaffolders run on Node. The harness machinery uses Node built-ins only; the graph engine adapter adds exactly one pinned dependency, `neo4j-driver` (Apache-2.0), declared in `package.json`: an npm install resolves it, and a checkout installs it from the committed lockfile with `npm ci`. Node 24 is the supported runtime floor; CI validates Node 24.
 - **The `steepy-formula` CLI on PATH** — skills and the generated project instructions call it by
   name. Claude Code provides it through the plugin's `bin/`. On Codex, OpenCode, Pi, and DeepSeek

@@ -1,16 +1,18 @@
 # Getting started
 
+Supported launch hosts are Claude Code and Codex on macOS and Linux with Node.js >= 24. Windows is unsupported. OpenCode, Pi, and DeepSeek Harness are experimental integrations; their adapters remain packed, but they do not substitute for launch acceptance. Observed host versions and architectures are evidence metadata, not minimum-version or architecture-support promises.
+
 The end-to-end first-run guide: from zero to a running Stable Knowledge Graph, plus the
 day-2 operations — starting and stopping the engine, exploring the graph, saving a specific
 state, and handing the graph to a colleague. Day-to-day agent usage is covered by the
 [README](../README.md); the internals by [architecture.md](architecture.md).
 
 Everything here is local-first: the engine is a docker container bound to `127.0.0.1`, and
-nothing leaves your machine.
+graph storage remains local; your agent can send resolved graph context and repository content to its model provider (see [privacy](../PRIVACY.md)).
 
 ## 1. Prerequisites
 
-- **A supported harness** — Claude Code, Codex, OpenCode, Pi, or DeepSeek Harness (see the [installation guide](installation.md)).
+- **A supported harness** — Claude Code or Codex on macOS or Linux; experimental adapters are available for OpenCode, Pi, and DeepSeek Harness (see the [installation guide](installation.md)).
 - **Node.js >= 24** — the CLI and scaffolders run on Node.
 - **Docker** — the graph engine runs as a local container. The first `graph init` pulls the
   pinned image `arcadedata/arcadedb:26.8.1`, so the first run takes longer.
@@ -61,6 +63,8 @@ commands and machines. On a localhost dev server the password is readable back v
 more reason every port stays bound to `127.0.0.1`.
 
 ## 4. First-time setup
+
+Before invoking init, install the local checkout dependencies with `npm ci --omit=dev`, put its absolute `bin/` on the harness PATH, and run `command -v steepy-formula`. Use Node 24 and a running Docker daemon. A new project uses `inception` first; an existing repository uses `init` then `discovery`. After setup invoke the generated project bootstrap and `check`. Every graph promotion needs your approval of the exact preview before apply.
 
 1. **Install the plugin** in your harness — see the [installation guide](installation.md).
 2. **`/steepy-formula:init`** — the graph-first entry point: the Stable Knowledge Graph IS the
@@ -121,12 +125,12 @@ Studio/engine URL again, read the `engine:` line of `graph init` output, or
   directory (`--out <dir>` to choose, `--out -` to stdout).
 - **Whole-graph snapshot to stdout** — `steepy-formula graph export --project <id> --out -`.
 - **Without docker** — add `--port memory --seed <export-file>` to any read command to explore
-  a signed export in an in-memory engine.
+  a SHA-256 integrity-checked export in an in-memory engine.
 
 ## 7. Saving a specific state
 
 A "state" of the graph is its **head revision** (`r<n>`) — there are no branches or tags. You
-capture a state as a **signed export**: a JSONL artifact carrying the full graph, the complete
+capture a state as a **SHA-256 integrity-checked export**: a JSONL artifact carrying the full graph, the complete
 hash-chained Revision trail, the head revision, and a digest.
 
 ```bash
@@ -145,16 +149,18 @@ steepy-formula graph restore --project <id> --from checkpoint-r7.jsonl
   database is never destroyed. Restoring an older checkpoint over a newer graph is exactly
   this path.
 - Exit 0 from `restore` means `validated: clean` and `chain: clean`.
-- The core also supports **export-on-promotion** — every applied promotion writes a signed
+- The core also supports **export-on-promotion** — every applied promotion writes a SHA-256 integrity-checked
   export with retention (last 10 plus one per day) when the caller configures an export
   directory. The shipped CLI does not configure one today (`promotion apply` reports
   `export: none`), so treat explicit `graph export` / `graph backup` after promotions you
   care about as the operating procedure.
 
+Portable exports use a SHA-256 digest and a hash-chained retained Revision history. Validation detects changes inconsistent with that retained history; it does not authenticate the author or producer. An attacker who rewrites the full history and recomputes every checksum can evade those integrity checks. Keep independently trusted checkpoints when provenance matters.
+
 ## 8. Passing the graph to a colleague
 
 The graph does **not** live in the repo — it lives in your local docker container. The
-portable artifact is the signed export, and the whole hand-off is:
+portable artifact is the SHA-256 integrity-checked export, and the whole hand-off is:
 
 **On your machine:**
 
@@ -178,9 +184,7 @@ steepy-formula graph validate --project <id>                            # final 
   committed `.formula/config.json` binding makes this automatic — both sides can omit the flag.
 - **Credentials never travel in the export.** Each machine resolves its own `db-password`
   through the secret chain — nothing to share, nothing to leak.
-- **Integrity is verifiable by construction.** The artifact is signed (digest) and the
-  Revision trail is hash-chained: `graph validate` on the restored copy detects any
-  out-of-band edit made to the file in transit.
+- **Integrity is verifiable relative to retained history.** The artifact carries a SHA-256 digest and the Revision trail is hash-chained; validation reports inconsistencies, subject to the limits below.
 - **What does not travel:** `.formula/work/` (gitignored local specs and plans — disposable by
   design), your local password, and engine-native backup files (ArcadeDB-specific; prefer the
   portable export across machines).
@@ -202,3 +206,5 @@ routing, same revision head — and their own promotions continue the chain from
 | `promotion apply` exit 21 | no confirmation given | answer the interactive prompt (`y`/`yes`) or pass `--yes` deliberately |
 | `graph status` shows `staleness: stale` | repo topology changed since the last refresh | `steepy-formula graph refresh --project <id> --root .` |
 | a workflow script exits 25; `hub-mode` reports `migrate` | the repo still carries a steepy-apex `.apex/` area (a Markdown hub or leftover local state) | run `/steepy-formula:graph-migrate`, which migrates or discards it and removes `.apex/` |
+
+If a configured post-commit export fails, inspect the committed graph head and retry export only, never reapply the promotion. Durable export publication is atomic per file: failure before rename preserves the previous target; failure after rename can leave a visible new target with uncertain durability until parent-directory fsync succeeds. Verify the file and retry `graph export` or `graph backup`; no RPO-zero guarantee follows from a failed export.

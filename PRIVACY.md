@@ -7,16 +7,16 @@ runs no server for it, so no data reaches steepy-it.
 
 - No telemetry, analytics, or crash reports.
 - No account, sign-in, or license key.
-- No personal data.
+- No collection service operated by steepy-it; provider handling depends on your harness and account settings.
 
 ## What stays on your machine
 
 **The Stable Knowledge Graph.** Your project's stable knowledge lives in a local graph engine:
 an ArcadeDB server that steepy-formula runs in a Docker container on your machine, one per
 project, with every port bound to `127.0.0.1`. The plugin talks to it over the Bolt protocol
-through its one pinned runtime dependency, `neo4j-driver`. Nothing in the graph is sent
-anywhere unless you export it yourself (`graph export` / `graph backup` write local files you
-choose to share).
+through its one pinned runtime dependency, `neo4j-driver`. Graph storage remains local. Resolved graph context, prompts, repository content, and tool output can be sent to your selected harness/model provider during ordinary agent use, not only autopilot. `graph export` / `graph backup` write local files you choose to share.
+
+Portable exports use a SHA-256 digest and a hash-chained retained Revision history. Validation detects changes inconsistent with that retained history; it does not authenticate the author or producer. An attacker who rewrites the full history and recomputes every checksum can evade those integrity checks. Keep independently trusted checkpoints when provenance matters.
 
 **The database password.** It is resolved locally, first hit wins: your OS keychain (on macOS,
 the `security` CLI, service `steepy-formula`), then the owner-only, gitignored
@@ -24,7 +24,7 @@ the `security` CLI, service `steepy-formula`), then the owner-only, gitignored
 CI. It reaches the engine through the container's environment settings at `docker create`, so on
 your machine it is visible to `docker inspect` and to local process listings; it is never committed
 and never a `steepy-formula` command-line flag. If no password is stored, `graph init` generates a
-fresh one per run. Signed exports never carry credentials.
+fresh one per run. Portable exports never carry credentials.
 
 **Your repository.** Specs, plans, and workflow logs stay in your repository under the
 gitignored `.formula/work/`. Autopilot logs are redacted by default (`log-mode: safe`). The
@@ -34,7 +34,7 @@ removes it) is ordinary files in your repository; you decide whether to commit i
 
 ## External services
 
-These skills reach services outside your agent session:
+Ordinary agent sessions can send graph context and repository/tool content to your selected model provider according to the harness settings. These additional skill operations reach services outside your agent session:
 
 | Skill | Service | What is sent |
 |---|---|---|
