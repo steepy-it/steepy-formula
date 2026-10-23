@@ -114,7 +114,7 @@
 // through, never re-derived. Only `ScenarioOperation` records reach the ChangeSet (annotations are
 // filtered by record type). The change is applied via B5 `applyChangeSet` in ONE transaction
 // (mutation + Revision + head), so a mid-apply failure rolls back atomically and the prior revision
-// stays readable. On success the signed export (B6) is written into `exportDir` and retention is
+// stays readable. On success the integrity-checked export (B6) is written into `exportDir` and retention is
 // pruned; a post-commit export failure is REPORTED (`EXPORT_WRITE_FAILED`), never rolled back — the
 // promotion is durable and the export is a derived, regenerable artifact (§22, criterion 14). The
 // scenario is then consumed (`dropScenario`): its change is permanently recorded in the Revision
@@ -711,17 +711,24 @@ export const DEFAULT_EXPORT_RETENTION = deepFreeze({ keepLast: 10, keepDaily: tr
 // (`graph export` exists later in task F4). Any throw from the export or the retention pass becomes
 // `EXPORT_WRITE_FAILED` carrying the underlying error.
 async function writePromotionExport(port, { projectId, scenarioId, headRevision, exportDir, retention, fs, clock }) {
+  let written = null;
   try {
     const timestamp = (clock ?? defaultClock)();
     const filePath = join(exportDir, promotionExportFileName(projectId, headRevision, timestamp));
-    const written = await exportGraph(port, { projectId, filePath, fs, clock });
+    written = await exportGraph(port, { projectId, filePath, fs, clock });
+    if (!written.ok) {
+      return { ...written, code: PROMOTION_ERROR_CODES.EXPORT_WRITE_FAILED,
+        message: `The promotion was committed. ${written.message} Retry graph export only.`,
+        identity: { ...written.identity, scenarioId, headRevision }, cause: written };
+    }
     const pruned = await pruneExportDirectory(exportDir, retention ?? DEFAULT_EXPORT_RETENTION, { fs });
     return { ok: true, filePath, pruned, ...written };
   } catch (error) {
     return {
+      ...written,
       ok: false,
       code: PROMOTION_ERROR_CODES.EXPORT_WRITE_FAILED,
-      message: `The promotion was committed, but the signed export could not be written or pruned: ${error?.message ?? String(error)}`,
+      message: `The promotion was committed, but the integrity-checked export could not be written or pruned: ${error?.message ?? String(error)}. Retry graph export only.`,
       identity: { scenarioId, headRevision, error: error?.message ?? String(error) },
     };
   }

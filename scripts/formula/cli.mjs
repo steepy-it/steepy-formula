@@ -66,14 +66,14 @@
 //   steepy-formula promotion discard --project <id> <scenarioId> [--port memory] [--seed <file>]
 //   steepy-formula hub-mode      [--project <id>] [--port memory] [--seed <file>]
 //
-// `graph export` (spec §22): B6 `exportGraph` writes the signed artifact (full stable graph +
+// `graph export` (spec §22): B6 `exportGraph` writes the integrity-checked artifact (full stable graph +
 // full Revision chain + head revision + digest). `--out <file>` defaults to
 // `./<projectId>-export.jsonl` (recorded decision); `--out -` writes the artifact to stdout with
 // the head/digest report on stderr (recorded decision), so the artifact bytes stay machine-clean.
 // Exit 0 on success, 3 on operational failure.
 //
 // `graph backup` (spec §22, additive): the backup IS the engine-native online copy (ArcadeDB
-// `BACKUP DATABASE`, capability `onlineBackup: true`) PLUS the portable signed export — recorded
+// `BACKUP DATABASE`, capability `onlineBackup: true`) PLUS the portable integrity-checked export — recorded
 // decision. The portable part runs on any port; the native part is docker-gated (reported `n/a`
 // on the memory seam). Both outcomes are reported; a native failure exits 3 even though the
 // portable artifact was written.
@@ -240,10 +240,10 @@ graph:
   validate validate the portable graph invariants and replay the revision chain (exit 1 on faults)
   status   report the server status, initialization, head revision and counts (exit 4 when none)
   refresh  refresh the observed topology on demand (spec §25)
-  export   write the signed export artifact to --out <file> (default ./<projectId>-export.jsonl)
+  export   write the integrity-checked export artifact to --out <file> (default ./<projectId>-export.jsonl)
            or stdout with --out -; reports the head revision + digest
-  backup   the engine-native online backup (docker-gated) PLUS the portable signed export
-  restore  import a signed export --from <file>, then validate + replay the chain (--force
+  backup   the engine-native online backup (docker-gated) PLUS the portable integrity-checked export
+  restore  import an integrity-checked export --from <file>, then validate + replay the chain (--force
            overwrites a non-empty database after a verified pre-restore backup)
   migrate-schema  run the §27 shadow schema migration (guard, shadow build, validation, cutover);
            --to <version> sets the target version (default: the current schema version)
@@ -773,7 +773,7 @@ async function cmdRefresh({ projectId, projectSource, root, port, seed }) {
 
 // --- export / backup / restore / migrate-schema (F4 — spec §22, §27) --------------------------------
 
-// `graph export` — B6 `exportGraph` to the signed artifact. `--out` defaults to
+// `graph export` — B6 `exportGraph` to the integrity-checked artifact. `--out` defaults to
 // `./<projectId>-export.jsonl` (recorded decision); `--out -` writes the artifact to stdout with
 // the head/digest report on stderr (recorded decision), keeping the artifact bytes machine-clean.
 async function cmdExport({ projectId, projectSource, port, seed, out }) {
@@ -794,6 +794,10 @@ async function cmdExport({ projectId, projectSource, port, seed, out }) {
 
     const filePath = out ?? join(process.cwd(), `${projectId}-export.jsonl`);
     const result = await exportGraph(graphPort, { projectId, filePath });
+    if (!result.ok) {
+      console.error(`steepy-formula: ${result.message}`);
+      return EXIT.OPERATIONAL;
+    }
     console.log(`graph export '${projectId}'`);
     console.log(projectEchoLine({ projectId, projectSource }));
     console.log(`  file:   ${result.filePath}`);
@@ -811,7 +815,7 @@ function backupTimestamp() {
 }
 
 // `graph backup` — additive per §22 (recorded decision): the backup IS the engine-native online
-// copy PLUS the portable signed export. The portable part runs on any port; the native part is
+// copy PLUS the portable integrity-checked export. The portable part runs on any port; the native part is
 // docker-gated. Both outcomes are reported; a native failure exits 3 even though the portable
 // artifact was written.
 async function cmdBackup({ projectId, projectSource, port, seed, to }) {
@@ -840,6 +844,11 @@ async function cmdBackup({ projectId, projectSource, port, seed, to }) {
     await graphPort.close?.();
   }
   if (refused !== null) return refused;
+
+  if (!exported.ok) {
+    console.error(`steepy-formula: ${exported.message}`);
+    return EXIT.OPERATIONAL;
+  }
 
   console.log(`graph backup '${projectId}'`);
   console.log(projectEchoLine({ projectId, projectSource }));
@@ -894,7 +903,8 @@ async function forceOverwrite(server, database, projectId) {
   const backupFile = join(dir, `${projectId}-pre-restore.jsonl`);
   const prePort = createArcadeDbPort({ server, database });
   try {
-    await exportGraph(prePort, { projectId, filePath: backupFile });
+    const exported = await exportGraph(prePort, { projectId, filePath: backupFile });
+    if (!exported.ok) throw new OperationalError(`cannot --force restore: ${exported.message}; refusing to destroy the current graph.`);
   } finally {
     await prePort.close();
   }
@@ -977,15 +987,19 @@ function parseTargetVersion(value) {
 }
 
 // The engine-conditional hooks for `migrateSchema` (the CLI's thin glue — the §27 procedure is
-// core/schema-migrate.mjs). The portable signed export IS the verified backup evidence; the
+// core/schema-migrate.mjs). The portable integrity-checked export IS the verified backup evidence; the
 // engine-native online backup rides along as `engineNative`. The cutover is the core's
 // transactional replace (`replacePrimaryFromArtifact`): one transaction clears and re-imports the
 // primary, so an interruption rolls back to the old graph while the verified backup remains.
 async function portableBackupEvidence(port, projectId) {
   const dir = mkdtempSync(join(tmpdir(), 'steepy-formula-verified-backup-'));
   const filePath = join(dir, `${projectId}-verified-backup.jsonl`);
-  await exportGraph(port, { projectId, filePath });
-  return { ok: true, text: readFileSync(filePath, 'utf8'), filePath };
+  const exported = await exportGraph(port, { projectId, filePath });
+  if (!exported.ok) return exported;
+  const text = readFileSync(filePath, 'utf8');
+  const verified = parseExportArtifact(text);
+  if (!verified.ok) return { ok: false, filePath, violations: verified.violations };
+  return { ok: true, text, filePath };
 }
 
 function memoryMigrateHooks(primaryPort, projectId) {
@@ -1059,7 +1073,7 @@ function migrateFailureExit(projectId, result) {
     case MIGRATE_ERROR_CODES.VERIFIED_BACKUP_FAILED:
     case MIGRATE_ERROR_CODES.CUTOVER_FAILED:
       console.error(`steepy-formula: [${result.code}] ${result.message}`);
-      if (result.backupEvidence?.digest) {
+      if (result.code === MIGRATE_ERROR_CODES.CUTOVER_FAILED && result.backupEvidence?.digest) {
         console.error(`steepy-formula: a verified backup exists (digest ${result.backupEvidence.digest.slice(0, 16)}…) — restore from it if needed.`);
       }
       return EXIT.OPERATIONAL;
@@ -1414,6 +1428,9 @@ async function cmdPromotionApply({ projectId, projectSource, port, seed, scenari
   console.log(`  revision:  ${applied.headRevision}`);
   console.log(`  consumed:  ${applied.scenarioConsumed}`);
   console.log(`  export:    ${applied.export === null ? 'none' : applied.export.ok ? 'written' : 'failed'}`);
+  if (applied.export && !applied.export.ok) {
+    console.error(`steepy-formula: ${applied.export.message}`);
+  }
   return EXIT.OK;
 }
 
