@@ -5,8 +5,8 @@
 // never rewritten.
 //
 // Contract: the directory branch is append-only and is never force-pushed. A version the
-// branch already carries is skipped, a lower one is refused, and each new commit is
-// parented on the previous payload commit with a `Source-Commit` trailer. If the remote
+// branch already carries is skipped only if its tree matches, a lower one is refused,
+// and each new commit is parented on the previous payload commit with a `Source-Commit` trailer. If the remote
 // moves before the push, the plain push is rejected and this script stops; it never
 // retries with force. Diagnostics are fixed strings: Git's own error output, the remote
 // location and environment values are never echoed.
@@ -17,9 +17,11 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { compareVersions, parseVersion } from './version-policy.mjs';
+import { verifyPublicationCandidate, verifyRemoteMain } from './release-publication.mjs';
+import { migrateRefusal, MIGRATE_REFUSAL_EXIT } from './formula/core/markdown-hub.mjs';
 
 const PREFIX = 'steepy publish-directory-branch: ';
-const USAGE = 'usage: node scripts/publish-directory-branch.mjs [--source <commit>] [--branch <name>] [--push]';
+const USAGE = 'usage: node scripts/publish-directory-branch.mjs [--source <commit>] [--branch <name>] [--push] [--expected-main <commit>] [--publication] [--corrective --expected-source <commit> --expected-old-tree <tree>]\nExit codes: 0 published/built/identical, 1 refused, 2 usage, 25 migrate.';
 const MANIFEST = '.claude-plugin/plugin.json';
 const OBJECT_NAME_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
@@ -117,7 +119,7 @@ function buildTree(sha, at) {
   }
 }
 
-function publishDirectoryBranch({ source, branch, push }) {
+async function publishDirectoryBranch({ source, branch, push, corrective, expectedSource, expectedOldTree, expectedMain, publication }) {
   let top;
   try {
     top = git('rev-parse', ['--show-toplevel']).trim();
@@ -126,6 +128,8 @@ function publishDirectoryBranch({ source, branch, push }) {
   }
   // `update-index --stdin` paths are relative to the cwd, so every later call runs at the top.
   const at = { cwd: top };
+  const refusal = migrateRefusal(top);
+  if (refusal) throw Object.assign(new PublishError(refusal.message), { exitCode: MIGRATE_REFUSAL_EXIT });
   let sha;
   try {
     sha = git('rev-parse', ['--verify', '--quiet', `${source}^{commit}`], at).trim();
@@ -137,17 +141,28 @@ function publishDirectoryBranch({ source, branch, push }) {
   const subject = git('log', ['-1', '--no-show-signature', '--format=%s', sha], at);
   const version = manifestVersion(sha, 'source', at);
 
+  if (expectedMain && expectedMain !== sha) throw new PublishError('expected main must match source');
+  if (corrective && expectedSource !== sha) throw new PublishError('corrective source identity mismatch');
+  const receipt = publication ? await verifyPublicationCandidate({ source: sha, version, cwd: top }) : null;
+  const { tree, keep } = buildTree(sha, at);
   const head = remoteHead(branch, at);
+  if (corrective && !head) throw new PublishError('correction requires an existing directory tree');
   if (head) {
     const headVersion = manifestVersion(head, branch, at);
     const order = compareVersions(headVersion, version);
-    if (order === 0) return `${branch} already carries ${version}; nothing to publish`;
+    const oldTree = git('rev-parse', [`${head}^{tree}`], at).trim();
+    if (corrective && (order !== 0 || oldTree !== expectedOldTree)) {
+      throw new PublishError('corrective old tree or version identity mismatch');
+    }
+    if (order === 0) {
+      if (tree === oldTree) return `${branch} already carries ${version}; nothing to publish`;
+      if (!corrective) throw new PublishError(`directory tree divergence: source ${sha} tree ${tree}, remote ${head} tree ${oldTree}; maintainer reconciliation required`);
+    }
     if (order > 0) {
       throw new PublishError(`refusing: ${branch} carries ${headVersion}, newer than source ${version}`);
     }
   }
 
-  const { tree, keep } = buildTree(sha, at);
   const parent = head ? ['-p', head] : [];
   const commit = git('commit-tree', [tree, ...parent, '-F', '-'], {
     ...at,
@@ -157,6 +172,13 @@ function publishDirectoryBranch({ source, branch, push }) {
   if (!push) {
     return `built ${commit} for ${branch} (${version}, ${keep.length} paths, parent ${head ?? 'none'}); not pushed`;
   }
+  // Verify at the actual subprocess mutation boundary, after payload preparation.
+  // No earlier coordinator check can substitute for these reads.
+  if (publication) await verifyPublicationCandidate({ source: sha, version, cwd: top, payloadSha256: receipt.payloadSha256 });
+  if (expectedMain) await verifyRemoteMain({ source: expectedMain, cwd: top });
+  if (corrective) {
+    if (remoteHead(branch, at) !== head) throw new PublishError('corrective remote head moved; retry with explicit identities');
+  }
   // A plain refspec only: the remote accepts it solely as a fast-forward of what we read.
   const pushed = runGit('push', ['--quiet', 'origin', `${commit}:refs/heads/${branch}`], at);
   if (pushed.error || pushed.status !== 0) {
@@ -165,8 +187,10 @@ function publishDirectoryBranch({ source, branch, push }) {
   return `published ${version} to ${branch} as ${commit} (${keep.length} paths)`;
 }
 
-// Thin CLI. Exit codes: 0 published, built or skipped; 1 refusal or Git failure; 2 usage.
-export function main(argv = process.argv.slice(2)) {
+// Thin CLI. Exit codes: 0 published, built or identical; 1 refusal/Git failure; 2 usage; 25 migrate.
+export async function main(argv = process.argv.slice(2)) {
+  const refusal = migrateRefusal(process.cwd());
+  if (refusal) { console.error(PREFIX + refusal.message); return MIGRATE_REFUSAL_EXIT; }
   let values;
   try {
     ({ values } = parseArgs({
@@ -177,13 +201,27 @@ export function main(argv = process.argv.slice(2)) {
         source: { type: 'string', default: 'HEAD' },
         branch: { type: 'string', default: 'claude-directory' },
         push: { type: 'boolean', default: false },
+        corrective: { type: 'boolean', default: false },
+        'expected-source': { type: 'string' },
+        'expected-old-tree': { type: 'string' },
+        'expected-main': { type: 'string' },
+        publication: { type: 'boolean', default: false },
       },
     }));
   } catch {
     console.error(PREFIX + USAGE);
     return 2;
   }
-  const { source, branch, push } = values;
+  const { source, branch, push, corrective, publication } = values;
+  const expectedSource = values['expected-source'];
+  const expectedOldTree = values['expected-old-tree'];
+  const expectedMain = values['expected-main'];
+  if ((corrective ? !OBJECT_NAME_RE.test(expectedSource ?? '') || !OBJECT_NAME_RE.test(expectedOldTree ?? '') : expectedSource !== undefined || expectedOldTree !== undefined)
+    || (expectedMain !== undefined && !OBJECT_NAME_RE.test(expectedMain))
+    || (publication && (!expectedMain || corrective))) {
+    console.error(PREFIX + 'invalid publication or corrective identity guards');
+    return 2;
+  }
   if (source.startsWith('-') || branch.startsWith('-')) {
     console.error(`${PREFIX}--source and --branch values must not start with "-"`);
     return 2;
@@ -201,12 +239,12 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   try {
-    console.log(PREFIX + publishDirectoryBranch({ source, branch, push }));
+    console.log(PREFIX + await publishDirectoryBranch({ source, branch, push, corrective, expectedSource, expectedOldTree, expectedMain, publication }));
     return 0;
   } catch (error) {
-    console.error(PREFIX + (error instanceof PublishError ? error.message : 'unexpected failure'));
-    return 1;
+    console.error(PREFIX + (error instanceof PublishError ? error.message : publication ? 'publication evidence validation or main eligibility refused' : expectedMain ? 'remote main eligibility refused' : 'unexpected failure'));
+    return error.exitCode === MIGRATE_REFUSAL_EXIT ? MIGRATE_REFUSAL_EXIT : 1;
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exit(main());
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exitCode = await main();

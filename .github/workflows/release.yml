@@ -1,11 +1,15 @@
 # Release: on every push to main, first require reusable tests and product validation.
-# Then tag an untagged plugin.json version, create the matching GitHub Release, and
-# append the Claude directory payload commit. Each publication step is independently idempotent.
+# Publication rechecks evidence and remote main at each stage; serialization alone
+# cannot make Git and GitHub into one atomic transaction.
 name: Release
 
 on:
   push:
     branches: [main]
+
+concurrency:
+  group: release-${{ github.repository }}-main
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -37,77 +41,14 @@ jobs:
           node-version: '24'
           package-manager-cache: false
 
-      - name: Read version from plugin.json
-        id: version
-        run: |
-          # Version comes from JSON via node, never parsed with grep/sed.
-          V="$(node -p "require('./.claude-plugin/plugin.json').version")"
-          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - name: Install locked dependencies
+        run: npm ci
 
-      - name: Check whether the release tag already exists
-        id: tag_check
-        run: |
-          V="${{ steps.version.outputs.version }}"
-          # Re-fetch tags explicitly to be safe: fetch-depth: 0 on checkout guarantees
-          # full history, not necessarily every tag ref, depending on the runner's
-          # default fetch config.
-          git fetch --tags --quiet
-          if git rev-parse -q --verify "refs/tags/v$V" >/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Tag creation is skipped once the tag exists — nothing more to do on that
-      # front. Kept as its own step (not combined with Release creation below): a
-      # tag can exist without a Release (e.g. a prior run pushed the tag then failed
-      # before publishing), and gating both on tag existence would strand that
-      # version's Release forever with no way to recover on a later run.
-      - name: Create tag
-        if: steps.tag_check.outputs.exists == 'false'
-        run: |
-          V="${{ steps.version.outputs.version }}"
-          TAG="v$V"
-
-          # Lightweight tag on the exact commit that triggered this push.
-          git tag "$TAG" "$GITHUB_SHA"
-          git push origin "$TAG"
-
-      # Independently idempotent via `gh release view`, not the tag-existence check
-      # above — this step always runs, so a stranded tag-without-Release (see note
-      # above) gets its Release published on the very next run of this workflow.
-      - name: Create GitHub Release
+      - name: Publish verified candidate
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          V="${{ steps.version.outputs.version }}"
-          TAG="v$V"
-
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "release $TAG already exists — nothing to do"
-            exit 0
-          fi
-
-          # Release body comes from the CHANGELOG.md section for this version. A
-          # missing or malformed prose section must never fail the release — fall
-          # back to a stock body instead.
-          NOTES_FILE="$(mktemp)"
-          if node scripts/extract-changelog.mjs "$V" > "$NOTES_FILE" 2>/dev/null; then
-            echo "release notes extracted from CHANGELOG.md"
-          else
-            echo "Release v$V — see CHANGELOG.md" > "$NOTES_FILE"
-          fi
-
-          gh release create "$TAG" --title "$TAG" --notes-file "$NOTES_FILE"
-
-      # Appends one payload commit per new version to the append-only
-      # `claude-directory` branch that the Claude plugin directory tracks. The script
-      # skips a version the branch already carries, so a push to main without a bump
-      # is a no-op, mirroring the tag and Release steps above. Never force-pushed.
-      - name: Publish Claude directory branch
-        env:
           GIT_AUTHOR_NAME: 'github-actions[bot]'
           GIT_AUTHOR_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'
           GIT_COMMITTER_NAME: 'github-actions[bot]'
           GIT_COMMITTER_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'
-        run: node scripts/publish-directory-branch.mjs --source "$GITHUB_SHA" --branch claude-directory --push
+        run: node scripts/release-publication.mjs --source "$GITHUB_SHA"
