@@ -1,6 +1,6 @@
 ---
 name: graph-migrate
-description: Move a repository out of the steepy-apex `.apex/` area — extract its Markdown Hub into the Stable Knowledge Graph (drive the G1 extraction, review the typed promotion diff, obtain explicit full or curated approval, apply ONE transaction, validate, archive at cutover and remove the archive only after a validated signed export exists), or, when the area holds only leftover local state, discard it after explicit confirmation. Either way `.apex/` is gone at the end. Never re-implements core logic.
+description: Move a repository out of the steepy-apex `.apex/` area — extract its Markdown Hub into the Stable Knowledge Graph (drive the G1 extraction, review the typed promotion diff, obtain explicit full or curated approval, apply ONE transaction, validate, archive at cutover and remove the archive only after a validated SHA-256 integrity-checked export exists), or, when the area holds only leftover local state, discard it after explicit confirmation. Either way `.apex/` is gone at the end. Never re-implements core logic.
 user-invocable: true
 ---
 
@@ -182,7 +182,7 @@ THEN remove the archive.**
    they can copy anything they want to keep. Normal reads now resolve to the database only.
 2. **Verify** — re-run Step 9's gates (`graph validate` + `context resolve` on representative
    paths) with the hub archived, proving the database is the single source of normal reads.
-3. **Export** — write the recovery checkpoint, the signed export:
+3. **Export** — write the recovery checkpoint, a SHA-256 integrity-checked export:
 
 ```bash
 steepy-formula graph export --project <project-id> --out <file>
@@ -195,7 +195,7 @@ steepy-formula graph restore --project <project-id> --port memory --from <file>
 ```
 
 The artifact is imported into a fresh in-memory port and re-validated (`graph validate` + chain
-replay); exit 0 only when clean. A validated signed export now exists: the recovery checkpoint.
+replay); exit 0 only when clean. The portable export uses a SHA-256 digest and hash-chained Revision history. Validation detects changes inconsistent with that retained history; it does not authenticate the author or producer. An attacker who rewrites the full history and recomputes every checksum can evade those integrity checks. Keep independently trusted checkpoints when provenance matters. A validated integrity-checked export now exists: the recovery checkpoint.
 5. **Regenerate the graph-mode disk artifacts** — replace the steepy-apex disk artifacts with the
    graph-mode ones, rendered from the graph-mode templates (never the legacy templates — the
    regenerated set must be genuinely graph-mode, with no `.apex/standards/` pointers left behind).
