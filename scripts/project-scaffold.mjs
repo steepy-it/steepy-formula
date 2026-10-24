@@ -20,6 +20,7 @@ import {
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { isValidProjectId } from './formula/core/ids.mjs';
 import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { assertSafeRelPath, assertSafeTestCommand, bindProjectMount } from './sanitize.mjs';
 import { renderTemplate } from './template.mjs';
@@ -29,6 +30,10 @@ const DEFAULT_TEMPLATES_DIR = join(MODULE_DIR, '..', 'templates');
 
 const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 const TOP_LEVEL_KEYS = ['projectName', 'description', 'devCommands', 'surfaces', 'resolutions', 'hubMode'];
+// The graph project id (the `.formula/config.json` binding) the adapters' surface targets
+// qualify with. Optional so v1 models and receipts keep their bytes: absent, it defaults to
+// `projectName`, which is only correct while the display name and the bound id coincide.
+const OPTIONAL_TOP_LEVEL_KEYS = ['projectId'];
 const SURFACE_KEYS = ['name', 'path', 'agent', 'testCmd'];
 // The declared hub mode rides the Project model and the plan as a required
 // single-value key: a scaffold renders graph-mode artifacts only (spine navigation,
@@ -78,9 +83,9 @@ function orientationText() {
   return GRAPH_ORIENTATION;
 }
 
-function standardOrientationText(projectName, surfaceName) {
+function standardOrientationText(projectId, surfaceName) {
   return `resolve this surface's context with \`steepy-formula context resolve --target `
-    + `apex:${projectName}:surface:${surfaceName}\` (context.json + context.md) and follow the resolved rules `
+    + `apex:${projectId}:surface:${surfaceName}\` (context.json + context.md) and follow the resolved rules `
     + 'and terms before working on this surface — never copy them into this adapter.';
 }
 
@@ -106,9 +111,9 @@ function assertPlainDataObject(value, label) {
   }
 }
 
-function assertExactKeys(value, expected, label) {
+function assertExactKeys(value, expected, label, optional = []) {
   const keys = Object.keys(value);
-  const unknown = keys.filter((key) => !expected.includes(key));
+  const unknown = keys.filter((key) => !expected.includes(key) && !optional.includes(key));
   const missing = expected.filter((key) => !keys.includes(key));
   if (unknown.length > 0) throw new TypeError(`${label} has unknown properties: ${unknown.join(', ')}`);
   if (missing.length > 0) throw new TypeError(`${label} is missing properties: ${missing.join(', ')}`);
@@ -204,8 +209,12 @@ function normalizeSurface(surface, index) {
 
 function normalizeProjectModelInternal(model, { allowEmptySurfaces = false } = {}) {
   assertPlainDataObject(model, 'model');
-  assertExactKeys(model, TOP_LEVEL_KEYS, 'model');
+  assertExactKeys(model, TOP_LEVEL_KEYS, 'model', OPTIONAL_TOP_LEVEL_KEYS);
   assertSlug(model.projectName, 'projectName');
+  const hasProjectId = Object.hasOwn(model, 'projectId');
+  if (hasProjectId && !isValidProjectId(model.projectId)) {
+    throw new TypeError('projectId must be a project id ([a-z][a-z0-9-]*)');
+  }
   assertLine(model.description, 'description');
   assertRepresentableRootFreeText(model.description, 'description');
   assertHubMode(model.hubMode, 'model.hubMode');
@@ -245,6 +254,7 @@ function normalizeProjectModelInternal(model, { allowEmptySurfaces = false } = {
   }
   const normalized = deepFreeze({
     projectName: model.projectName,
+    ...(hasProjectId ? { projectId: model.projectId } : {}),
     description: model.description,
     devCommands,
     surfaces,
@@ -281,7 +291,7 @@ function renderVars(model, surface) {
     model: 'inherit',
     navigation: navigationText(model.projectName),
     orientation: orientationText(),
-    standardOrientation: surface ? standardOrientationText(model.projectName, surface.name) : '',
+    standardOrientation: surface ? standardOrientationText(model.projectId ?? model.projectName, surface.name) : '',
   };
 }
 

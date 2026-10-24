@@ -41,7 +41,7 @@
 // primary untouched and consistent (the shadow space is discarded). The cutover itself MUST be
 // structured so the worst case is "old graph intact + verified backup exists", and this module
 // makes that a contract on the injected hook: where `atomicCutover` is false a verified backup (a
-// signed export whose digest validation passed) is REQUIRED first and carried in the result as the
+// integrity-checked export whose digest validation passed) is REQUIRED first and carried in the result as the
 // recovery path. This module also ships the transactional replace (`replacePrimaryFromArtifact`) —
 // clear the stable namespaces and re-import the transformed graph in ONE transaction, so an
 // interruption rolls back to the old graph. It is the cutover mechanism on the in-memory reference
@@ -279,7 +279,7 @@ export function versionBumpTransform(targetVersion) {
 //   closeShadow  async (shadowPort) -> void    cleanup; called on EVERY path (success and refusal),
 //                                               so a shadow database never leaks
 //   backup       async () -> { ok, text, filePath?, ... }   REQUIRED when atomicCutover is false:
-//                                               a signed export whose digest validation passes (the
+//                                               an integrity-checked export whose digest validation passes (the
 //                                               "verified backup" of §27). Extra fields ride along in
 //                                               the result's backupEvidence.
 //   cutover      async (shadowPort, { verifiedBackup }) -> { port, dispose? }   the engine-conditional
@@ -358,14 +358,16 @@ export async function migrateSchema(port, input = {}) {
       if (!backupResult?.ok || typeof backupResult.text !== 'string') {
         return refusal(
           MIGRATE_ERROR_CODES.VERIFIED_BACKUP_FAILED,
-          `The engine backup of graph '${projectId}' did not produce a verified signed export; the migration was aborted before anything touched the primary.`,
+          `The engine backup of graph '${projectId}' did not produce a verified integrity-checked export; the migration was aborted before anything touched the primary.${backupResult?.message ? ` ${backupResult.message}` : ''}`,
+          [],
+          { backupFailure: backupResult ?? null },
         );
       }
       const verified = parseExportArtifact(backupResult.text);
       if (!verified.ok) {
         return refusal(
           MIGRATE_ERROR_CODES.VERIFIED_BACKUP_FAILED,
-          `The engine backup of graph '${projectId}' is not a valid signed export (${verified.violations[0]?.message}); the migration was aborted.`,
+          `The engine backup of graph '${projectId}' is not a valid integrity-checked export (${verified.violations[0]?.message}); the migration was aborted.`,
           verified.violations,
         );
       }

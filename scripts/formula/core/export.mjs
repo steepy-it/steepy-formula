@@ -1,6 +1,4 @@
-// Signed export, restore and retention for the Stable Knowledge Graph (spec
-// .formula/work/specs/2026-08-11-stable-knowledge-graph.md §22 "Backup and disaster recovery",
-// success criteria 9 and 14). This is the "the database can be deleted and rebuilt" guarantee:
+// Integrity-checked export, restore and retention for the Stable Knowledge Graph. This is the "the database can be deleted and rebuilt" guarantee:
 // a portable dump of everything a fresh port needs to reconstruct the same stable state, plus a
 // pure retention decision function so old exports can be pruned deterministically.
 //
@@ -49,8 +47,8 @@
 // header/trailer line"). The header line names the project and the head revision this export
 // represents (never a second authority — it is read straight off the `GraphMetadata` record);
 // the trailer line names the sha256 digest of every line before it (header + records), computed
-// over the RAW TEXT actually written, so any byte-level tampering — not just a semantic edit —
-// is caught. `importGraph` recomputes and compares this digest BEFORE opening a transaction:
+// over the RAW TEXT actually written, detecting accidental changes; this unkeyed digest
+// does not authenticate the author or prevent deliberate recomputation. `importGraph` recomputes and compares this digest BEFORE opening a transaction:
 // mismatch is a structured violation and not one write happens.
 //
 // FRESH TARGET ONLY (brief: "no merge semantics in V1"). `importGraph` refuses a target where any
@@ -58,8 +56,10 @@
 // that then writes, so there is no window between the check and the write.
 // ---------------------------------------------------------------------------------------------
 
-import { readFileSync, writeFileSync, readdirSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import * as nodeFs from 'node:fs';
+import { readFileSync, readdirSync, unlinkSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { join, resolve, parse, dirname, basename, sep } from 'node:path';
 import { isValidProjectId } from './ids.mjs';
 import { systemRecordId } from './validate-graph.mjs';
 import { canonicalize, sha256Hex } from './revision.mjs';
@@ -111,6 +111,9 @@ export const EXPORT_VIOLATION_CODES = deepFreeze({
   MALFORMED_EXPORT_ARTIFACT: 'MALFORMED_EXPORT_ARTIFACT',
   EXPORT_DIGEST_MISMATCH: 'EXPORT_DIGEST_MISMATCH',
   NON_EMPTY_IMPORT_TARGET: 'NON_EMPTY_IMPORT_TARGET',
+  EXPORT_READ_FAILED: 'EXPORT_READ_FAILED',
+  EXPORT_WRITE_FAILED: 'EXPORT_WRITE_FAILED',
+  EXPORT_DURABILITY_UNCERTAIN: 'EXPORT_DURABILITY_UNCERTAIN',
 });
 
 // --- reading the graph (port API only, one transaction) -------------------------------------------
@@ -220,9 +223,9 @@ function normalizeExportGraphInput(input) {
     throw new TypeError('exportGraph requires a non-empty filePath to write the artifact to.');
   }
   const { projectId, clock } = normalizeExportInput({ projectId: input.projectId, clock: input.clock }, 'exportGraph');
-  const fs = input.fs ?? { writeFileSync };
-  if (typeof fs.writeFileSync !== 'function') {
-    throw new TypeError('exportGraph: fs.writeFileSync must be a function.');
+  const fs = input.fs ?? nodeFs;
+  for (const name of ['lstatSync', 'realpathSync', 'openSync', 'writeSync', 'fchmodSync', 'fsyncSync', 'closeSync', 'renameSync', 'unlinkSync']) {
+    if (typeof fs[name] !== 'function') throw new TypeError(`exportGraph: fs.${name} must be a function.`);
   }
   return { projectId, clock, filePath: input.filePath, fs };
 }
@@ -231,18 +234,96 @@ function normalizeExportGraphInput(input) {
 // point (spec §22): D5 calls this once, after every approved promotion, with a real filesystem;
 // the suite calls it with an injected `fs` so no test needs a real disk. Returns the same summary
 // a caller would want to log or feed into `pruneExportDirectory`'s listing.
+// Resolve only the known macOS root aliases. Every remaining parent component is
+// inspected without following links, including dangling links. This is a cooperative
+// local-filesystem protocol, not protection against hostile concurrent namespace changes.
+function exportDestination(filePath, fs) {
+  const absolute = resolve(filePath);
+  const root = parse(absolute).root;
+  const parts = absolute.slice(root.length).split(sep);
+  const name = parts.pop();
+  let parent = root;
+  for (const [index, part] of parts.entries()) {
+    let next = join(parent, part);
+    if (process.platform === 'darwin' && index === 0 && ['tmp', 'var', 'etc'].includes(part)) {
+      next = fs.realpathSync(next);
+    }
+    if (!fs.lstatSync(next).isDirectory()) throw new Error(`Export parent is not an ordinary directory: ${next}`);
+    parent = next;
+  }
+  const destination = join(parent, name);
+  let stat;
+  try { stat = fs.lstatSync(destination); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (stat && (!stat.isFile() || stat.nlink !== 1)) {
+    throw new Error(`Export target must be an ordinary file with one link: ${destination}`);
+  }
+  return { destination, mode: stat ? stat.mode & 0o7777 : 0o600 };
+}
+
+function exportFailure(code, error, summary, published) {
+  const message = published
+    ? `Export published, but durability is uncertain: ${error.message ?? String(error)}`
+    : `Export not published: ${error.message ?? String(error)}`;
+  return { ...summary, ok: false, code, message, published,
+    identity: { filePath: summary.filePath, headRevision: summary.headRevision ?? null,
+      digest: summary.digest ?? null, causeCode: error.code ?? null } };
+}
+
 export async function exportGraph(port, input = {}) {
+  requirePort(port, 'exportGraph');
   const { filePath, fs, ...artifactInput } = normalizeExportGraphInput(input);
-  const artifact = await buildExportArtifact(port, artifactInput);
-  fs.writeFileSync(filePath, artifact.text, 'utf8');
-  return {
-    ok: true,
-    filePath,
-    projectId: artifact.header.projectId,
-    headRevision: artifact.header.headRevision,
-    digest: artifact.trailer.digest,
-    counts: artifact.header.counts,
-  };
+  let artifact;
+  try {
+    artifact = await buildExportArtifact(port, artifactInput);
+  } catch (error) {
+    if (error instanceof TypeError) throw error;
+    return exportFailure(EXPORT_VIOLATION_CODES.EXPORT_READ_FAILED, error,
+      { filePath, projectId: artifactInput.projectId, headRevision: null, digest: null, counts: null }, false);
+  }
+  const summary = { filePath, projectId: artifact.header.projectId,
+    headRevision: artifact.header.headRevision, digest: artifact.trailer.digest, counts: artifact.header.counts };
+  let fd = null;
+  let directoryFd = null;
+  let staging = null;
+  let owned = false;
+  let published = false;
+  try {
+    const { destination, mode } = exportDestination(filePath, fs);
+    staging = join(dirname(destination), `.${basename(destination)}.${randomUUID()}.tmp`);
+    const { O_WRONLY, O_CREAT, O_EXCL, O_NOFOLLOW, O_RDONLY, O_DIRECTORY } = nodeFs.constants;
+    fd = fs.openSync(staging, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600);
+    owned = true;
+    const bytes = Buffer.from(artifact.text, 'utf8');
+    let offset = 0;
+    while (offset < bytes.length) {
+      const written = fs.writeSync(fd, bytes, offset, bytes.length - offset, offset);
+      if (!Number.isInteger(written) || written <= 0 || written > bytes.length - offset) {
+        throw new Error('Export write made invalid or zero progress.');
+      }
+      offset += written;
+    }
+    fs.fchmodSync(fd, mode);
+    fs.fsyncSync(fd);
+    const closing = fd;
+    fd = null; // A failed close must not be retried against a potentially reused descriptor.
+    fs.closeSync(closing);
+    fs.renameSync(staging, destination);
+    published = true;
+    owned = false;
+    directoryFd = fs.openSync(dirname(destination), O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    fs.fsyncSync(directoryFd);
+    const closingDirectory = directoryFd;
+    directoryFd = null;
+    fs.closeSync(closingDirectory);
+    return { ok: true, ...summary };
+  } catch (error) {
+    return exportFailure(published ? EXPORT_VIOLATION_CODES.EXPORT_DURABILITY_UNCERTAIN
+      : EXPORT_VIOLATION_CODES.EXPORT_WRITE_FAILED, error, summary, published);
+  } finally {
+    if (fd !== null) { try { fs.closeSync(fd); } catch { /* preserve the original failure */ } }
+    if (directoryFd !== null) { try { fs.closeSync(directoryFd); } catch { /* preserve the original failure */ } }
+    if (owned) { try { fs.unlinkSync(staging); } catch { /* never remove an unowned path */ } }
+  }
 }
 
 // --- parsing and verifying an artifact (pure, no fs) ------------------------------------------------

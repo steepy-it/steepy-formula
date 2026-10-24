@@ -1,11 +1,14 @@
 <!-- steepy:managed:project-instructions:v1:start -->
 # steepy-formula
 
-Your AI documentation stops rotting.
+Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation.
 
 ## Development commands
 
 - `npm test`
+- `node --test tests/adapters.test.mjs`
+- `node --test tests/workflow-skills.test.mjs`
+- `node --test tests/template.test.mjs tests/project-scaffold.test.mjs`
 
 ## Confirmed surfaces
 

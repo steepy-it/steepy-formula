@@ -60,6 +60,10 @@ A copy of only the versioned files (for example a `git clone` of the branch) mus
 - A model's approval is never recorded as a human approver. Leave the cell empty or `none` if no human approved.
 - Record observed facts only. An unrun row stays `NOT RUN`. The initial matrix used `PENDING`; that was an unexecuted placeholder, not a historical observation of success. Preserve any future recorded observation and its version/commit when adding newer evidence.
 
+## Historical matrix (unexecuted placeholders)
+
+These original harness-only rows are retained as history; they are not the four host/OS launch matrix.
+
 ## Evidence matrix
 
 | Run | Harness version | Plugin commit | Capabilities | Observed outcome | Observed human approver |
@@ -69,4 +73,46 @@ A copy of only the versioned files (for example a `git clone` of the branch) mus
 | Codex A | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | Codex B | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 
-No native acceptance was executed by this documentation update. Automated regression tests and content locks do not change the matrix. Add one row per recovery/verification case and harness only after actual execution; retain prior observed rows rather than relabeling them as current evidence.
+No native acceptance was executed by this documentation update. Automated regression tests and content locks do not change the matrix. The launch matrix below explicitly reserves every case on every required host/OS. Replace NOT RUN only after actual execution; retain prior observed rows with dates, versions and commits as history rather than relabeling them as current evidence.
+
+
+## Four-combination launch matrix
+
+Supported launch combinations are Claude Code/macOS, Claude Code/Linux, Codex/macOS and Codex/Linux. Node 24 and a running Docker daemon are prerequisites. Windows is unsupported; experimental OpenCode, Pi and DeepSeek Harness results cannot fill a launch cell. Record observed host version, OS, architecture and profile without inferring support for unobserved versions or architectures.
+
+Each cell starts NOT RUN. For each real skill-driven case record source commit, exact payload SHA-256, product version, clean installation composition with older releases disabled, observed date, exact commands/refs, case-specific outcome and application differences, check IDs, attributed verbatim human responses and actual subagent/degradation behavior. Bind the redacted UTF-8 artifact digest and source revision as [schema 2](release-evidence.md) requires. Synthetic tests and nonce canaries do not establish acceptance. Separate the complete brainstorm → plan → implement → review observation from inception completion and recovery observations. Keep recorded historical rows unchanged when appending a new run.
+
+| Case | Claude Code macOS | Claude Code Linux | Codex macOS | Codex Linux |
+|---|---|---|---|---|
+| `clean-install-load` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `eleven-skill-discovery` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `skill-invocation` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `init-bootstrap` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `specialist-behavior-dispatch` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `discovery-context-coherence` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `brainstorm-plan-implement-review` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `inception-a` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `inception-b` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `reconnaissance-architecture-interruption` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `research-child-interruption` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `approval-interruption` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `bootstrap-intent-outcome-interruption` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `verification-capture-interruption` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `complete-closing-note-interruption` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `required-check-fails` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `manual-confirmation-missing` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `application-fix-verification` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `unchanged-verification-resume` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `complete-init-discovery` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `application-drift-after-complete-init` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `final-abandon-interrupted` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `publication-before-staging` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `publication-after-staging` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `publication-ordered-target-prefixes` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `publication-final-descriptor-replacement` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `publication-foreign-divergent-targets` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `v1-descriptor-refusal-all-commands` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `collector-zero-red-command` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| `versioned-copy-validation` | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+
+Scenario A (including intent/outcome interruption) and Scenario B each run on all four combinations. All recovery/verification and publication interruption cases above run on all four too. Preserve the original approvals and frozen source bytes. After complete → init → discovery, validate a clean versioned copy without `.formula/inception/` or `.formula/work/`, then establish graph coherence against its initialized graph. None of these launch runs has been observed by this documentation change.

@@ -170,14 +170,17 @@ For each surface selected in Step 1, run this loop:
    steepy-formula promotion preview <scenario-id>
    ```
 
-   Show the preview's typed diff to the user; then apply ONLY at the existing human gate —
+   Show the preview's typed diff to the user and ask one explicit yes/change/no question; then
+   apply ONLY at that human gate —
 
    ```bash
-   steepy-formula promotion apply <scenario-id>
+   steepy-formula promotion apply <scenario-id> --yes [--approver <name>]
    ```
 
-   — run it without `--yes`: the CLI itself prompts, and a refusal is a valid outcome, not an
-   error.
+   — the agent applies directly, passing `--yes` only after the human's explicit yes, in an
+   interactive session, for exactly the scenario just previewed; a no applies nothing, and the
+   CLI's stale check (exit 20) refuses an apply whose base revision moved after the preview.
+   `--approver` names the human who said yes (default: the OS user).
 
 ### Step 2a — Inception source (complete run only)
 
@@ -256,11 +259,12 @@ in this step ends only the inception source; Step 2, Step 3 and Step 4 still run
    ```bash
    steepy-formula promotion create --project <id> --candidates <file.json> [--proposer <name>] inception-<runId>
    steepy-formula promotion preview inception-<runId>
-   steepy-formula promotion apply inception-<runId>
+   steepy-formula promotion apply inception-<runId> --yes [--approver <name>]
    ```
 
-   Show the preview's typed diff and apply only at the human gate, without `--yes`, exactly as in
-   Step 2.5 — a decision candidate needs its anchor before apply, and a refusal is a valid outcome.
+   Show the preview's typed diff and apply only at the human gate, with `--yes` only after the
+   human's explicit yes, exactly as in Step 2.5 — a decision candidate needs its anchor before
+   apply, and a no applies nothing.
 6. **Decision outcomes.** Every register decision ends accepted (promoted) or rejected with a
    reason. Record the outcomes in `[REPORT_FILE]` under `## Decision outcomes`, one line per
    decision: `DR-n — accepted` or `DR-n — rejected: <reason>`. The import is one-time. Once the
