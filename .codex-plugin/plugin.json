@@ -1,0 +1,35 @@
+{
+  "name": "steepy-formula",
+  "version": "1.0.0",
+  "description": "Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation.",
+  "homepage": "https://github.com/steepy-it/steepy-formula",
+  "repository": "https://github.com/steepy-it/steepy-formula",
+  "license": "Apache-2.0",
+  "keywords": [
+    "context-engineering",
+    "workflows",
+    "skills",
+    "spec-driven-development",
+    "code-review",
+    "subagents",
+    "autonomous-loops",
+    "project-knowledge",
+    "documentation-drift",
+    "agents-md",
+    "model-selection",
+    "knowledge-graph"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Steepy Formula",
+    "category": "workflow",
+    "capabilities": [
+      "graph-first governed init",
+      "graph coherence gate",
+      "gear-based chain"
+    ],
+    "brandColor": "#1B3149",
+    "composerIcon": "./assets/plugin-icon.png",
+    "logo": "./assets/plugin-icon.png"
+  }
+}

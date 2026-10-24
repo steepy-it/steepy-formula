@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="steepy-formula">
+  <title>steepy-formula</title>
+  <rect width="512" height="512" fill="#1B3149"/>
+  <g transform="translate(-20.23 -6.96) scale(3.8974)">
+    <path d="M74,104 L74,68 A22,22 0 0 1 96,46 L106,46" fill="none" stroke="#F5F1EB" stroke-opacity=".22" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M38,104 C50,107 58,100 58,88 L58,62 C58,42 72,30 100,30" fill="none" stroke="#F5F1EB" stroke-width="7.5" stroke-linecap="round"/>
+    <path d="M45,66 L71,66" fill="none" stroke="#C8873A" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+</svg>

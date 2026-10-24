@@ -1,0 +1,15 @@
+{
+  "name": "steepy-formula",
+  "description": "Steepy plugin marketplace: governed project knowledge in a canonical Stable Knowledge Graph, routed by surface and kept coherent with graph validation.",
+  "owner": {
+    "name": "steepy-it",
+    "email": "info@steepy.it"
+  },
+  "plugins": [
+    {
+      "name": "steepy-formula",
+      "source": "./",
+      "description": "Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation."
+    }
+  ]
+}

@@ -1,0 +1,355 @@
+import { test, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { dirname, join, posix } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { PROJECT, buildSeed } from './helpers/graph-seed.mjs';
+
+// Inspect one actual offline archive: npm's dry-run names cannot prove shipped bytes or links.
+const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, '..');
+const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+let paths;
+let cacheDir;
+let packFilename;
+let packedRoot;
+
+before(() => {
+  cacheDir = mkdtempSync(join(tmpdir(), 'steepy-npm-pack-cache-'));
+  const result = spawnSync(
+    npmBin,
+    ['--cache', cacheDir, '--offline', '--ignore-scripts', 'pack', '--json', '--pack-destination', cacheDir],
+    { cwd: root, encoding: 'utf8' },
+  );
+  assert.equal(
+    result.status,
+    0,
+    `npm pack --json must exit 0 — stderr:\n${result.stderr || '(empty)'}\nstdout:\n${result.stdout || '(empty)'}`,
+  );
+
+  let pack;
+  try {
+    [pack] = JSON.parse(result.stdout);
+  } catch (err) {
+    throw new Error(`npm pack --json produced non-JSON stdout: ${err.message}\n${result.stdout}`);
+  }
+  packFilename = pack.filename;
+  const archive = join(cacheDir, packFilename);
+  const listing = spawnSync('tar', ['-tzf', archive], { encoding: 'utf8' });
+  assert.equal(listing.status, 0, listing.stderr);
+  paths = listing.stdout.trim().split('\n').filter((name) => !name.endsWith('/')).map((name) => {
+    assert.ok(name.startsWith('package/') && !name.split('/').includes('..'), `unsafe archive entry: ${name}`);
+    return name.slice('package/'.length);
+  });
+  assert.deepEqual([...paths].sort(), pack.files.map((file) => file.path).sort(), 'archive entries match npm metadata');
+  const extracted = spawnSync('tar', ['-xzf', archive, '-C', cacheDir], { encoding: 'utf8' });
+  assert.equal(extracted.status, 0, extracted.stderr);
+  packedRoot = join(cacheDir, 'package');
+});
+
+after(() => {
+  rmSync(cacheDir, { recursive: true, force: true });
+});
+
+function assertPacked(required, label) {
+  for (const path of required) {
+    assert.ok(paths.includes(path), `${label ? `${label}: ` : ''}tarball must include ${path}`);
+  }
+}
+
+test('npm tarball includes the Claude Code plugin manifest + marketplace file', () => {
+  assertPacked(['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json']);
+});
+
+test('npm tarball includes the Codex plugin manifest', () => {
+  assertPacked(['.codex-plugin/plugin.json']);
+});
+
+test('npm tarball includes the Codex plugin visual assets', () => {
+  assertPacked(['assets/plugin-icon.png', 'assets/plugin-icon.svg']);
+});
+
+test('npm tarball includes the .agents plugin marketplace file', () => {
+  assertPacked(['.agents/plugins/marketplace.json']);
+});
+
+test('npm tarball includes the OpenCode, Pi, and dsh adapters, and the headless adapter', () => {
+  assertPacked([
+    'adapters/opencode/steepy-formula.js',
+    'adapters/pi/steepy-formula.js',
+    'adapters/dsh/steepy-formula.js',
+    'adapters/headless.mjs',
+  ]);
+});
+
+test('npm tarball includes the dsh cordis bundle patch manifest', () => {
+  assertPacked(['cordis.patch.yml']);
+});
+
+test('npm tarball includes the MCP adapter', () => {
+  assertPacked(['adapters/mcp/formula-mcp.mjs']);
+});
+
+test('npm tarball includes all eleven SKILL.md files', () => {
+  const skillNames = [
+    'inception',
+    'init',
+    'check',
+    'new-surface',
+    'discovery',
+    'graph-migrate',
+    'brainstorm',
+    'plan',
+    'implement',
+    'review',
+    'loop-engineer',
+  ];
+  assertPacked(skillNames.map((name) => `skills/${name}/SKILL.md`), 'eleven SKILL.md files');
+});
+
+test('npm tarball includes the six subagent prompt templates', () => {
+  assertPacked([
+    'skills/implement/implementer-prompt.md',
+    'skills/implement/task-reviewer-prompt.md',
+    'skills/implement/final-review-prompt.md',
+    'skills/discovery/explore-surface-prompt.md',
+    'skills/loop-engineer/loop-implementer-prompt.md',
+    'skills/loop-engineer/loop-final-review-prompt.md',
+  ], 'six prompt templates');
+});
+
+test('npm tarball includes the engine scripts', () => {
+  assertPacked([
+    'scripts/bump-version.mjs',
+    'scripts/autopilot.mjs',
+    'scripts/task-results.mjs',
+    'scripts/source-observation.mjs',
+    'scripts/capture-review-evidence.mjs',
+    'scripts/workflow-state.mjs',
+    'scripts/loop-engineer.mjs',
+    'scripts/validate-release-evidence.mjs',
+  ], 'engine scripts');
+});
+
+test('npm tarball includes receipt instructions and the v2 reviewer transport schema', () => {
+  assertPacked([
+    'skills/implement/task-results-protocol.md',
+    'skills/implement/reviewer-recovery.md',
+    'skills/implement/reviewer-response-v2.schema.json',
+    'adapters/reviewer-response.mjs',
+  ]);
+  assert.ok(!paths.includes('skills/implement/reviewer-response.schema.json'), 'v1 reviewer schema must not ship');
+});
+
+// The canonical dogfood bootstrap under `.agents/skills/<project>-bootstrap/`
+// joined this payload lock when the scaffold self-apply landed (Task 20) —
+// the file is a product source committed exactly as the scaffold produced it.
+test('npm tarball includes the portable scaffold runtime, v1 sources, and canonical dogfood bootstrap', () => {
+  assertPacked([
+    'scripts/project-scaffold.mjs',
+    'scripts/live-scaffold-canary.mjs',
+    '.agents/skills/steepy-formula-bootstrap/SKILL.md',
+    'templates/AGENTS.md',
+    'templates/claude-import.md',
+    'templates/project-bootstrap-skill.md',
+    'templates/claude-bootstrap-stub.md',
+    'templates/surface-agent-claude.md',
+    'templates/surface-agent-codex.toml',
+    'templates/surface-agent-opencode.md',
+  ], 'portable scaffold payload');
+  assert.equal(paths.some((p) => p.startsWith('templates/prior/')), false, 'tarball must not include templates/prior/');
+});
+
+test('npm pack keeps the actual tarball outside the repository', () => {
+  assert.equal(
+    existsSync(join(root, packFilename)),
+    false,
+    'npm pack must write its tarball only in the scratch directory',
+  );
+});
+
+test('npm tarball ships no hooks', () => {
+  assert.deepEqual(paths.filter((path) => path.startsWith('hooks/')), [], 'no packed path starts with hooks/');
+});
+
+function reachedEngineModules(entry) {
+  const reached = new Set();
+  const queue = [entry];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    if (reached.has(current)) continue;
+    reached.add(current);
+    const source = readFileSync(join(root, current), 'utf8');
+    for (const match of source.matchAll(/from\s+'(\.[^']+\.mjs)'/g)) {
+      queue.push(join(dirname(current), match[1]).split('\\').join('/'));
+    }
+  }
+  return [...reached].sort();
+}
+
+test('npm tarball includes the inception helper, its reached engine modules, and its prompts', () => {
+  const modules = reachedEngineModules('scripts/inception-state.mjs');
+  assert.ok(modules.includes('scripts/inception-state.mjs'));
+  assert.ok(modules.includes('scripts/write-all.mjs') && modules.includes('scripts/sanitize.mjs'));
+  assertPacked(modules, 'inception helper imports');
+  assertPacked([
+    'scripts/inception-protocol.mjs',
+    'scripts/inception-snapshot.mjs',
+    'scripts/capture-inception-evidence.mjs',
+    'scripts/inception-governance.mjs',
+    'skills/inception/SKILL.md',
+    'skills/inception/research-prompt.md',
+    'skills/inception/bootstrap-part-prompt.md',
+    'skills/discovery/explore-inception-prompt.md',
+    'skills/discovery/SKILL.md',
+    'skills/init/SKILL.md',
+    'docs/inception.md',
+    'docs/inception-acceptance.md',
+    'docs/architecture.md',
+  ], 'inception skill files');
+});
+
+test('npm tarball includes the release tooling, the Claude directory icon, and the user guides', () => {
+  assertPacked([
+    'scripts/version-policy.mjs',
+    'scripts/write-all.mjs',
+    'scripts/push-version-guard.mjs',
+    'scripts/publish-directory-branch.mjs',
+    'scripts/extract-changelog.mjs',
+    '.claude-plugin/icon.png',
+    'docs/installation.md',
+    'docs/getting-started.md',
+    'docs/publication-readiness.md',
+    'docs/release-evidence.md',
+    'CHANGELOG.md',
+    'CONTRIBUTING.md',
+    'SECURITY.md',
+  ], 'release tooling and guides');
+  // The gears diagram describes the legacy Markdown hub ("Stable knowledge in .apex/"), so
+  // formula does not ship it.
+  assert.ok(!paths.includes('assets/workflow-gears.png'), 'the legacy gears diagram must not ship');
+});
+
+test('npm tarball includes the graph CLI entry and the engine adapter', () => {
+  assertPacked([
+    'bin/steepy-formula',
+    'scripts/formula/cli.mjs',
+    'scripts/formula/engine/arcadedb.mjs',
+    'scripts/formula/engine/lifecycle.mjs',
+    'scripts/formula/engine/secrets.mjs',
+  ], 'graph CLI payload');
+});
+
+// Claude Code puts an enabled plugin's bin/ on the Bash tool's PATH; generated project
+// instructions call `steepy-formula` by name, so the shim must be executable and forward verbatim.
+test('the plugin bin/ shim is executable and forwards to the graph CLI', { skip: process.platform === 'win32' }, () => {
+  const shim = join(root, 'bin', 'steepy-formula');
+  const viaShim = spawnSync(shim, ['--help'], { encoding: 'utf8' });
+  const direct = spawnSync(process.execPath, [join(root, 'scripts', 'formula', 'cli.mjs'), '--help'], { encoding: 'utf8' });
+  assert.equal(viaShim.error, undefined, 'the shim must be directly executable');
+  assert.equal(viaShim.status, direct.status);
+  assert.equal(viaShim.stdout, direct.stdout);
+  assert.equal(viaShim.stderr, direct.stderr);
+});
+
+// Exercise npm's actual generated link, rather than equating two possibly silent routes.
+test('installed npm executable dispatches from paths with spaces and a symlinked prefix', { skip: process.platform === 'win32' }, async (t) => {
+  const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'steepy installed package ')));
+  t.after(() => rmSync(scratch, { recursive: true, force: true }));
+  const cache = join(scratch, 'npm cache');
+  const archives = join(scratch, 'local archives');
+  const prefix = join(scratch, 'install prefix');
+  const cwd = join(scratch, 'working directory');
+  for (const directory of [archives, prefix, cwd]) mkdirSync(directory, { recursive: true });
+  const npm = (args, directory) => {
+    const result = spawnSync(npmBin, ['--cache', cache, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', ...args], { cwd: directory, encoding: 'utf8', timeout: 120_000 });
+    assert.equal(result.status, 0, `local npm ${args[0]} failed: ${result.error ?? ''}\n${result.stderr}\n${result.stdout}`);
+    return result;
+  };
+  const pack = (directory) => {
+    const result = npm(['pack', '--json', '--pack-destination', archives], directory);
+    return join(archives, JSON.parse(result.stdout)[0].filename);
+  };
+  const tarball = pack(root);
+  // Prepare every already-installed dependency as a local archive. Passing them together
+  // satisfies transitive ranges without a registry, shared npm cache or global install.
+  const dependencies = [];
+  for (const entry of readdirSync(join(root, 'node_modules'), { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    const directory = join(root, 'node_modules', entry.name);
+    if (entry.name.startsWith('@')) {
+      for (const child of readdirSync(directory)) dependencies.push(pack(join(directory, child)));
+    } else if (existsSync(join(directory, 'package.json'))) dependencies.push(pack(directory));
+  }
+  writeFileSync(join(prefix, 'package.json'), JSON.stringify({ private: true }));
+  npm(['install', '--package-lock=false', tarball, ...dependencies], prefix);
+  const linkedPrefix = join(scratch, 'linked installation');
+  symlinkSync(prefix, linkedPrefix, 'dir');
+  const packageRoot = join(prefix, 'node_modules', 'steepy-formula');
+  const { file } = await buildSeed();
+  const routes = [
+    ['npm executable', join(prefix, 'node_modules', '.bin', 'steepy-formula'), []],
+    ['npm executable through linked prefix', join(linkedPrefix, 'node_modules', '.bin', 'steepy-formula'), []],
+    ['direct Node', process.execPath, [join(packageRoot, 'scripts', 'formula', 'cli.mjs')]],
+    ['Claude wrapper', join(packageRoot, 'bin', 'steepy-formula'), []],
+  ];
+  for (const [label, command, leading] of routes) {
+    await t.test(`${label}: hub-mode emits a meaningful report`, () => {
+      const result = spawnSync(command, [...leading, 'hub-mode', '--project', PROJECT, '--port', 'memory', '--seed', file], { cwd, encoding: 'utf8' });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /mode:\s+graph\b/, 'exit 0 must include a hub-mode report');
+      assert.match(result.stdout + result.stderr, /project:\s+cli-proj \(flag\)/);
+    });
+    await t.test(`${label}: invalid invocation visibly refuses with documented exit 2`, () => {
+      const result = spawnSync(command, [...leading, 'graph', 'not-a-command'], { cwd, encoding: 'utf8' });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 2, `invalid invocation must not silently succeed: ${result.stdout}${result.stderr}`);
+      assert.equal(result.stdout, '');
+      assert.match(result.stderr, /unknown subcommand|usage:/);
+    });
+  }
+  await t.test('installed CLI import has no dispatch or output side effects', () => {
+    const url = pathToFileURL(join(packageRoot, 'scripts', 'formula', 'cli.mjs')).href;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `const cli = await import(${JSON.stringify(url)}); if (typeof cli.main !== 'function') throw new Error('missing main');`], { cwd, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+  });
+});
+
+// Resolve local Markdown targets from the bytes shipped to users, never the working tree.
+test('actual archive contains PRIVACY and every local public documentation link target', () => {
+  assertPacked(['PRIVACY.md']);
+  const publicDocs = paths.filter((path) => /^(?:docs\/.*|README|RELEASE|CONTRIBUTING|SECURITY|PRIVACY|CHANGELOG)\.md$/.test(path));
+  for (const source of publicDocs) {
+    const text = readFileSync(join(packedRoot, source), 'utf8');
+    const links = [
+      ...Array.from(text.matchAll(/!?\[[^\]]*\]\(<?([^\s)>]+)>?(?:\s+"[^"]*")?\)/g), (match) => match[1]),
+      ...Array.from(text.matchAll(/(?:href|src|srcset)="([^"\s]+)"/g), (match) => match[1]),
+      ...Array.from(text.matchAll(/^\[[^\]]+\]:\s*<?([^\s>]+)>?/gm), (match) => match[1]),
+    ];
+    for (let href of links) {
+      const repositoryTarget = /^https:\/\/github\.com\/steepy-it\/steepy-formula\/(?:blob|tree)\/main\/(.+)$/.exec(href);
+      if (repositoryTarget) href = `/${repositoryTarget[1]}`;
+      else if (/^(?:[a-z][a-z0-9+.-]*:|#|\/\/)/i.test(href)) continue;
+      const target = decodeURIComponent(href.split(/[?#]/)[0]);
+      if (!target) continue;
+      const resolved = target.startsWith('/') ? target.slice(1) : posix.normalize(posix.join(posix.dirname(source), target));
+      assert.ok(paths.includes(resolved) || paths.some((path) => path.startsWith(`${resolved}/`)), `${source}: shipped link ${href} must resolve inside archive (${resolved})`);
+    }
+  }
+  for (const key of ['documentationUrl', 'privacyPolicyUrl', 'termsOfServiceUrl']) {
+    const manifest = JSON.parse(readFileSync(join(packedRoot, '.claude-plugin/plugin.json'), 'utf8'));
+    const target = manifest[key].split('/main/')[1];
+    assert.ok(paths.includes(target) || paths.some((path) => path.startsWith(`${target}/`)), `shipped plugin ${key} must resolve inside archive: ${target}`);
+  }
+});
+
+test('actual archive excludes ignored work, context, checkpoints, credentials and secrets', () => {
+  const forbidden = /(?:^|\/)(?:\.formula|\.apex|\.worktrees|node_modules|tests)(?:\/|$)|(?:^|\/)(?:context\.(?:json|md)|dogfood-export\.jsonl|secrets\.json|(?:checkpoint[^/]*|[^/]*-export)\.jsonl|[^/]+\.(?:pem|key)|\.env(?:\.[^/]*)?|id_rsa|id_ed25519)$/i;
+  assert.deepEqual(paths.filter((path) => forbidden.test(path)), [], 'archive must exclude local state and secret files');
+});
