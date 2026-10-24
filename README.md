@@ -18,7 +18,7 @@
 
 Land governed project knowledge in a canonical Stable Knowledge Graph, route work by surface, and keep it coherent with graph validation.
 
-Supported launch hosts are Claude Code and Codex on macOS and Linux with Node.js >= 24. Windows is unsupported. OpenCode, Pi, and DeepSeek Harness are experimental integrations; their adapters remain packed, but they do not substitute for launch acceptance. Observed host versions and architectures are evidence metadata, not minimum-version or architecture-support promises.
+Supported hosts are Claude Code and Codex on macOS and Linux with Node.js >= 24. Windows is unsupported. OpenCode, Pi, and DeepSeek Harness integrations are experimental. See the installation guide for setup and host-specific limitations.
 
 Requires **Node.js >= 24**, **Docker** for the local graph engine, and Claude Code or Codex on macOS or Linux. Release notes are in the [changelog](CHANGELOG.md).
 
@@ -141,7 +141,7 @@ Use your harness's [command syntax](docs/installation.md#first-run-and-troublesh
 
 Starting from an idea or a prototype? Run `/steepy-formula:inception` first. It ends by pointing to `/steepy-formula:init` and `/steepy-formula:discovery`. That first init is certified against the completed run (the exact scaffold operations, with the stable knowledge landing through the graph's initialization promotion), and discovery imports the run's accepted decisions once, as typed graph candidates. See the [inception guide](docs/inception.md).
 
-Upgrading from an earlier version? Read [Upgrading an existing hub](docs/installation.md#upgrading-an-existing-hub) first.
+Migrating from steepy-apex? Read [Migrate an existing project](docs/installation.md#migrate-an-existing-project) first.
 
 The full walkthrough — prerequisites, credentials, first run, lifecycle, sharing — is [docs/getting-started.md](docs/getting-started.md).
 
@@ -258,7 +258,7 @@ The plugin ships no hooks, so there is no hook wiring to review before trusting 
 ## Documentation
 
 - [Getting started](docs/getting-started.md) — the end-to-end first-run guide: prerequisites, credentials, the first `/steepy-formula:init`, the engine lifecycle (start/stop/Studio), saving a state, and passing the graph to a colleague.
-- [Installation](docs/installation.md) — all harnesses, requirements, upgrading, and troubleshooting.
+- [Installation](docs/installation.md) — host setup, requirements, migration, and troubleshooting.
 - [Inception](docs/inception.md) — start a project from an idea, before the hub exists.
 - [docs/workflow.md](docs/workflow.md) — the ceremony model in full: coverage verdicts, the gear table, model selection, the gear-3 workflow chain with its context efficiency and live observability, the gear-4 Loop Engineer, and why specs/plans stay local.
 - [docs/architecture.md](docs/architecture.md) — how the plugin and the Stable Knowledge Graph are built: the domain core, the engine port and adapters, the CLI, the MCP server, the mutation boundary, the backup contract, the audit model, usage reports, and the Command-family effects matrix: filesystem reads–writes–subprocesses–temporary state–providers/network. Start here to contribute.

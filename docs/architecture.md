@@ -23,7 +23,7 @@ steepy-formula/
 
 ## The Stable Knowledge Graph product
 
-Since the G4 cutover, the canonical authority for stable knowledge is the **Stable Knowledge Graph** — a typed, persistent, queryable graph database (spec criterion 12: the Markdown hub no longer participates in normal reads). A repository that still carries a steepy-apex `.apex/` Markdown hub is a one-time migration source: the `graph-migrate` skill moves it into the graph. The governance content itself lives in the graph: the migrated rules, the defined terms, and the ratified decisions.
+The **Stable Knowledge Graph** is the canonical authority for repository knowledge: a typed, persistent, queryable graph database. A repository that still carries a steepy-apex `.apex/` Markdown hub is a one-time migration source: the `graph-migrate` skill moves it into the graph. The governance content itself lives in the graph: the migrated rules, the defined terms, and the ratified decisions.
 
 ### Canonical terminology
 
@@ -315,15 +315,9 @@ The following former Hub rules are superseded in their post-cutover form:
 - **Stable/Work separation** — stable governance lives in the canonical graph; the Work Graph stays file-based, gitignored, and disposable under `.formula/work/`; deleting work files can never touch the graph.
 - **Markdown as a one-time migration source** — a steepy-apex hub's Markdown rules are migration input only (`graph-migrate`); after cutover there is no permanent Markdown ↔ graph synchronization.
 
-## Follow-ups (tracked debt)
+## Resolver performance
 
-- **Scoped/cached resolver read path (spec §16 acceptance target, `<1 s` warm resolveContext).**
-  Adjudicated 2026-08-18: the current D2 resolver reads the whole graph per call over Bolt, and the
-  full E1 fixture (150,000 edges) measures a warm median of 1671–1968 ms — the `< 1 s` spec target is
-  NOT met. The E4 envelope suite asserts a generous 5 s regression ceiling
-  (`tests/formula-envelope.test.mjs`, `TARGET_WARM_RESOLVE_MS`) while the measured number stays
-  recorded there and in the ledger; this follow-up owns a scoped/cached read path so the acceptance
-  target can be genuinely met. The spec §16 targets remain acceptance targets, never a met claim.
+Context resolution currently reads the whole graph over Bolt. On the large regression fixture, warm resolution exceeds the one-second performance target. The regression suite uses a five-second ceiling; that ceiling is not a latency guarantee. See `tests/formula-envelope.test.mjs` for the fixture and measurements. Allow for graph size when integrating context resolution into interactive workflows.
 
 ## Local usage reports
 

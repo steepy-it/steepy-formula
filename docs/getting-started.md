@@ -1,6 +1,6 @@
 # Getting started
 
-Supported launch hosts are Claude Code and Codex on macOS and Linux with Node.js >= 24. Windows is unsupported. OpenCode, Pi, and DeepSeek Harness are experimental integrations; their adapters remain packed, but they do not substitute for launch acceptance. Observed host versions and architectures are evidence metadata, not minimum-version or architecture-support promises.
+Supported hosts are Claude Code and Codex on macOS and Linux with Node.js >= 24. Windows is unsupported. OpenCode, Pi, and DeepSeek Harness integrations are experimental.
 
 The end-to-end first-run guide: from zero to a running Stable Knowledge Graph, plus the
 day-2 operations — starting and stopping the engine, exploring the graph, saving a specific

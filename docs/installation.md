@@ -1,6 +1,6 @@
 # Installation
 
-Supported launch hosts are Claude Code and Codex on macOS and Linux with Node.js >= 24. Windows is unsupported. OpenCode, Pi, and DeepSeek Harness are experimental integrations; their adapters remain packed, but they do not substitute for launch acceptance. Observed host versions and architectures are evidence metadata, not minimum-version or architecture-support promises.
+Supported hosts are Claude Code and Codex on macOS and Linux with Node.js >= 24. Windows is unsupported. OpenCode, Pi, and DeepSeek Harness integrations are experimental.
 
 steepy-formula packages integrations for five harnesses — [Claude Code](https://docs.claude.com/en/docs/claude-code), [Codex](https://developers.openai.com/codex), [OpenCode](https://opencode.ai), [Pi Coding Agent](https://github.com/badlogic/pi-mono), and DeepSeek Harness (dsh) — from one shared package: a single canonical `skills/` tree plus thin per-harness adapters and manifests. Pick your harness.
 
@@ -181,9 +181,9 @@ to `graph-migrate` instead. See [getting started](getting-started.md) for the en
 effects and adapter boundaries. Pi and DeepSeek have no Steepy deterministic runner for
 Gear-3 autopilot or Gear-4 loops.
 
-## Upgrading an existing hub
+## Migrate an existing project
 
-After you update the plugin, run `check` in each repository it governs.
+Use this procedure for a steepy-apex project or a development installation with existing local state. New projects can start with `init`.
 
 ### Local areas live under `.formula/`
 
@@ -205,8 +205,7 @@ loop ledgers under `.apex/work/` do not carry over. If `.formula/.gitignore` is 
 ### Project instructions and bootstrap
 
 The generated bootstrap and the `AGENTS.md` navigation stop on `migrate` and on `none` right
-after the hub-mode declaration. A bootstrap or `AGENTS.md` from an earlier rendering, without
-those stops, is not the current rendering, so the planner reports `v1:project-bootstrap:customized` and
+after the hub-mode declaration. If an existing bootstrap or `AGENTS.md` differs from the generated content, the planner reports `v1:project-bootstrap:customized` and
 `v1:project-instructions:customized` — each is customized until an explicit `replace` resolves it.
 Copy out any hand edits first: `replace` rewrites the file to the current rendering.
 
@@ -218,8 +217,7 @@ each listed conflict in the model's `resolutions`, then apply the zero-conflict 
 
 ### In-flight runs and stored formats
 
-- **An in-flight autopilot run from an earlier version** records no task-result protocol 2, so
-  it halts on resume. Finish it manually or start a fresh run.
+- **An in-flight autopilot run without task-result protocol 2** cannot resume. Finish it manually or start a fresh run.
 - **A graph stored under an unsupported schema version** makes every read command refuse with
   exit 1; `steepy-formula graph migrate-schema` is the explicit recovery path.
 - **A steepy-apex `.apex/` area** is handled once with `/steepy-formula:graph-migrate`, which
@@ -229,7 +227,7 @@ The [changelog](../CHANGELOG.md) lists every change by version.
 
 ## Upstream references
 
-Installation syntax was cross-checked on 2026-09-16 against
+For the host installation mechanisms, consult
 [Claude Code marketplaces](https://code.claude.com/docs/en/discover-plugins),
 [Codex plugin packaging](https://developers.openai.com/plugins/build/plugins),
 [OpenCode plugins](https://opencode.ai/docs/plugins/), and

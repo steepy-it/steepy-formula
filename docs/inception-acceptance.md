@@ -58,11 +58,7 @@ A copy of only the versioned files (for example a `git clone` of the branch) mus
 
 - A hand-written command sequence imitating the skill is not a proof. Only a run driven by the skill counts.
 - A model's approval is never recorded as a human approver. Leave the cell empty or `none` if no human approved.
-- Record observed facts only. An unrun row stays `NOT RUN`. The initial matrix used `PENDING`; that was an unexecuted placeholder, not a historical observation of success. Preserve any future recorded observation and its version/commit when adding newer evidence.
-
-## Historical matrix (unexecuted placeholders)
-
-These original harness-only rows are retained as history; they are not the four host/OS launch matrix.
+- Record observed facts only. An unrun row stays `NOT RUN`. Preserve any future recorded observation and its version/commit when adding newer evidence.
 
 ## Evidence matrix
 
@@ -73,7 +69,7 @@ These original harness-only rows are retained as history; they are not the four 
 | Codex A | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 | Codex B | NOT RUN | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
 
-No native acceptance was executed by this documentation update. Automated regression tests and content locks do not change the matrix. The launch matrix below explicitly reserves every case on every required host/OS. Replace NOT RUN only after actual execution; retain prior observed rows with dates, versions and commits as history rather than relabeling them as current evidence.
+Automated regression tests do not establish native acceptance. The launch matrix below explicitly reserves every case on every required host/OS. Replace NOT RUN only after actual execution; retain prior observed rows with dates, versions and commits as history rather than relabeling them as current evidence.
 
 
 ## Four-combination launch matrix
