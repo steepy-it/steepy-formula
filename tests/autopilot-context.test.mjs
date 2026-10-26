@@ -1472,3 +1472,83 @@ test('explicit resume inputs distinguish native case aliases from physically dis
     }
   }
 });
+
+const dependencyTask = (id, depLine) => `## Task ${id}\n\n- **Surface:** scripts\n- **Complexity:** integration\n${depLine === undefined ? '' : `${depLine}\n`}- **Success criteria:** SC1\n`;
+const dependencyPlan = (...lines) => `# Plan\n\n${lines.map((line, index) => dependencyTask(index + 1, line)).join('\n')}`;
+
+test('plan parsing returns canonical dependencies in listed order', () => {
+  const none = planPhaseContext(dependencyPlan('- **Dependencies:** none'));
+  assert.deepEqual(none.tasks[0].dependencies, []);
+
+  const four = planPhaseContext(dependencyPlan(
+    '- **Dependencies:** none', '- **Dependencies:** 1', '- **Dependencies:** 1, 2', '- **Dependencies:** 1, 3',
+  ));
+  assert.deepEqual(four.tasks.map(({ dependencies }) => dependencies), [[], ['1'], ['1', '2'], ['1', '3']]);
+
+  const styles = planPhaseContext(dependencyPlan(
+    '- **Dependencies:** none', '- **Dependencies**: `1`', 'Dependencies: 1, 2', '  * dependencies: `1, 3`',
+  ));
+  assert.deepEqual(styles.tasks.map(({ dependencies }) => dependencies), [[], ['1'], ['1', '2'], ['1', '3']]);
+});
+
+test('plan parsing rejects missing, duplicate and malformed Dependencies', () => {
+  assert.throws(() => planPhaseContext(dependencyPlan(undefined)), /^Error: Task 1 is missing Dependencies evidence$/);
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none\n- **Dependencies**: none')),
+    /^Error: Task 1 has duplicate Dependencies fields$/,
+  );
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none\nDependencies: none')),
+    /duplicate Dependencies fields/,
+  );
+  for (const value of ['Task 3', '1,3', '3, 1', '1, 1', 'None', '0', '01', '']) {
+    const rendered = value.replace(/[`*_]/g, '').trim();
+    assert.throws(
+      () => planPhaseContext(dependencyPlan(`- **Dependencies:** ${value}`)),
+      (error) => error.message === `Task 1 has malformed Dependencies '${rendered}': expected none or increasing earlier task numbers like 1, 3`,
+      `value '${value}' must be malformed`,
+    );
+  }
+});
+
+test('plan parsing rejects self, forward and unknown dependency references in that order', () => {
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 2')),
+    /^Error: Task 2 cannot depend on itself$/,
+  );
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** 2', '- **Dependencies:** none')),
+    /^Error: Task 1 has a forward dependency on Task 2$/,
+  );
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 7')),
+    /^Error: Task 2 depends on unknown Task 7$/,
+  );
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 2, 5')),
+    /^Error: Task 2 cannot depend on itself$/,
+  );
+});
+
+test('reviewPhaseContext tasks carry dependencies', () => {
+  const plan = dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 1');
+  const index = '# Results\n\n- Task 1: DONE; artifact: .formula/work/tasks/topic/task-1-report.md; changed-paths: none; signals: none\n- Task 2: DONE; artifact: .formula/work/tasks/topic/task-2-report.md; changed-paths: none; signals: none\n';
+  assert.deepEqual(reviewPhaseContext(plan, index).tasks.map(({ dependencies }) => dependencies), [[], ['1']]);
+});
+
+test('--verify-plan rejects a plan without Dependencies and keeps its success line', (t) => {
+  const repoRoot = materialize(t);
+  const planPath = '.formula/work/plans/verify-dependencies.md';
+  const run = () => spawnSync(process.execPath, [scriptPath,
+    '--verify-plan', '--repo-root', repoRoot, '--plan', planPath,
+  ], { encoding: 'utf8' });
+  writeFileSync(join(repoRoot, planPath), dependencyPlan(undefined));
+  const rejected = run();
+  assert.equal(rejected.status, 1);
+  assert.equal(rejected.stdout, '');
+  assert.equal(rejected.stderr, 'autopilot-context: plan rejected: Task 1 is missing Dependencies evidence\n');
+  writeFileSync(join(repoRoot, planPath), dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 1'));
+  const accepted = run();
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(accepted.stdout, 'plan OK — 2 task(s): 1, 2\n');
+});

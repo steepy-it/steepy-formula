@@ -118,6 +118,14 @@ function markdownField(section, label) {
   return match[1].trim().replace(/^`([^`]*)`$/, '$1').trim();
 }
 
+function markdownFieldLines(section, label) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Horizontal whitespace only after the label, so an empty value never swallows the next line.
+  return [...String(section).matchAll(new RegExp(
+    `^[ \\t]*[-*]?[ \\t]*(?:\\*\\*${escaped}(?::\\*\\*|\\*\\*:)|${escaped}:)[ \\t]*(.*?)[ \\t]*$`, 'gim',
+  ))];
+}
+
 function complexityValue(raw, label) {
   const value = String(raw ?? '').replace(/[`*_]/g, '').trim().toLowerCase();
   if (!Object.hasOwn(COMPLEXITY_TIER, value)) {
@@ -164,6 +172,16 @@ export function specPhaseContext(specText) {
   };
 }
 
+function parseDependencies(raw, taskId) {
+  const value = plainMetadataValue(raw.trim().replace(/^`([^`]*)`$/, '$1'));
+  const numbers = /^[1-9]\d*(?:, [1-9]\d*)*$/.test(value) ? value.split(', ').map(Number) : null;
+  const increasing = numbers?.every((number, index) => index === 0 || number > numbers[index - 1]);
+  if (value !== 'none' && !increasing) {
+    throw new Error(`Task ${taskId} has malformed Dependencies '${value}': expected none or increasing earlier task numbers like 1, 3`);
+  }
+  return value === 'none' ? [] : value.split(', ');
+}
+
 export function planPhaseContext(planText, { review = false } = {}) {
   const text = String(planText ?? '');
   // Discover every H2 Task-like boundary before validating any identifier. If
@@ -204,6 +222,10 @@ export function planPhaseContext(planText, { review = false } = {}) {
     const criteria = markdownField(section, 'Success criteria');
     if (criteria === undefined) throw new Error(`Task ${heading[1]} is missing Success criteria evidence`);
     const { criterionIds } = parseSuccessCriteria(criteria, { label: `Task ${heading[1]} Success criteria` });
+    const dependencyFields = markdownFieldLines(section, 'Dependencies');
+    if (dependencyFields.length === 0) throw new Error(`Task ${heading[1]} is missing Dependencies evidence`);
+    if (dependencyFields.length > 1) throw new Error(`Task ${heading[1]} has duplicate Dependencies fields`);
+    const dependencies = parseDependencies(dependencyFields[0][1], heading[1]);
     return {
       task: assertSafeLine(heading[1], 'task identifier'),
       owningSurface: assertSafeLine(surface.replace(/[`*_]/g, '').trim(), `Task ${heading[1]} surface`),
@@ -212,8 +234,19 @@ export function planPhaseContext(planText, { review = false } = {}) {
         testCommand: assertSafeLine(testCommand.replace(/[`*_]/g, '').trim(), `Task ${heading[1]} test command`),
       }),
       criterionIds,
+      dependencies,
     };
   });
+  const taskIds = new Set(tasks.map(({ task }) => task));
+  for (const { task, dependencies } of tasks) {
+    for (const dep of dependencies) {
+      if (dep === task) throw new Error(`Task ${task} cannot depend on itself`);
+      if (taskIds.has(dep) && Number(dep) > Number(task)) {
+        throw new Error(`Task ${task} has a forward dependency on Task ${dep}`);
+      }
+      if (!taskIds.has(dep)) throw new Error(`Task ${task} depends on unknown Task ${dep}`);
+    }
+  }
   const distribution = complexityDistribution(tasks);
   const allMechanical = distribution.mechanical === tasks.length;
   const eligibleTier = allMechanical ? 'cheap' : 'standard';
