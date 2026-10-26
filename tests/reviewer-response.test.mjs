@@ -21,7 +21,7 @@ function fixture(fn) {
     git('add', '.'); git('commit', '-m', 'fix');
     mkdirSync(join(root, dir), { recursive: true });
     mkdirSync(join(root, '.formula/work/plans'), { recursive: true });
-    put(planPath, '# Plan\n\n## Task 4\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
+    put(planPath, '# Plan\n\n## Task 4\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n');
     put(`${dir}/ledger.md`, 'Task 1: complete\nTask 2: complete\nTask 3: complete\n');
     put(`${dir}/phase-2-attempt-2.log`, 'previous attempt\n');
     put(issues, 'Status: Issues Found\nOrder incorrect; test order.\n');
@@ -166,7 +166,7 @@ test('whole-branch reviewer uses the same bounded gate and exact final issue bin
 test('v2 task approval binds its execution and cannot approve a later fix', () => fixture(({ root, state, config, put, dir, report, envelope }) => {
   const planPath = '.formula/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
   mkdirSync(join(root, '.formula/work/plans'), { recursive: true });
-  put(planPath, '# Plan\n\n## Task 4\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
+  put(planPath, '# Plan\n\n## Task 4\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n');
   const taskReport = `${dir}/task-4-report.md`, first = `${dir}/task-4-execution-1`, second = `${dir}/task-4-execution-2`;
   beginTask(root, first, { runId: config.runId, attempt: config.attempt, task: '4', execution: 1, role: 'implementer', report: taskReport, planPath });
   put(taskReport, 'Implementation report.\n');
@@ -332,7 +332,7 @@ test('final begin over a bullet-only index is refused', () => fixture(({ root, s
   assert.throws(() => readFileSync(join(root, `${finalState}-baseline.json`)), /ENOENT/);
 }));
 
-const handoffPlan = '<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: .formula/work/specs/topic.md\nconsumed-by: none\n-->\n# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n- **Requirements and deliverables:** Preserve ordering.\n- **Exact paths:** code.js\n- **Dependencies:** Task 3\n\n## Constraints\nNever drop data.\n';
+const handoffPlan = '<!-- steepy-workflow: v1\nphase: plan\nstatus: READY\nnext: implement\nsource: .formula/work/specs/topic.md\nconsumed-by: none\n-->\n# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n- **Requirements and deliverables:** Preserve ordering.\n- **Exact paths:** code.js\n\n## Constraints\nNever drop data.\n';
 function handoffFixture(fn, { planText } = {}) {
   fixture((ctx) => {
     const { root, dir, config, state, put, report, envelope, record } = ctx;
@@ -363,7 +363,7 @@ function executionChainFixture(fn) {
     const planPath = '.formula/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
     mkdirSync(join(root, '.formula/work/plans'), { recursive: true });
     mkdirSync(join(root, dir, 'context'), { recursive: true });
-    put(planPath, '# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
+    put(planPath, '# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n');
     const manifest = (attempt, runId) => ({ runId, attempt, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } });
     const ancestorManifestPath = `${dir}/context/phase-implement-attempt-1.json`;
     const ancestorManifest = manifest(1, 'initial-run');
@@ -428,7 +428,7 @@ for (const invalid of ['wrong-run', 'missing-manifest', 'protocol-1', 'absent-pr
 for (const [field, before, after] of [
   ['requirements', 'Preserve ordering.', 'Reverse the ordering.'],
   ['paths', '**Exact paths:** code.js', '**Exact paths:** other.js'],
-  ['dependencies', '**Dependencies:** Task 3', '**Dependencies:** none'],
+  ['dependencies', '**Dependencies:** none', '**Dependencies:** `none`'],
   ['constraints', 'Never drop data.', 'Drop old data.'],
   ['source', 'source: .formula/work/specs/topic.md', 'source: .formula/work/specs/other.md'],
 ]) {

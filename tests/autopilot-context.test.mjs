@@ -519,7 +519,7 @@ test('the SC negative matrix keeps spec sequencing strict while task mappings ma
     ['out-of-order', 'SC2, SC1', '- SC2: second\n- SC1: first', /strictly (?:sequential|increasing)/i],
     ['leading zero', 'SC01', '- SC01: zero padded', /'SC01'.*no leading zeros/i],
   ]) {
-    const fixture = `# Fixture\n\n## Task 1 — probe\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** ${criteriaField}\n\n## Success criteria\n\n${criteriaSection}\n`;
+    const fixture = `# Fixture\n\n## Task 1 — probe\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** ${criteriaField}\n\n## Success criteria\n\n${criteriaSection}\n`;
     assert.throws(() => planPhaseContext(fixture), reason, `${label} must fail the plan-side parse`);
     writeFileSync(join(repoRoot, specPath), fixture);
     assert.throws(
@@ -529,7 +529,7 @@ test('the SC negative matrix keeps spec sequencing strict while task mappings ma
     );
     assert.equal(existsSync(join(repoRoot, outputPath)), false, `${label} must not partially write`);
   }
-  const gapFixture = '# Fixture\n\n## Task 1 — probe\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1, SC3\n\n## Success criteria\n\n- SC1: first\n- SC3: third\n';
+  const gapFixture = '# Fixture\n\n## Task 1 — probe\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1, SC3\n\n## Success criteria\n\n- SC1: first\n- SC3: third\n';
   assert.deepEqual(planPhaseContext(gapFixture).criterionIds, ['SC1', 'SC3']);
   writeFileSync(join(repoRoot, specPath), gapFixture);
   assert.throws(
@@ -560,8 +560,8 @@ test('markdown routing accepts canonical emphasis and rejects unsupported field 
     evidence: 'spec:Feature-complexity=design',
   });
 
-  const canonical = '# Plan\n\n## Task 1 — canonical\n\n- **Surface**: `scripts`\n- **Complexity**: integration\n- **Success criteria**: SC1, SC2\n';
-  const unsupported = '# Plan\n\n## Task 1 — unsupported\n\n- **Surface:** `scripts`\n- **Complexity:** integration\n- **Spec criteria:** SC1, SC2\n';
+  const canonical = '# Plan\n\n## Task 1 — canonical\n\n- **Surface**: `scripts`\n- **Complexity**: integration\n- **Dependencies**: none\n- **Success criteria**: SC1, SC2\n';
+  const unsupported = '# Plan\n\n## Task 1 — unsupported\n\n- **Surface:** `scripts`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Spec criteria:** SC1, SC2\n';
   assert.deepEqual(planPhaseContext(canonical).criterionIds, ['SC1', 'SC2']);
   assert.throws(() => planPhaseContext(unsupported), /missing Success criteria/);
   assert.throws(() => planPhaseContext(canonical.replace('Surface', 'Owning surface')), /missing Surface/);
@@ -638,11 +638,11 @@ test('plan routing fails closed when task boundaries or criterion IDs are absent
     '# Plan\n\n### 1. No canonical task boundary\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n',
   ), /no Task headings/i);
   assert.throws(() => planPhaseContext(
-    '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** none\n',
+    '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** none\n',
   ), /missing success-criterion IDs/i);
   for (const heading of ['## Task zero', '## Task 0', '## Task -1', '## Task 1a']) {
     assert.throws(() => planPhaseContext(
-      `# Plan\n\n${heading}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n`,
+      `# Plan\n\n${heading}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n`,
     ), /invalid H2 Task heading/i, `${heading} must fail as a malformed canonical boundary`);
   }
   assert.throws(() => planPhaseContext(
@@ -654,11 +654,11 @@ test('plan routing fails closed when task boundaries or criterion IDs are absent
     ['non-increasing', ['## Task 3', '## Task 2'], /strictly increasing.*3.*2/i],
     ['unsafe', ['## Task 9007199254740992'], /safe integer/i],
   ]) {
-    const plan = `# Plan\n\n${taskHeadings.map((heading) => `${heading}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n`).join('\n')}`;
+    const plan = `# Plan\n\n${taskHeadings.map((heading) => `${heading}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n`).join('\n')}`;
     assert.throws(() => planPhaseContext(plan), reason, `${label} task order must fail closed`);
   }
   for (const invalidHeading of ['## Task 0', '## Task 02', '## Task -1', '## Task x', '## Task 1a']) {
-    const mixed = `# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n\n${invalidHeading}\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Success criteria:** SC2\n`;
+    const mixed = `# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n${invalidHeading}\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Dependencies:** none\n- **Success criteria:** SC2\n`;
     assert.throws(
       () => planPhaseContext(mixed),
       /invalid H2 Task heading|positive safe integer/i,
@@ -668,7 +668,7 @@ test('plan routing fails closed when task boundaries or criterion IDs are absent
 });
 
 test('review routing accepts only the canonical task-result-index bullet grammar', () => {
-  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** `adapters`\n- **Complexity:** `integration`\n- **Success criteria:** SC2\n';
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** `adapters`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC2\n';
   const canonical = '# Results\n\n- Task 1: DONE; artifact: .formula/work/tasks/topic/task-1-report.md; changed-paths: none; signals: tdd:red-green\n- Task 2: DONE_WITH_CONCERNS; artifact: .formula/work/tasks/topic/task-2-report.md; changed-paths: adapters/example.mjs; signals: follow-up:telemetry\n';
   assert.deepEqual(reviewPhaseContext(plan, canonical).tasks.map(({ task }) => task), ['1', '2']);
   assert.deepEqual(
@@ -690,7 +690,7 @@ test('review routing accepts only the canonical task-result-index bullet grammar
 });
 
 test('review routing reads v2 receipt projections with literal steepysite paths', () => {
-  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** web\n- **Complexity:** integration\n- **Success criteria:** SC1\n';
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** web\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n';
   const entry = { task: '1', status: 'DONE', artifact: '.formula/work/tasks/topic/task-1-report.md',
     changedPaths: ['apps/web/app/admin/(protected)/generation/[id]/page.tsx', 'src/a,b;c è.ts'],
     signals: [], receipt: '.formula/work/tasks/topic/task-1-execution-1' };
@@ -704,7 +704,7 @@ test('review routing reads v2 receipt projections with literal steepysite paths'
 test('discovery signals survive the real review manifest boundary without loading per-task reports', (t) => {
   const repoRoot = materialize(t);
   const indexPath = '.formula/work/tasks/context-efficient/task-result-index.md';
-  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Success criteria:** SC3\n';
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC3\n';
   for (const signals of [['discovery:unplanned', 'tdd:red-green'], ['review:same-session'], []]) {
     const entry = { task: '1', status: 'DONE_WITH_CONCERNS', artifact: '.formula/work/tasks/context-efficient/task-1-report.md',
       changedPaths: [], signals, receipt: '.formula/work/tasks/context-efficient/task-1-execution-1' };
@@ -737,12 +737,14 @@ test('SC6: the phase-controller tier is floored and capped at standard, named wi
     '',
     '- **Surface:** `scripts`',
     '- **Complexity:** `mechanical`',
+    '- **Dependencies:** none',
     '- **Success criteria:** SC1',
     '',
     '## Task 2 — redesign the tier ladder',
     '',
     '- **Surface:** `scripts`',
     '- **Complexity:** `design`',
+    '- **Dependencies:** none',
     '- **Success criteria:** SC2',
     '',
   ].join('\n');
@@ -869,7 +871,7 @@ test('comparative fixture retains required facts with lower eager input and prom
 
 test('a plan task id stops at the id, whatever separator the heading uses next', () => {
   for (const heading of ['## Task 1 — dash', '## Task 1: colon', '## Task 1', '## Task 1) paren', '## Task 1. dot']) {
-    const plan = `# Plan\n\n${heading}\n\n- **Surface:** \`scripts\`\n- **Complexity:** \`integration\`\n- **Success criteria:** SC1\n`;
+    const plan = `# Plan\n\n${heading}\n\n- **Surface:** \`scripts\`\n- **Complexity:** \`integration\`\n- **Dependencies:** none\n- **Success criteria:** SC1\n`;
     assert.deepEqual(
       planPhaseContext(plan).tasks.map(({ task }) => task), ['1'],
       `${heading} must bind to task id 1, not to its punctuation`,
@@ -878,7 +880,7 @@ test('a plan task id stops at the id, whatever separator the heading uses next',
 });
 
 test('nested Task prose does not create or split canonical plan tasks', () => {
-  const plan = '# Plan\n\n## Task 1 — outer\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Success criteria:** SC1\n\n### Task 99 — nested prose\n\n- **Complexity:** design\n- **Success criteria:** SC99\n\n## Task 2 — next\n\n- **Surface:** `adapters`\n- **Complexity:** `mechanical`\n- **Success criteria:** SC2\n';
+  const plan = '# Plan\n\n## Task 1 — outer\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n### Task 99 — nested prose\n\n- **Complexity:** design\n- **Success criteria:** SC99\n\n## Task 2 — next\n\n- **Surface:** `adapters`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC2\n';
   assert.deepEqual(planPhaseContext(plan).tasks.map(({ task, complexity }) => [task, complexity]), [
     ['1', 'integration'], ['2', 'mechanical'],
   ]);
@@ -961,17 +963,17 @@ test('the plan verifier runs planPhaseContext and rejects options outside its ro
   assert.equal(rejected.status, 1);
   assert.match(rejected.stderr, /plan rejected:.*no Task headings/i);
 
-  writeFileSync(join(repoRoot, planPath), '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
+  writeFileSync(join(repoRoot, planPath), '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n');
   const accepted = run();
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.match(accepted.stdout, /plan OK — 1 task\(s\): 1/);
 
   for (const [invalidPlan, reason] of [
-    ['# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n\n## Task 1\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Success criteria:** SC2\n', /duplicate plan task id '1'/i],
-    ['# Plan\n\n## Task 2\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n\n## Task 1\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Success criteria:** SC2\n', /strictly increasing/i],
-    ['# Plan\n\n## Task 9007199254740992\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n', /safe integer/i],
+    ['# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 1\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Dependencies:** none\n- **Success criteria:** SC2\n', /duplicate plan task id '1'/i],
+    ['# Plan\n\n## Task 2\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 1\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Dependencies:** none\n- **Success criteria:** SC2\n', /strictly increasing/i],
+    ['# Plan\n\n## Task 9007199254740992\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n', /safe integer/i],
     ...['## Task 0', '## Task 02', '## Task -1', '## Task x', '## Task 1a'].map((heading) => [
-      `# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n\n${heading}\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Success criteria:** SC2\n`,
+      `# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n${heading}\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Dependencies:** none\n- **Success criteria:** SC2\n`,
       /invalid H2 Task heading|positive safe integer/i,
     ]),
   ]) {
@@ -993,7 +995,7 @@ test('the plan verifier surfaces non-canonical success-criteria bytes as a fixab
   const planPath = '.formula/work/plans/sc-grammar.md';
   writeFileSync(
     join(repoRoot, planPath),
-    '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC01\n',
+    '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC01\n',
   );
   const rejected = spawnSync(process.execPath, [scriptPath,
     '--verify-plan', '--repo-root', repoRoot, '--plan', planPath,
@@ -1023,7 +1025,7 @@ test('the handoff verifier runs the review-phase parse where implement can still
   const indexPath = '.formula/work/tasks/context-efficient/task-result-index.md';
   writeFileSync(
     join(repoRoot, planPath),
-    '# Plan\n\n## Task 1: colon heading\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Success criteria:** SC3\n',
+    '# Plan\n\n## Task 1: colon heading\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC3\n',
   );
   const verify = (index) => {
     writeFileSync(join(repoRoot, indexPath), index);

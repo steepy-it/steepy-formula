@@ -108,7 +108,7 @@ function materializePhaseArtifacts() {
   if (phase === 'plan') {
     const planPath = join(process.cwd(), manifest.outputs[0]);
     mkdirSync(dirname(planPath), { recursive: true });
-    writeFileSync(planPath, process.env.FAKE_HARNESS_PLAN_TEXT ?? `# Plan\n\nPLAN_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT\n\n## Task 1 — wire integration\n\n- **Surface:** \`scripts\`\n- **Test command:** \`npm test\`\n- **Complexity:** \`integration\`\n- **Success criteria:** SC1\n\n## Task 2 — review architecture\n\n- **Surface:** \`scripts\`\n- **Test command:** \`npm test\`\n- **Complexity:** \`design\`\n- **Success criteria:** SC2\n`);
+    writeFileSync(planPath, process.env.FAKE_HARNESS_PLAN_TEXT ?? `# Plan\n\nPLAN_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT\n\n## Task 1 — wire integration\n\n- **Surface:** \`scripts\`\n- **Test command:** \`npm test\`\n- **Complexity:** \`integration\`\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 2 — review architecture\n\n- **Surface:** \`scripts\`\n- **Test command:** \`npm test\`\n- **Complexity:** \`design\`\n- **Dependencies:** none\n- **Success criteria:** SC2\n`);
   } else if (phase === 'implement') {
     mkdirSync(taskDir, { recursive: true });
     appendFileSync(join(taskDir, 'ledger.md'), 'Task 1: complete\nTask 2: complete\n', 'utf8');
