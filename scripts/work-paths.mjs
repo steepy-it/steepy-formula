@@ -21,7 +21,18 @@ const SEGMENT_CHARS = /^[A-Za-z0-9._-]+$/;
 const NAME_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const AGGREGATE_RAW_NAME = /^phase-[1-9]\d*\.log$/;
 const ATTEMPT_RAW_NAME = /^phase-[1-9]\d*-attempt-[1-9]\d*(\.log|\.raw\.jsonl)$/;
-const MANIFEST_NAME = /^(?:phase-(?:plan|implement|review|[1-9]\d*)-attempt-[1-9]\d*|task-[1-9]\d*-(?:implement|review|fix)(?:-[1-9]\d*)?|final-review)\.json$/;
+const MANIFEST_NAME = /^(?:phase-(?:plan|implement|review|[1-9]\d*)-attempt-[1-9]\d*|task-[1-9]\d*-(?:implement|review|fix)(?:-[1-9]\d*)?|task-[1-9]\d*-(?:retry|diagnosis)-[1-9]\d*|final-(?:review|diagnosis)-[1-9]\d*|final-review)\.json$/;
+const CORRECTION_SCOPE = '(?:task-[1-9]\\d*|final)';
+const CORRECTION_FILES = [
+  [/^record-[1-9]\d*\.json$/, 'correction-record'],
+  [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-baseline\\.json$`), 'correction-candidate'],
+  [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-iteration-[1-9]\\d*-candidate\\.json$`), 'correction-candidate'],
+  [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-iteration-[1-9]\\d*-check-[1-9]\\d*-evidence\\.md$`), 'evidence'],
+  [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-iteration-[1-9]\\d*-defects\\.json$`), 'correction-defects'],
+  [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-iteration-[1-9]\\d*-diagnosis\\.json$`), 'correction-diagnosis'],
+  [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-retry-[1-9]\\d*\\.json$`), 'correction-retry'],
+  [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-reopen\\.json$`), 'correction-reopen'],
+];
 const FIXED_TASK_FILES = new Map([
   ['autopilot-status.md', 'status'],
   ['resource-usage.jsonl', 'ledger'],
@@ -118,6 +129,11 @@ function classifyRest(rest, value) {
       if (fixed !== undefined) return { type: 'work-output', family: fixed };
       if (AGGREGATE_RAW_NAME.test(rest[2]) || ATTEMPT_RAW_NAME.test(rest[2])) {
         return { type: 'work-output', family: 'raw' };
+      }
+    }
+    if (rest.length === 4 && rest[2] === 'correction') {
+      for (const [pattern, family] of CORRECTION_FILES) {
+        if (pattern.test(rest[3])) return { type: 'work-output', family };
       }
     }
     if (rest.length === 4 && rest[2] === 'context' && MANIFEST_NAME.test(rest[3])) {
