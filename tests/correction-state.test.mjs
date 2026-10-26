@@ -2885,6 +2885,8 @@ test('REOPEN_AUTHORIZED needs a stopped scope, no open cycle and a running run',
   // The cycle is the scope's latest plus one, linked to it.
   refused(applyCorrectionRecord(state, reopenAuthorized('task-1', 3)), REFUSAL.REOPEN_INVALID);
   refused(applyCorrectionRecord(state, reopenAuthorized('task-1', 2, { predecessor: 'task-4#1' })), REFUSAL.REOPEN_INVALID);
+  // The cycle number is checked on its own: the right predecessor does not admit a skipped cycle.
+  refused(applyCorrectionRecord(state, reopenAuthorized('task-1', 3, { predecessor: 'task-1#1' })), REFUSAL.REOPEN_INVALID);
   const reopened = apply(state, reopenAuthorized());
   assert.deepEqual(reopened.reopens.map(({ scope, cycle, predecessor }) => [scope, cycle, predecessor]),
     [['task-1', 2, 'task-1#1']]);
@@ -2932,7 +2934,9 @@ test('a reopen opens a linked cycle with a fresh allowance; the old cycle stays;
   const authorizedState = apply(state, reopenAuthorized());
   assert.deepEqual(nextCorrectionStep(authorizedState),
     { action: 'open-cycle', scope: 'task-1', cycle: 2, predecessor: 'task-1#1' });
-  // The authorization alone unblocks nothing.
+  // The authorization alone unblocks nothing, in the summary as in the schedule.
+  assert.deepEqual(summarizeCorrectionRun(authorizedState).blocked,
+    [{ task: '2', causes: ['1'] }, { task: '3', causes: ['1'] }]);
   for (const task of ['2', '3']) {
     refused(applyCorrectionRecord(authorizedState, taskOpened(task)), REFUSAL.SCOPE_NOT_RUNNABLE);
   }
@@ -3138,6 +3142,13 @@ test('summary criteria: a final stopped at terminal fails every criterion it did
     assert.equal(summary.final.approvedObservation, null);
   }
   assert.equal(summarizeCorrectionRun(interruptedFinal).final.reason, STOP.HUMAN_INTERRUPTED);
+  // Reopening task 1 makes the run PENDING again: the stopped final's defect no longer decides SC4.
+  const reopened = apply(withDefect, reopenAuthorized());
+  assert.deepEqual(nextCorrectionStep(reopened),
+    { action: 'open-cycle', scope: 'task-1', cycle: 2, predecessor: 'task-1#1' });
+  const reopenedSummary = summarizeCorrectionRun(reopened);
+  assert.equal(reopenedSummary.outcome, 'PENDING');
+  assert.deepEqual(reopenedSummary.criteria, { SC1: 'failed', SC2: 'blocked', SC3: 'blocked' });
   // An open final is not terminal: its criteria stay undecided.
   const open = summarizeCorrectionRun(finalOpened);
   assert.equal(open.outcome, 'PENDING');
@@ -3298,4 +3309,92 @@ test('a final reopen waits until no task is runnable, and the final then reruns 
   assert.equal(summarizeCorrectionRun(complete).outcome, 'COMPLETE');
   refused(applyCorrectionRecord(complete, closureFinal(all, { cycle: 3, predecessor: 'final#2' })),
     REFUSAL.REOPEN_INVALID);
+});
+
+// --- fix 1: summary discrimination ----------------------------------------------------------------
+
+// Stops the final cycle opened in `state`: by an interruption with no outcome, or after a final review
+// finds an SC4 issue.
+function stoppedFinals(state) {
+  return [
+    chain(state, [reserved(1, 'initial', null, 'final'), stopped(STOP.HUMAN_INTERRUPTED, 'final')]),
+    chain(state, [
+      reserved(1, 'initial', null, 'final'), authorized(1, 'final-reviewer', {}, 'final'),
+      checksRecorded(1, {}, { observation: OBSERVATION }, 'final', 1, FINAL_CHECK_IDS),
+      reviewRecorded(1, 'ISSUES_FOUND', {
+        before: OBSERVATION, after: OBSERVATION, rubric: [],
+        defects: [defectEntry({ criterion: 'SC4', cause: 'missing-note' })],
+      }, 'final-reviewer', 'final'),
+      stopped(STOP.RETRY_EVIDENCE_MISSING, 'final'),
+    ]),
+  ];
+}
+
+test('summary: every task approved but the final stopped is PARTIAL and unapproved', () => {
+  const delivered = chain(closureRun(), [
+    ...approvalRecords('1'), ...approvalRecords('2'), ...approvalRecords('3'), ...approvalRecords('4'),
+  ]);
+  for (const state of stoppedFinals(apply(delivered, closureFinal(['1', '2', '3', '4'])))) {
+    assert.equal(nextCorrectionStep(state).action, 'terminal');
+    const summary = summarizeCorrectionRun(state);
+    assert.deepEqual([summary.outcome, summary.approval], ['PARTIAL', 'UNAPPROVED']);
+    assert.deepEqual([summary.completed, summary.stopped, summary.blocked], [['1', '2', '3', '4'], [], []]);
+    assert.deepEqual([summary.final.status, summary.final.approvedObservation], ['STOPPED', null]);
+    assert.deepEqual(summary.criteria, { SC1: 'failed', SC2: 'failed', SC3: 'failed', SC4: 'failed' });
+    const parsed = parseCorrectionSummaryBlock(formatCorrectionSummaryBlock(summary));
+    assert.deepEqual([parsed.outcome, parsed.approval], ['PARTIAL', 'UNAPPROVED']);
+  }
+});
+
+test('summary criteria: failed outranks blocked, and a stopped final\'s unresolved defect fails its criterion', () => {
+  // Task 3 (blocked by the stopped task 1) and task 4 (approved) both carry SC4.
+  const tasks = closurePlan().map((entry) => (entry.task === '3' ? { ...entry, criterionIds: ['SC3', 'SC4'] } : entry));
+  const open = (task) => ({
+    kind: 'CYCLE_OPENED', scope: `task-${task}`, cycle: 1, predecessor: null,
+    ...deriveCycleBindings({ scope: `task-${task}`, task: tasks.find((entry) => entry.task === task) }),
+    rubricCriteria: [], observation: OBSERVATION,
+  });
+  const finalOpened = chain(createCorrectionState(), [
+    runOpened({ tasks }),
+    open('1'), stopped(STOP.HUMAN_INTERRUPTED), isolationRecorded(),
+    open('4'), reserved(1, 'initial', null, 'task-4'), authorized(1, 'writer', {}, 'task-4'),
+    writerRecorded(1, 'DONE', {}, 'task-4'), checksRecorded(1, {}, {}, 'task-4'),
+    {
+      kind: 'CYCLE_OPENED', scope: 'final', cycle: 1, predecessor: null,
+      ...deriveCycleBindings({ scope: 'final', deliveredTasks: [tasks[3]] }), rubricCriteria: [], observation: OBSERVATION,
+    },
+  ]);
+  const [, withDefect] = stoppedFinals(finalOpened);
+  const summary = summarizeCorrectionRun(withDefect);
+  assert.equal(summary.outcome, 'PARTIAL');
+  assert.deepEqual(summary.criteria, { SC1: 'failed', SC2: 'blocked', SC3: 'blocked', SC4: 'failed' });
+});
+
+test('summary nextRemedy: a valid diagnosis recommendation outranks an admitted remedy', () => {
+  const state = chain(awaitingRetry(), [
+    admitted(retryRequest()), reserved(2, 'correction'), authorized(2, 'writer'), [interrupted(2), { ref: ref(6) }],
+    reserved(3, 'diagnosis', 'comparison-unavailable'), authorized(3, 'diagnostic'), diagnosed(3),
+  ]);
+  // The cycle admitted a remedy, so the recommendation has something to outrank.
+  assert.deepEqual(state.cycles['task-1#1'].admittedRemedies, [retryRequest().remedy]);
+  assert.equal(state.cycles['task-1#1'].stopReason, STOP.EXHAUSTED);
+  assert.equal(summarizeCorrectionRun(state).stopped[0].nextRemedy, diagnosed(3).recommendation);
+});
+
+test('summary execution: the newest accepted autopilot writer across the task\'s cycles', () => {
+  const records = [
+    ...partialRunRecords(), reopenAuthorized(), taskOpened('1', { cycle: 2, predecessor: 'task-1#1' }),
+    reserved(1, 'initial', null, 'task-1', 2), authorized(1, 'writer', {}, 'task-1', 2),
+    writerRecorded(1, 'DONE', {}, 'task-1', 2), checksRecorded(1, { 'surface-test': FAILED(2) }, {}, 'task-1', 2),
+    stopped(STOP.HUMAN_INTERRUPTED, 'task-1', 2),
+  ].map((record) => {
+    if (record.kind === 'RUN_OPENED') return { ...record, drive: 'autopilot' };
+    if (record.kind === 'DISPATCH_AUTHORIZED' && record.role === 'writer') {
+      return { ...record, target: `receipt:${record.scope}/c${record.cycle}/i${record.iteration}/` };
+    }
+    return record;
+  });
+  const state = chain(createCorrectionState(), records);
+  assert.deepEqual(summarizeCorrectionRun(state).stopped.map(({ task, cycle, execution }) => [task, cycle, execution]),
+    [['1', 2, 'receipt:task-1/c2/i1/']]);
 });
