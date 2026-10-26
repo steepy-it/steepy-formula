@@ -34,6 +34,7 @@ Subagent (reviewer):
     **Relevant standards context:** [STANDARD_FILES]   ← filled by the controller: the resolved context's Rules for the branch's surfaces (context.md).
     **Review artifact:** [FINAL_REVIEW_FILE]
     **Issue artifact:** [FINAL_ISSUE_FILE]
+    **Defects artifact:** [DEFECTS_FILE]   ← filled by the controller
 
     In autopilot, read and validate the manifest first, then return exactly status,
     artifact, signals; never include `changed-paths` (malformed). Manual drive uses the four-field
@@ -68,6 +69,43 @@ Subagent (reviewer):
     Flag real cross-task, integration, and unmet-criterion problems. Do not re-litigate an approved
     task-scoped finding unless it composes into a branch-level problem. Approve when there is no real gap.
 
+    ## Structured defects artifact
+    Always write the defects artifact ([DEFECTS_FILE]) as strict JSON, whatever the verdict. It has exactly
+    these keys: `version` (the number 1), `scope`, `cycle`, `iteration` (all three copied from the
+    dispatch), `verdict` (`APPROVED` | `ISSUES_FOUND`, equal to the response status), `defects` (an array,
+    empty when approved) and `rubric` (an array, empty when no criterion is rubric-bound).
+
+    Each defect has exactly these fields: `criterion` (the criterion ID), `check` (`review` | `rubric`),
+    `dimension` (null for `review`; `coverage`, `correctness`, `clarity` or `usability` for `rubric`),
+    `cause`, `severity` (`critical` | `important` | `minor`), `expected`, `observed`, `proof`, `correction`,
+    `nextCheck`, `supersedes` and `justification`. Every failure states the expected behaviour, the
+    observed behaviour, the exact proof, the required correction and the next check, each non-empty.
+
+    `cause` is a stable kebab-case code naming the failure cause (lowercase words joined by hyphens,
+    at most 64 characters). It never contains volatile paths, timestamps or message wording. Reuse the
+    same `cause` when the same failure recurs. A cause change needs `supersedes` (the earlier defect id,
+    `<criterion>/<check>[:<dimension>]/<cause>`) plus a `justification`; otherwise both are null.
+
+    Never weaken a criterion and never mark a failing check optional.
+
+    ## Prose rubric
+    For criteria the brief or manifest lists as rubric-bound, add one `rubric` entry per such criterion:
+    `criterion`, `coverage`, `correctness`, `clarity` and `usability` (each `{ "score": 0 | 1 | 2,
+    "evidence": "<concrete evidence>" }`) and `constraints` (an array of `{ "id", "satisfied", "evidence" }`
+    for the mandatory constraints). Score each dimension 0, 1 or 2 with concrete evidence for every score.
+
+    | Dimension | 0 | 1 | 2 |
+    | --- | --- | --- | --- |
+    | Coverage | Mandatory deliverable absent | Required elements partly present | Every required element has an exact content reference |
+    | Correctness | Contradiction or demonstrable error | Required fact unverified | Facts checked; assumptions explicit; no known contradiction |
+    | Clarity | Reader cannot determine the required action | A named ambiguity remains | Actors, inputs, actions and outcomes are unambiguous |
+    | Usability | Required procedure cannot be performed | A concrete prerequisite or step is missing | Procedure can be followed with declared inputs and checks |
+
+    Approval needs 8/8 plus every mandatory constraint. Any score below 2 names the missing element or
+    ambiguity and the required edit as a `rubric` defect on that criterion and dimension; an unsupported
+    score is invalid feedback. An unsatisfied constraint needs a critical or important `review` defect on
+    the same criterion.
+
     ## Durable findings and response
     Always write complete findings, evidence, minor triage, and Status to
     `.formula/work/tasks/<plan-basename>/final-review.md` ([FINAL_REVIEW_FILE]). Status is Approved or
@@ -75,7 +113,7 @@ Subagent (reviewer):
     `.formula/work/tasks/<plan-basename>/final-review-issues.md` ([FINAL_ISSUE_FILE]); a fix receives that
     artifact, never inline concern prose. If BLOCKED or NEEDS_CONTEXT, write all detail to
     [FINAL_REVIEW_FILE]. The review is read-only with respect to application code and other repository sources.
-    Writing the authorized review and issue artifacts is required and excluded from `changed-paths`.
+    Writing the authorized review, issue and defects artifacts is required and excluded from `changed-paths`.
     In manual drive, `changed-paths` must always be the literal `none`. Do not edit source, stage files, or commit.
     The gate never infers or repairs status, artifact, or signals.
 

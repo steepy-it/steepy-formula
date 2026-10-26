@@ -73,6 +73,11 @@ Subagent (<surface>-agent):
     report it as a typed promotion candidate in [REPORT_FILE] for review's sweep. Do not broaden scope
     beyond the brief.
 
+    ## Correction dispatch
+    When this dispatch is a correction, the report names the admitted remedy it applied and its
+    confirming check, and shows that check's result. Never edit criteria or tests to make a failure
+    disappear; a failing check is fixed in the implementation, or reported as a concern.
+
     ## Self-review and commit
     Verify the brief completely, test quality, names, and pristine output. If commit authorization is
     YES, commit tests plus implementation only after green; if NO, do not run a mutating git command.

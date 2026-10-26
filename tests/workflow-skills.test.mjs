@@ -3010,7 +3010,7 @@ test('receipt protocol selects semantic transport and records exact restart capa
 });
 
 test('autopilot prompts specify only status, artifact, signals; manual drive keeps four fields', () => {
-  for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
+  for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md', 'diagnosis-prompt.md']) {
     const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
     assert.match(text, /status[^]*artifact[^]*signals/);
     assert.match(text, /changed-paths:/, 'manual-drive grammar remains documented');
@@ -3039,7 +3039,7 @@ test('autopilot sections carry no four-field example and mixed files label manua
   const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
   assert.doesNotMatch(sectionBetween(review, '**Autopilot preflight:**', '**Manual/no-manifest:**'), /legacy|protocol 1/i);
   const field = /^\s*(?:status|artifact|changed-paths|signals): /;
-  for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md']) {
+  for (const file of ['SKILL.md', 'implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md', 'diagnosis-prompt.md']) {
     const lines = readFileSync(join(skillsDir, 'implement', file), 'utf8').split('\n');
     const fourField = [], threeField = [];
     lines.forEach((line, i) => {
@@ -3055,6 +3055,65 @@ test('autopilot sections carry no four-field example and mixed files label manua
     if (file !== 'SKILL.md') assert.ok(threeField.length > 0, `${file} shows the three-field autopilot shape`);
     for (const i of threeField) assert.ok(i > fourField[0], `${file}:${i + 1} autopilot example must follow the first manual block`);
   }
+});
+
+// Task 13: structured defects, the prose rubric and the read-only diagnosis prompt.
+const RUBRIC_TABLE = [
+  '| Dimension | 0 | 1 | 2 |',
+  '| --- | --- | --- | --- |',
+  '| Coverage | Mandatory deliverable absent | Required elements partly present | Every required element has an exact content reference |',
+  '| Correctness | Contradiction or demonstrable error | Required fact unverified | Facts checked; assumptions explicit; no known contradiction |',
+  '| Clarity | Reader cannot determine the required action | A named ambiguity remains | Actors, inputs, actions and outcomes are unambiguous |',
+  '| Usability | Required procedure cannot be performed | A concrete prerequisite or step is missing | Procedure can be followed with declared inputs and checks |',
+].join('\n');
+
+test('reviewer prompts lock the defects artifact, the rubric table and the feedback fields', () => {
+  for (const [file, slot] of [['task-reviewer-prompt.md', 'DEFECTS_FILE'], ['final-review-prompt.md', 'DEFECTS_FILE']]) {
+    const text = readFileSync(join(skillsDir, 'implement', file), 'utf8');
+    assert.match(text, /\*\*Defects artifact:\*\* \[DEFECTS_FILE\]/, `${file} declares the defects slot`);
+    assert.match(text, /strict JSON/, `${file} requires strict JSON`);
+    for (const key of ['version', 'scope', 'cycle', 'iteration', 'verdict', 'defects', 'rubric']) {
+      assert.ok(text.includes(`\`${key}\``), `${file} names defects key ${key}`);
+    }
+    for (const key of ['criterion', 'check', 'dimension', 'cause', 'severity', 'expected', 'observed', 'proof',
+      'correction', 'nextCheck', 'supersedes', 'justification']) {
+      assert.ok(text.includes(`\`${key}\``), `${file} names defect field ${key}`);
+    }
+    assert.match(text, /`review` \| `rubric`/, `${file} names the check values`);
+    assert.match(text, /`critical` \| `important` \| `minor`/, `${file} names the severities`);
+    assert.match(text, /`APPROVED` \| `ISSUES_FOUND`/, `${file} names the verdict values`);
+    assert.match(text, /kebab-case/, `${file} requires a stable kebab-case cause`);
+    assert.match(text, /never weaken a criterion/i, `${file} forbids weakening a criterion`);
+    assert.match(text, /8\/8/, `${file} requires 8/8`);
+    assert.match(text, /unsupported\s+score\s+is\s+invalid\s+feedback/i, `${file} rejects unsupported scores`);
+    assert.match(text, /artifacts is required and excluded from `changed-paths`/, `${file} keeps the changed-paths exclusion`);
+    assert.ok(text.includes(RUBRIC_TABLE.split('\n').map((l) => `    ${l}`).join('\n')), `${file} carries the rubric table verbatim`);
+    assert.doesNotMatch(text, /legacy/i, file);
+    assert.doesNotMatch(text, /\.formula\/work\/tasks\/[^\s`]*defects/i, `${file} names no concrete defects path`);
+  }
+});
+
+test('implementer prompt names the applied remedy and forbids editing criteria or tests to hide a failure', () => {
+  const text = readFileSync(join(skillsDir, 'implement', 'implementer-prompt.md'), 'utf8');
+  assert.match(text, /correction dispatch[^]*admitted remedy[^]*confirming check/i, 'correction report names remedy and confirming check');
+  assert.match(text, /never edit[^.]*criteria[^.]*tests[^.]*failure\s+disappear/i, 'implementer never edits criteria or tests to hide a failure');
+});
+
+test('diagnosis prompt is a harness-neutral read-only diagnostic with the guard-accepted artifact', () => {
+  const text = readFileSync(join(skillsDir, 'implement', 'diagnosis-prompt.md'), 'utf8');
+  assert.match(text, /model: standard/, 'diagnosis names an explicit standard tier');
+  assert.match(text, /most-capable/, 'diagnosis rises to most-capable for design');
+  assert.match(text, /read-only/i, 'diagnosis is read-only');
+  assert.match(text, /never edits? source, stages? or commits?/i, 'diagnosis never edits, stages or commits');
+  for (const key of ['version', 'scope', 'cycle', 'iteration', 'hypothesis', 'remedy', 'confirmingCheck',
+    'recommendation', 'evidence']) {
+    assert.ok(text.includes(`\`${key}\``), `diagnosis names key ${key}`);
+  }
+  assert.match(text, /DIAGNOSED \| INCONCLUSIVE \| BLOCKED \| NEEDS_CONTEXT/, 'diagnosis statuses are exact');
+  assert.match(text, /no task\/subagent tool/i, 'diagnosis names the no-subagent-tool case');
+  assert.match(text, /inline[^]*degradation/i, 'diagnosis declares the inline degradation');
+  assert.match(text, /changed-paths: none/, 'manual drive adds changed-paths: none');
+  assert.doesNotMatch(text, /legacy|\$\{CLAUDE_PLUGIN_ROOT\}/i, 'diagnosis stays harness-neutral');
 });
 
 // Global graph-only lock (Task 20): no skill outside graph-migrate carries a Markdown-hub reference,
