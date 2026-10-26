@@ -5,6 +5,14 @@
 // allowance of iterations per cycle, a single diagnosis slot charged to that allowance, retries
 // admitted only with bound evidence, and dispatch roles authorized once per iteration.
 //
+// Each cycle opens with the verification its scope derives (`deriveCycleBindings`): the command checks,
+// the review and the rubric every criterion is bound to, none of which can be dropped or weakened. An
+// iteration concludes with an outcome (writer, checks, review) whose defects carry stable ids
+// (`normalizeDefects`); a failed correction is compared with the previous comparable outcome on metric
+// deltas alone (`compareOutcomes`), so stagnation, an unavailable comparison and exhaustion stop the
+// cycle, and approval needs every check, the review, the rubric and one observed tree. Candidates are
+// ranked by the evidence attributed to each (`rankCandidates`).
+//
 // The module is pure: no filesystem, no subprocess, no other scripts/ import. Data problems come back
 // as `{ ok: false, code, message, identity }`; `TypeError` is thrown only for programmer error (a
 // state this module did not produce, a non-plain record, an unknown option key). Records carry no
@@ -49,6 +57,7 @@ export const CORRECTION_CODES = deepFreeze({
     'ALLOWANCE_EXHAUSTED',
     'DIAGNOSIS_USED',
     'DIAGNOSIS_REASON',
+    'DIAGNOSIS_REQUIRED',
     'RETRY_REQUIRED',
     'RETRY_INVALID',
     'RETRY_REPEATED',
@@ -60,6 +69,17 @@ export const CORRECTION_CODES = deepFreeze({
     'REOPEN_INVALID',
     'FINAL_BYPASS',
     'ISOLATION_REQUIRED',
+  ]),
+  // Why a reviewer's report is not a valid review; the guard records such a review as INVALID.
+  review: vocabulary([
+    'DEFECT_SCHEMA',
+    'DEFECT_UNBOUND',
+    'DEFECT_SUPERSEDES',
+    'DEFECT_DUPLICATE',
+    'RUBRIC_SCHEMA',
+    'RUBRIC_COVERAGE',
+    'RUBRIC_UNSUPPORTED',
+    'STATUS_INCONSISTENT',
   ]),
 });
 
@@ -73,6 +93,9 @@ export const CORRECTION_RECORD_KINDS = deepFreeze(vocabulary([
   'DIAGNOSIS_RECORDED',
   'CYCLE_STOPPED',
   'RUN_HALTED',
+  'WRITER_RECORDED',
+  'CHECKS_RECORDED',
+  'REVIEW_RECORDED',
 ]));
 
 const REFUSAL = CORRECTION_CODES.refusal;
@@ -101,8 +124,16 @@ const STATUS_WORDS = new Set([
   'done', 'done_with_concerns', 'blocked', 'needs_context', 'approved', 'issues_found', 'retry', 'again',
 ]);
 const REVIEW_CONFIRMATIONS = Object.freeze(['review', 'rubric']);
-// Evidence a tool-failure retry may bind to: an interrupted dispatch's own record.
-const TOOL_FAILURE_SOURCES = new Set(['interruption']);
+// Evidence a tool-failure retry may bind to: an interrupted dispatch's own record, and the evidence of a
+// writer that did not succeed or of an incomplete or invalid review.
+const TOOL_FAILURE_SOURCES = new Set(['interruption', 'writer-failure', 'review-failure']);
+const WRITER_STATUSES = new Set(['DONE', 'DONE_WITH_CONCERNS', 'BLOCKED', 'NEEDS_CONTEXT', 'INVALID']);
+const ACCEPTED_WRITER_STATUSES = new Set(['DONE', 'DONE_WITH_CONCERNS']);
+const CHECK_RESULT_FIELDS = Object.freeze(['id', 'exitCode', 'passed', 'metric', 'evidence']);
+const REVIEW_STATUSES = new Set(['APPROVED', 'ISSUES_FOUND', 'BLOCKED', 'NEEDS_CONTEXT', 'INVALID']);
+const VERDICT_STATUSES = new Set(['APPROVED', 'ISSUES_FOUND']);
+// A final-scope correction of such a task needs an approved task review before the final review.
+const TASK_REVIEWED_COMPLEXITIES = new Set(['integration', 'design']);
 const EXPLICIT_STOPS = new Set([STOP.RETRY_EVIDENCE_MISSING, STOP.HUMAN_INTERRUPTED]);
 // The roles each iteration kind may authorize, by scope kind, in dispatch order: a writer always
 // precedes the reviewers, and each role is authorized at most once per iteration.
@@ -118,6 +149,28 @@ const PERMITTED_ROLES = deepFreeze({
     diagnosis: ['diagnostic'],
   },
 });
+const DERIVE_KEYS = Object.freeze(['scope', 'task', 'deliveredTasks', 'rubricCriteria', 'reviewOptIn']);
+const NORMALIZE_KEYS = Object.freeze(['bindings', 'entries', 'previous']);
+const RUBRIC_KEYS = Object.freeze(['bindings', 'rubric', 'defects']);
+const REVIEW_INVALID = CORRECTION_CODES.review;
+const DEFECT_FIELDS = Object.freeze([
+  'criterion', 'check', 'dimension', 'cause', 'severity', 'expected', 'observed', 'proof', 'correction', 'nextCheck',
+  'supersedes', 'justification',
+]);
+const FEEDBACK_FIELDS = Object.freeze(['expected', 'observed', 'proof', 'correction', 'nextCheck']);
+const RUBRIC_DIMENSIONS = Object.freeze(['coverage', 'correctness', 'clarity', 'usability']);
+const RUBRIC_ENTRY_FIELDS = Object.freeze(['criterion', ...RUBRIC_DIMENSIONS, 'constraints']);
+const SCORE_FIELDS = Object.freeze(['score', 'evidence']);
+const CONSTRAINT_FIELDS = Object.freeze(['id', 'satisfied', 'evidence']);
+const FULL_SCORE = 2;
+// The severity ordinal is a review defect's metric: lower is better.
+const SEVERITY_ORDINAL = Object.freeze({ critical: 3, important: 2, minor: 1 });
+const BLOCKING_SEVERITIES = new Set(['critical', 'important']);
+const CAUSE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const CAUSE_MAX_LENGTH = 64;
+const COHERENCE_GATE = Object.freeze({ id: 'coherence-gate', command: 'builtin' });
+// Four rubric dimensions scored 0-2 each: a rubric criterion passes only at the full 8.
+const RUBRIC_THRESHOLD = 8;
 const SCOPE = /^(?:task-([1-9]\d*)|final)$/u;
 const CYCLE_REFERENCE = /^(?:task-[1-9]\d*|final)#[1-9]\d*$/u;
 const HEX64 = /^[0-9a-f]{64}$/u;
@@ -179,6 +232,18 @@ function isUniqueArray(values, predicate) {
   return Array.isArray(values) && values.every(predicate) && new Set(values).size === values.length;
 }
 
+// Structural equality of JSON-plain values: array order matters, object key order does not.
+function sameValue(left, right) {
+  if (left === right) return true;
+  if (Array.isArray(left)) {
+    return Array.isArray(right) && left.length === right.length
+      && left.every((item, index) => sameValue(item, right[index]));
+  }
+  if (!isPlainObject(left) || !isPlainObject(right)) return false;
+  const keys = Object.keys(left);
+  return hasExactKeys(right, keys) && keys.every((key) => sameValue(left[key], right[key]));
+}
+
 // JSON-plain: a string, finite number, boolean, null, or a plain array or object of the same, built
 // only from enumerable own data properties with string keys and no cycles. Only such values are stored,
 // so nothing escapes the failure envelope, the structured clone or the deep freeze.
@@ -222,16 +287,363 @@ function assertOptions(options, accepted, label) {
 // Every state this module returns is registered here, so a hand-built or cloned state is a
 // programmer error rather than a silently trusted input.
 const PRODUCED = new WeakSet();
+const PRODUCED_CYCLES = new WeakSet();
 
 function produce(state) {
   deepFreeze(state);
   PRODUCED.add(state);
+  for (const cycle of Object.values(state.cycles)) PRODUCED_CYCLES.add(cycle);
   return state;
 }
 
 function assertState(state, label) {
   if (!PRODUCED.has(state)) {
     throw new TypeError(`${label}: state must be produced by createCorrectionState or applyCorrectionRecord`);
+  }
+}
+
+// --- verification bindings ------------------------------------------------------------------------
+
+function isPlanTask(task) {
+  return isPlainObject(task) && hasExactKeys(task, PLAN_TASK_FIELDS) && isTaskId(task.task)
+    && Array.isArray(task.dependencies) && task.dependencies.every(isTaskId) && COMPLEXITIES.has(task.complexity)
+    && isUniqueArray(task.criterionIds, (id) => typeof id === 'string' && CRITERION_ID.test(id))
+    && isLine(task.testCommand);
+}
+
+function binding(criterion, check, kind, metric, direction, threshold) {
+  return { criterion, check, kind, metric, direction, threshold };
+}
+
+// The problem with a binding derivation input, or null. The exported derivation throws it as a
+// TypeError (a malformed call); the CYCLE_OPENED handler refuses it as a malformed record.
+function bindingInputProblem({ scope, task, deliveredTasks, rubricCriteria, reviewOptIn }) {
+  if (typeof scope !== 'string' || !SCOPE.test(scope)) return "scope must be 'task-<N>' or 'final'";
+  if (typeof reviewOptIn !== 'boolean') return 'reviewOptIn must be a boolean';
+  let criteria;
+  if (scope === 'final') {
+    if (task !== null) return 'the final scope takes deliveredTasks, not a task';
+    if (!Array.isArray(deliveredTasks) || !deliveredTasks.every(isPlanTask)) {
+      return 'deliveredTasks must be an array of plan tasks';
+    }
+    if (new Set(deliveredTasks.map((entry) => entry.task)).size !== deliveredTasks.length) {
+      return 'deliveredTasks must name each task once';
+    }
+    criteria = deliveredTasks.flatMap((entry) => entry.criterionIds);
+  } else {
+    if (deliveredTasks !== null) return 'a task scope takes a task, not deliveredTasks';
+    if (!isPlanTask(task) || task.task !== taskOfScope(scope)) return `task must be the plan task of scope '${scope}'`;
+    criteria = task.criterionIds;
+  }
+  if (!isUniqueArray(rubricCriteria, (id) => typeof id === 'string')) {
+    return 'rubricCriteria must be an array of unique criterion IDs';
+  }
+  const outside = rubricCriteria.filter((id) => !criteria.includes(id));
+  if (outside.length > 0) return `rubricCriteria ${outside.join(', ')} are not criteria of scope '${scope}'`;
+  if (rubricCriteria.length > 0 && reviewMode(scope, task, reviewOptIn) === 'skipped') {
+    return 'a rubric is scored by a review, so rubricCriteria require a review';
+  }
+  return null;
+}
+
+function reviewMode(scope, task, reviewOptIn) {
+  return scope === 'final' || task.complexity !== 'mechanical' || reviewOptIn ? 'required' : 'skipped';
+}
+
+// Every criterion binds to every command check (pass at zero failures), then to the review when one is
+// required, then to the rubric when it is a rubric criterion.
+function bindCriteria(criteria, surfaceTests, review, rubricCriteria) {
+  return criteria.flatMap((criterion) => [
+    ...surfaceTests.map((check) => binding(criterion, check.id, 'command', 'failed-assertions', 'lower', 0)),
+    binding(criterion, COHERENCE_GATE.id, 'command', 'violations', 'lower', 0),
+    ...(review === 'required' ? [binding(criterion, 'review', 'review', 'severity', 'lower', 0)] : []),
+    ...(rubricCriteria.includes(criterion)
+      ? [binding(criterion, 'rubric', 'rubric', 'rubric-score', 'higher', RUBRIC_THRESHOLD)] : []),
+  ]);
+}
+
+// Assumes an input bindingInputProblem accepted.
+function deriveBindings({ scope, task, deliveredTasks, rubricCriteria, reviewOptIn }) {
+  if (scope === 'final') {
+    const delivered = [...deliveredTasks].sort((left, right) => Number(left.task) - Number(right.task));
+    const commands = [...new Set(delivered.map((entry) => entry.testCommand))].sort();
+    const surfaceTests = commands.map((command, index) => ({ id: `surface-test-${index + 1}`, command }));
+    const criteria = [...new Set(delivered.flatMap((entry) => entry.criterionIds))];
+    return {
+      checks: [...surfaceTests, { ...COHERENCE_GATE }],
+      bindings: bindCriteria(criteria, surfaceTests, 'required', rubricCriteria),
+      review: 'required',
+    };
+  }
+  const review = reviewMode(scope, task, reviewOptIn);
+  const surfaceTests = [{ id: 'surface-test', command: task.testCommand }];
+  return {
+    checks: [...surfaceTests, { ...COHERENCE_GATE }],
+    bindings: bindCriteria(task.criterionIds, surfaceTests, review, rubricCriteria),
+    review,
+  };
+}
+
+// --- defect identity ------------------------------------------------------------------------------
+
+function defectId(criterion, check, dimension, cause) {
+  return `${criterion}/${check}${dimension === null ? '' : `:${dimension}`}/${cause}`;
+}
+
+function isBound(bindings, criterion, check) {
+  return bindings.some((entry) => entry.criterion === criterion && entry.check === check);
+}
+
+function defectEntryProblem(entry) {
+  if (!isPlainObject(entry) || !hasExactKeys(entry, DEFECT_FIELDS)) {
+    return `must have exactly the keys: ${DEFECT_FIELDS.join(', ')}`;
+  }
+  const { criterion, check, dimension, cause, severity, supersedes, justification } = entry;
+  if (typeof criterion !== 'string') return 'criterion must be a string';
+  if (check !== 'review' && check !== 'rubric') return "check must be 'review' or 'rubric'";
+  if (check === 'review' ? dimension !== null : !RUBRIC_DIMENSIONS.includes(dimension)) {
+    return `dimension must be null for review and one of ${RUBRIC_DIMENSIONS.join(', ')} for rubric`;
+  }
+  if (typeof cause !== 'string' || cause.length > CAUSE_MAX_LENGTH || !CAUSE.test(cause)) {
+    return `cause must be lowercase hyphenated words of at most ${CAUSE_MAX_LENGTH} characters`;
+  }
+  if (typeof severity !== 'string' || !Object.hasOwn(SEVERITY_ORDINAL, severity)) {
+    return `severity must be one of: ${Object.keys(SEVERITY_ORDINAL).join(', ')}`;
+  }
+  const empty = FEEDBACK_FIELDS.find((field) => !isText(entry[field]));
+  if (empty !== undefined) return `${empty} must be a non-empty string`;
+  if (supersedes !== null && typeof supersedes !== 'string') return 'supersedes must be null or a defect id';
+  if (supersedes === null ? justification !== null : !isText(justification)) {
+    return 'justification must be a non-empty string exactly when supersedes names a defect';
+  }
+  return null;
+}
+
+// Normalizes a reviewer's defect entries against the cycle bindings and the defects of the previous
+// comparable outcome, refusing with a `review` code. An entry that shares criterion, check and
+// dimension with an unclaimed previous defect but names a new cause, without superseding it, keeps the
+// previous id: renaming a defect is not progress.
+function normalizeEntries(bindings, entries, previous) {
+  if (!Array.isArray(entries)) refuse(REVIEW_INVALID.DEFECT_SCHEMA, 'defects must be an array');
+  for (const [index, entry] of entries.entries()) {
+    const problem = defectEntryProblem(entry);
+    if (problem !== null) refuse(REVIEW_INVALID.DEFECT_SCHEMA, `defect ${index} ${problem}`, { entry: index });
+  }
+  const previousIds = new Set(previous.map((defect) => defect.id));
+  for (const [index, { criterion, check, supersedes }] of entries.entries()) {
+    if (!isBound(bindings, criterion, check)) {
+      refuse(REVIEW_INVALID.DEFECT_UNBOUND, `defect ${index}: ${criterion} is not bound to the ${check} check`,
+        { entry: index });
+    }
+    if (supersedes !== null && !previousIds.has(supersedes)) {
+      refuse(REVIEW_INVALID.DEFECT_SUPERSEDES, `defect ${index} supersedes ${supersedes}, which the previous `
+        + 'outcome does not report', { entry: index });
+    }
+  }
+  const reported = entries.map(({ criterion, check, dimension, cause }) =>
+    defectId(criterion, check, dimension, cause));
+  const claimed = new Set(reported);
+  const defects = entries.map((entry, index) => {
+    let id = reported[index];
+    if (!previousIds.has(id) && entry.supersedes === null) {
+      const renamed = previous.find((defect) => !claimed.has(defect.id) && defect.criterion === entry.criterion
+        && defect.check === entry.check && defect.dimension === entry.dimension);
+      if (renamed !== undefined) {
+        id = renamed.id;
+        claimed.add(id);
+      }
+    }
+    const fields = Object.fromEntries(DEFECT_FIELDS.map((field) => [field, entry[field]]));
+    return {
+      id,
+      ...fields,
+      blocking: BLOCKING_SEVERITIES.has(entry.severity),
+      // A rubric defect's metric is its dimension score, attached from the rubric that carries it.
+      metric: entry.check === 'review' ? SEVERITY_ORDINAL[entry.severity] : null,
+    };
+  });
+  const seen = new Set();
+  for (const [index, { id }] of defects.entries()) {
+    if (seen.has(id)) refuse(REVIEW_INVALID.DEFECT_DUPLICATE, `defect ${index} repeats ${id}`, { entry: index });
+    seen.add(id);
+  }
+  return defects;
+}
+
+// --- rubric ---------------------------------------------------------------------------------------
+
+function rubricEntryProblem(entry) {
+  if (!isPlainObject(entry) || !hasExactKeys(entry, RUBRIC_ENTRY_FIELDS)) {
+    return `must have exactly the keys: ${RUBRIC_ENTRY_FIELDS.join(', ')}`;
+  }
+  if (typeof entry.criterion !== 'string') return 'criterion must be a string';
+  for (const dimension of RUBRIC_DIMENSIONS) {
+    const value = entry[dimension];
+    if (!isPlainObject(value) || !hasExactKeys(value, SCORE_FIELDS) || ![0, 1, FULL_SCORE].includes(value.score)
+      || !isText(value.evidence)) {
+      return `${dimension} must be { score: 0 | 1 | 2, evidence } with non-empty evidence`;
+    }
+  }
+  const { constraints } = entry;
+  if (!Array.isArray(constraints) || !constraints.every((constraint) => isPlainObject(constraint)
+    && hasExactKeys(constraint, CONSTRAINT_FIELDS) && isLine(constraint.id) && typeof constraint.satisfied === 'boolean'
+    && isText(constraint.evidence))) {
+    return 'constraints must be an array of { id, satisfied (boolean), evidence } with non-empty evidence';
+  }
+  if (new Set(constraints.map((constraint) => constraint.id)).size !== constraints.length) {
+    return 'constraints must name each id once';
+  }
+  return null;
+}
+
+// Validates a reviewer's rubric against the rubric bindings, refusing with a `review` code: one
+// entry per rubric criterion, and every score below 2 backed by a rubric defect on the same criterion
+// and dimension that carries a correction. A criterion is approved only at 8/8 with every constraint
+// satisfied.
+function checkRubric(bindings, rubric, defects) {
+  if (!Array.isArray(rubric)) refuse(REVIEW_INVALID.RUBRIC_SCHEMA, 'rubric must be an array');
+  for (const [index, entry] of rubric.entries()) {
+    const problem = rubricEntryProblem(entry);
+    if (problem !== null) refuse(REVIEW_INVALID.RUBRIC_SCHEMA, `rubric entry ${index} ${problem}`, { entry: index });
+  }
+  const criteria = [...new Set(bindings.filter((entry) => entry.check === 'rubric').map((entry) => entry.criterion))];
+  for (const [index, { criterion }] of rubric.entries()) {
+    if (!criteria.includes(criterion)) {
+      refuse(REVIEW_INVALID.RUBRIC_COVERAGE, `rubric entry ${index}: ${criterion} is not a rubric criterion`,
+        { entry: index });
+    }
+  }
+  return criteria.map((criterion) => {
+    const entries = rubric.filter((entry) => entry.criterion === criterion);
+    if (entries.length !== 1) {
+      refuse(REVIEW_INVALID.RUBRIC_COVERAGE, `${criterion} needs exactly one rubric entry, found ${entries.length}`,
+        { criterion });
+    }
+    const [entry] = entries;
+    for (const dimension of RUBRIC_DIMENSIONS) {
+      const { score } = entry[dimension];
+      const supported = score === FULL_SCORE || defects.some((defect) => defect.check === 'rubric'
+        && defect.criterion === criterion && defect.dimension === dimension && isText(defect.correction));
+      if (!supported) {
+        refuse(REVIEW_INVALID.RUBRIC_UNSUPPORTED, `${criterion} ${dimension} scored ${score} without a rubric defect `
+          + 'carrying a correction', { criterion, dimension });
+      }
+    }
+    const score = RUBRIC_DIMENSIONS.reduce((total, dimension) => total + entry[dimension].score, 0);
+    const constraintsSatisfied = entry.constraints.every((constraint) => constraint.satisfied);
+    return { criterion, score, constraintsSatisfied, approved: score === RUBRIC_THRESHOLD && constraintsSatisfied };
+  });
+}
+
+// --- outcome comparison ---------------------------------------------------------------------------
+
+function directionOf(bindings, defect) {
+  const bound = bindings.find((entry) => entry.criterion === defect.criterion && entry.check === defect.check);
+  return bound?.direction ?? null;
+}
+
+// One metric per id: the worst of a repeated current id and the best of a repeated previous id, so a
+// duplicate can never manufacture improvement. Null when any occurrence has no metric.
+function mergedMetric(defects, direction, pick) {
+  const metrics = defects.map((defect) => defect.metric);
+  if (metrics.some((metric) => !Number.isFinite(metric))) return null;
+  const lowerIsBetter = direction === 'lower';
+  const best = lowerIsBetter ? Math.min(...metrics) : Math.max(...metrics);
+  const worst = lowerIsBetter ? Math.max(...metrics) : Math.min(...metrics);
+  return pick === 'best' ? best : worst;
+}
+
+function compare(previous, current, bindings) {
+  if (previous === null) return { verdict: 'none', defects: [] };
+  const ids = [...new Set(current.defects.map((defect) => defect.id))];
+  const defects = ids.map((id) => {
+    const now = current.defects.filter((defect) => defect.id === id);
+    const before = previous.defects.filter((defect) => defect.id === id);
+    const direction = directionOf(bindings, now[0]);
+    const metric = direction === null ? null : mergedMetric(now, direction, 'worst');
+    if (before.length === 0) return { id, previous: null, current: metric, result: 'new' };
+    const earlier = direction === null ? null : mergedMetric(before, direction, 'best');
+    if (earlier === null || metric === null) return { id, previous: earlier, current: metric, result: 'unavailable' };
+    const improved = direction === 'lower' ? metric < earlier : metric > earlier;
+    return { id, previous: earlier, current: metric, result: improved ? 'improved' : 'stagnant' };
+  });
+  const results = new Set(defects.map((defect) => defect.result));
+  let verdict = 'progress';
+  if (results.has('stagnant')) verdict = 'stagnant';
+  else if (results.has('unavailable')) verdict = 'unavailable';
+  return { verdict, defects };
+}
+
+// --- candidate ranking ----------------------------------------------------------------------------
+
+const UNVERIFIED = Object.freeze({
+  verified: false, verifiedBy: null, blocking: null, satisfied: 0, commandMetric: null, rubricScore: null,
+});
+
+// What one verifying iteration established about its candidate: blocking defects (each criterion of a
+// failed command check counts), satisfied mandatory bindings, the command metric sum (null when a
+// failed check has no metric) and the verdict review's rubric total.
+function verificationScore(cycle, entry) {
+  const results = new Map(entry.checks.results.map((result) => [result.id, result]));
+  const verdict = entry.reviews.find((review) => review.role === verdictRole(cycle));
+  const reviewDefects = entry.reviews.flatMap((review) => review.defects);
+  const reviewsValid = entry.reviews.every((review) => VERDICT_STATUSES.has(review.status));
+  const failedChecks = [...results.values()].filter((result) => !result.passed);
+  const blocking = failedChecks.reduce((total, result) => total
+    + Math.max(1, cycle.bindings.filter((bound) => bound.check === result.id).length), 0)
+    + new Set(reviewDefects.filter((defect) => defect.blocking).map((defect) => defect.id)).size
+    + entry.reviews.filter((review) => !VERDICT_STATUSES.has(review.status)).length;
+  const satisfied = cycle.bindings.filter((bound) => {
+    if (bound.kind === 'command') return results.get(bound.check)?.passed === true;
+    if (bound.kind === 'review') {
+      return verdict !== undefined && reviewsValid && !reviewDefects.some((defect) => defect.blocking
+        && defect.check === 'review' && defect.criterion === bound.criterion);
+    }
+    return verdict?.rubric?.criteria.some((item) => item.criterion === bound.criterion && item.approved) === true;
+  }).length;
+  const commandMetric = [...results.values()].reduce((sum, result) => {
+    if (sum === null) return null;
+    if (result.passed) return sum + (result.metric ?? 0);
+    return result.metric === null ? null : sum + result.metric;
+  }, 0);
+  const rubricScore = (verdict?.rubric?.criteria ?? []).reduce((total, item) => total + item.score, 0);
+  return { verified: true, verifiedBy: entry.iteration, blocking, satisfied, commandMetric, rubricScore };
+}
+
+function compareCandidates(left, right) {
+  if (left.verified !== right.verified) return left.verified ? -1 : 1;
+  if (left.verified) {
+    if (left.blocking !== right.blocking) return left.blocking - right.blocking;
+    if (left.satisfied !== right.satisfied) return right.satisfied - left.satisfied;
+    const leftMetric = left.commandMetric ?? Number.POSITIVE_INFINITY;
+    const rightMetric = right.commandMetric ?? Number.POSITIVE_INFINITY;
+    if (leftMetric !== rightMetric) return leftMetric < rightMetric ? -1 : 1;
+    if (left.rubricScore !== right.rubricScore) return right.rubricScore - left.rubricScore;
+  }
+  return left.iteration - right.iteration;
+}
+
+// Runs a pure check that refuses through Refusal and returns its value, or the failure envelope.
+function attempt(check) {
+  try {
+    return { ok: true, value: check() };
+  } catch (error) {
+    if (error instanceof Refusal) return failure(error);
+    throw error;
+  }
+}
+
+function assertBindings(bindings, label) {
+  if (!Array.isArray(bindings) || !bindings.every((entry) => isPlainObject(entry)
+    && typeof entry.criterion === 'string' && typeof entry.check === 'string')) {
+    throw new TypeError(`${label}: bindings must be an array of { criterion, check, ... } bindings`);
+  }
+}
+
+function assertDefects(defects, label, name) {
+  if (!Array.isArray(defects) || !defects.every((defect) => isPlainObject(defect) && typeof defect.id === 'string'
+    && typeof defect.criterion === 'string' && typeof defect.check === 'string')) {
+    throw new TypeError(`${label}: ${name} must be an array of normalized defects`);
   }
 }
 
@@ -283,6 +695,13 @@ function cycleKey(scope, cycle) {
   return `${scope}#${cycle}`;
 }
 
+// The plan tasks, in plan order, whose task scope has an approved cycle.
+function deliveredTasks(draft) {
+  const approved = new Set(Object.values(draft.cycles)
+    .filter((entry) => entry.status === 'APPROVED').map((entry) => entry.scope));
+  return draft.run.tasks.filter((entry) => approved.has(`task-${entry.task}`));
+}
+
 function taskOfScope(scope) {
   const match = SCOPE.exec(scope);
   return match?.[1] ?? null;
@@ -299,10 +718,7 @@ function openCycle(draft, record, { identity }) {
       && isLine(check.id) && isLine(check.command))
     && new Set(checks.map((check) => check.id)).size === checks.length,
   'checks must be { id, command } single-line entries with unique ids', identity);
-  schema(Array.isArray(bindings) && bindings.length > 0
-    && bindings.every((binding) => isPlainObject(binding) && typeof binding.criterion === 'string'
-      && binding.criterion.length > 0),
-  'bindings must be a non-empty array of objects naming a criterion', identity);
+  schema(Array.isArray(bindings), 'bindings must be an array', identity);
   schema(Array.isArray(rubricCriteria) && rubricCriteria.every(isLine),
     'rubricCriteria must be an array of non-empty single-line strings', identity);
   schema(REVIEW_MODES.has(review), `review must be one of: ${[...REVIEW_MODES].join(', ')}`, identity);
@@ -326,6 +742,22 @@ function openCycle(draft, record, { identity }) {
   const key = cycleKey(scope, cycle);
   if (Object.hasOwn(draft.cycles, key)) refuse(REFUSAL.REOPEN_INVALID, `cycle ${key} was already opened`, identity);
 
+  // The verification a cycle opens with is not negotiable: it must be exactly the derivation for its
+  // scope, so no criterion, check or threshold can be dropped or weakened.
+  const final = task === null;
+  const input = {
+    scope,
+    task: final ? null : planTask(draft, task),
+    deliveredTasks: final ? deliveredTasks(draft) : null,
+    rubricCriteria,
+    reviewOptIn: review === 'required',
+  };
+  const problem = bindingInputProblem(input);
+  schema(problem === null, problem, identity);
+  const derived = deriveBindings(input);
+  schema(sameValue(checks, derived.checks) && sameValue(bindings, derived.bindings) && review === derived.review,
+    `checks, bindings and review must equal the derivation for scope '${scope}'`, identity);
+
   draft.cycles[key] = {
     scope,
     cycle,
@@ -338,8 +770,10 @@ function openCycle(draft, record, { identity }) {
     status: 'OPEN',
     stopReason: null,
     stopNote: null,
+    approvedObservation: null,
     reserved: 0,
     diagnosisUsed: false,
+    diagnosisRequired: false,
     diagnosis: null,
     retries: [],
     admittedRemedies: [],
@@ -418,7 +852,9 @@ function reserveIteration(draft, record, { identity }) {
   if (iterationKind === 'correction' && !retryAdmitted) {
     refuse(REFUSAL.RETRY_REQUIRED, `a correction at iteration ${iteration} requires an admitted retry`, identity);
   }
-  cycle.iterations.push({ iteration, kind: iterationKind, reason, dispatches: [], conclusion: null });
+  cycle.iterations.push({
+    iteration, kind: iterationKind, reason, dispatches: [], writer: null, checks: null, reviews: [], conclusion: null,
+  });
   cycle.reserved += 1;
   if (iterationKind === 'correction') cycle.nextRemedy = null;
   if (iterationKind === 'diagnosis') cycle.diagnosisUsed = true;
@@ -497,6 +933,10 @@ function checkRetryRequest(state, request) {
   const latest = cycle.iterations.at(-1);
   if (latest === undefined || latest.conclusion === null) {
     refuse(REFUSAL.OUTCOME_ORDER, 'a retry follows a concluded iteration', identity);
+  }
+  if (cycle.diagnosisRequired) {
+    refuse(REFUSAL.DIAGNOSIS_REQUIRED, `cycle ${key} could not compare its outcomes; it needs its diagnosis first`,
+      identity);
   }
   if (iteration !== cycle.reserved + 1 || iteration > ITERATION_ALLOWANCE) {
     refuse(REFUSAL.ALLOWANCE_EXHAUSTED,
@@ -623,6 +1063,12 @@ function authorizeDispatch(draft, record, { identity }) {
   if (role === 'writer' && dispatched.some((name) => REVIEWER_ROLES.has(name))) {
     refuse(REFUSAL.ROLE_NOT_ALLOWED, 'a writer must be authorized before the reviewers', identity);
   }
+  if (role === 'task-reviewer' && cycle.review === 'skipped') {
+    refuse(REFUSAL.ROLE_NOT_ALLOWED, `cycle ${cycle.scope}#${cycle.cycle} skips review`, identity);
+  }
+  if (role === 'writer' && entry.checks !== null) {
+    refuse(REFUSAL.OUTCOME_ORDER, `the checks of iteration ${iteration} were recorded; no writer may follow`, identity);
+  }
   if (entry.kind === 'initial' && REVIEWER_ROLES.has(role) && permitted.includes('writer')
     && !dispatched.includes('writer')) {
     refuse(REFUSAL.ROLE_NOT_ALLOWED, `an initial iteration authorizes the writer before the ${role}`, identity);
@@ -655,6 +1101,7 @@ function recordDiagnosis(draft, record, { identity }) {
   const diagnosis = { iteration, valid, artifact: { path: artifact.path, digest: artifact.digest } };
   for (const field of fields) diagnosis[field] = record[field];
   cycle.diagnosis = diagnosis;
+  if (valid) cycle.diagnosisRequired = false;
   if (!valid) stopCycle(cycle, STOP.DIAGNOSIS_INCONCLUSIVE);
   else if (iteration >= ITERATION_ALLOWANCE) cycle.nextRemedy = diagnosis.recommendation;
   concludeIteration(cycle, entry, {
@@ -668,6 +1115,349 @@ function stopCycleExplicitly(draft, record, { identity }) {
   schema(EXPLICIT_STOPS.has(reason), `reason must be one of: ${[...EXPLICIT_STOPS].join(', ')}`, identity);
   schema(isText(note), 'note must be a non-empty string', identity);
   stopCycle(cycle, reason, note);
+}
+
+// --- outcomes -------------------------------------------------------------------------------------
+
+function reference({ path, digest }, source) {
+  return source === undefined ? { path, digest } : { path, digest, source };
+}
+
+function proofOf(evidence) {
+  return `${evidence.path}@${evidence.digest}`;
+}
+
+// A defect the guard derives from an outcome rather than from a reviewer. It always carries the
+// feedback fields, so no failure lacks them.
+function guardDefect({ criterion, check, cause, metric, expected, observed, proof, correction, nextCheck }) {
+  return {
+    id: defectId(criterion, check, null, cause), criterion, check, dimension: null, cause, severity: 'critical',
+    expected, observed, proof: proofOf(proof), correction, nextCheck, supersedes: null, justification: null,
+    blocking: true, metric,
+  };
+}
+
+// The latest earlier iteration of the cycle that concluded with an outcome: not a diagnosis, not an
+// interruption. Its defects are the previous comparable outcome.
+function previousOutcome(cycle, iteration) {
+  return cycle.iterations.findLast((entry) => entry.iteration < iteration && entry.conclusion?.via === 'outcome')
+    ?? null;
+}
+
+// Concludes an iteration with its outcome. Approval stops the cycle APPROVED on the observation. A
+// failed correction is compared with the previous comparable outcome: stagnation stops the cycle
+// STAGNATED; an unavailable comparison requires the cycle's diagnosis while it is unused and a slot
+// remains, else stops it COMPARISON_UNAVAILABLE. Any other failure awaits an admitted retry, or stops
+// EXHAUSTED on the last slot. Only metric deltas on the cycle's fixed bindings count as progress.
+function concludeOutcome(cycle, entry, { by, approved, observation, defects, evidence }) {
+  if (approved) {
+    entry.conclusion = { via: 'outcome', by, approved, observation, defects, evidence, comparison: null };
+    cycle.status = 'APPROVED';
+    cycle.stopReason = STOP.APPROVED;
+    cycle.approvedObservation = observation;
+    return;
+  }
+  const previous = entry.kind === 'correction' ? previousOutcome(cycle, entry.iteration) : null;
+  const comparison = previous === null ? null : compare(previous.conclusion, { defects }, cycle.bindings);
+  if (comparison?.verdict === 'stagnant') {
+    stopCycle(cycle, STOP.STAGNATED);
+  } else if (comparison?.verdict === 'unavailable') {
+    if (!cycle.diagnosisUsed && entry.iteration < ITERATION_ALLOWANCE) cycle.diagnosisRequired = true;
+    else stopCycle(cycle, STOP.COMPARISON_UNAVAILABLE);
+  }
+  concludeIteration(cycle, entry, { via: 'outcome', by, approved, observation, defects, evidence, comparison });
+}
+
+// The reviewer whose verdict concludes an iteration: the final reviewer in the final scope.
+function verdictRole(cycle) {
+  return cycle.scope === 'final' ? 'final-reviewer' : 'task-reviewer';
+}
+
+// An iteration approves its cycle when its writer (if any) is accepted, every command check passed,
+// the verdict review is APPROVED when review is required, every recorded review is APPROVED with no
+// blocking defect and a rubric at 8/8 with every constraint satisfied, and the writer, the checks and
+// every review observed one and the same tree.
+function approves(cycle, entry) {
+  const { writer, checks, reviews } = entry;
+  if (entry.dispatches.some((dispatch) => dispatch.role === 'writer') && writer?.accepted !== true) return false;
+  if (checks === null || !checks.results.every((result) => result.passed)) return false;
+  if (cycle.review === 'required'
+    && !reviews.some((review) => review.role === verdictRole(cycle) && review.status === 'APPROVED')) {
+    return false;
+  }
+  if (!reviews.every((review) => review.status === 'APPROVED' && review.rubric?.approved === true
+    && review.defects.every((defect) => !defect.blocking))) {
+    return false;
+  }
+  const observations = new Set([
+    checks.observation,
+    ...(writer === null ? [] : [writer.observation]),
+    ...reviews.map((review) => review.observation),
+  ]);
+  return observations.size === 1;
+}
+
+function recordWriter(draft, record, { ref, identity }) {
+  const cycle = requireOpenCycle(draft, record, identity);
+  const { iteration, status, evidence, responseDigest, observation, candidate, changedPaths } = record;
+  schema(WRITER_STATUSES.has(status), `status must be one of: ${[...WRITER_STATUSES].join(', ')}`, identity);
+  schema(Array.isArray(evidence) && evidence.length > 0 && evidence.every(isDigestReference),
+    'evidence must be a non-empty array of { path, digest } references', identity);
+  schema(responseDigest === null || isHex64(responseDigest), 'responseDigest must be null or a 64-hex digest',
+    identity);
+  schema(isHex64(observation), 'observation must be a lowercase 64-hex digest', identity);
+  schema(isDigestReference(candidate), 'candidate must be { path, digest } with a lowercase 64-hex digest', identity);
+  schema(Array.isArray(changedPaths) && changedPaths.every(isLine)
+    && changedPaths.every((path, index) => index === 0 || changedPaths[index - 1] < path),
+  'changedPaths must be sorted, unique single-line paths', identity);
+  const entry = requireCurrentIteration(cycle, iteration, identity);
+  if (!entry.dispatches.some((dispatch) => dispatch.role === 'writer')) {
+    refuse(REFUSAL.OUTCOME_ORDER, `iteration ${iteration} authorized no writer`, identity);
+  }
+  if (entry.writer !== null) refuse(REFUSAL.OUTCOME_ORDER, `the writer of iteration ${iteration} was already recorded`,
+    identity);
+  const accepted = ACCEPTED_WRITER_STATUSES.has(status);
+  entry.writer = {
+    status, accepted, evidence: evidence.map((item) => reference(item)), responseDigest, observation,
+    candidate: reference(candidate), changedPaths: [...changedPaths], ref: ref === null ? null : reference(ref),
+  };
+  if (accepted) return;
+  const defect = guardDefect({
+    criterion: '*', check: 'writer', cause: status.toLowerCase(), metric: null,
+    expected: 'writer status DONE or DONE_WITH_CONCERNS',
+    observed: `writer status ${status}`,
+    proof: evidence[0],
+    correction: `resolve what made the writer report ${status} and dispatch it again without weakening any criterion`,
+    nextCheck: 'writer',
+  });
+  const references = ref === null ? evidence : [...evidence, ref];
+  concludeOutcome(cycle, entry, {
+    by: 'writer', approved: false, observation, defects: [defect],
+    evidence: references.map((item) => reference(item, 'writer-failure')),
+  });
+}
+
+// The iteration whose accepted writer produced the candidate an iteration verifies: its own, otherwise
+// the cycle's latest earlier one; null means the baseline (the cycle's opening observation).
+function candidateOwner(cycle, entry) {
+  if (entry.writer?.accepted) return entry;
+  return cycle.iterations.findLast((other) => other.iteration < entry.iteration && other.writer?.accepted) ?? null;
+}
+
+function candidateObservation(cycle, entry) {
+  return candidateOwner(cycle, entry)?.writer.observation ?? cycle.observation;
+}
+
+function isCheckResult(result) {
+  return isPlainObject(result) && hasExactKeys(result, CHECK_RESULT_FIELDS) && isLine(result.id)
+    && (result.exitCode === null || Number.isSafeInteger(result.exitCode)) && typeof result.passed === 'boolean'
+    && (result.metric === null || (Number.isSafeInteger(result.metric) && result.metric >= 0))
+    && isDigestReference(result.evidence);
+}
+
+function metricNoun(check) {
+  return check === COHERENCE_GATE.id ? 'violations' : 'failed assertions';
+}
+
+function checkFailureDefect(criterion, result) {
+  const noun = metricNoun(result.id);
+  return guardDefect({
+    criterion, check: result.id, cause: 'command-failed', metric: result.metric,
+    expected: `exit 0 with 0 ${noun}`,
+    observed: `${result.exitCode === null ? 'no exit code' : `exit ${result.exitCode}`}, `
+      + `${result.metric === null ? 'an unknown number of' : result.metric} ${noun}`,
+    proof: result.evidence,
+    correction: `make ${result.id} pass without weakening it`,
+    nextCheck: result.id,
+  });
+}
+
+function recordChecks(draft, record, { ref, identity }) {
+  const cycle = requireOpenCycle(draft, record, identity);
+  const { iteration, observation, checks } = record;
+  schema(isHex64(observation), 'observation must be a lowercase 64-hex digest', identity);
+  schema(Array.isArray(checks) && checks.every(isCheckResult), 'checks must be { id, exitCode (integer or null), '
+    + 'passed (boolean), metric (non-negative integer or null), evidence ({ path, digest }) } results', identity);
+  const expected = cycle.checks.map((check) => check.id);
+  const ids = checks.map((result) => result.id);
+  const missing = expected.filter((id) => !ids.includes(id));
+  schema(missing.length === 0, `an unexecuted mandatory check is not optional; missing: ${missing.join(', ')}`,
+    identity);
+  schema(ids.length === expected.length && new Set(ids).size === ids.length,
+    `checks must record exactly the cycle checks once each: ${expected.join(', ')}`, identity);
+  const contradicted = checks.filter((result) => result.passed
+    && ((result.exitCode !== null && result.exitCode !== 0) || (result.metric !== null && result.metric > 0)));
+  schema(contradicted.length === 0, `a check recorded passed has a non-zero exit code or metric: `
+    + `${contradicted.map((result) => result.id).join(', ')}`, identity);
+  const entry = requireCurrentIteration(cycle, iteration, identity);
+  if (entry.kind === 'diagnosis') refuse(REFUSAL.OUTCOME_ORDER, 'a diagnosis iteration records no checks', identity);
+  if (entry.checks !== null) refuse(REFUSAL.OUTCOME_ORDER, `the checks of iteration ${iteration} were already recorded`,
+    identity);
+  // The checks follow an authorized writer's record; a task's initial iteration always has a writer,
+  // so its checks never verify the untouched baseline.
+  const writerExpected = entry.dispatches.some((dispatch) => dispatch.role === 'writer')
+    || (entry.kind === 'initial' && permittedRoles(cycle, entry).includes('writer'));
+  if (writerExpected && entry.writer === null) {
+    refuse(REFUSAL.OUTCOME_ORDER, 'the checks follow the record of the iteration writer', identity);
+  }
+  const candidate = candidateObservation(cycle, entry);
+  if (observation !== candidate) {
+    refuse(HALT.INTEGRITY, `the checks observed ${observation}, not the iteration candidate ${candidate}`, identity);
+  }
+  entry.checks = {
+    observation,
+    results: checks.map((result) => ({ ...result, evidence: reference(result.evidence) })),
+    ref: ref === null ? null : reference(ref),
+  };
+  const failed = cycle.checks.map((check) => checks.find((result) => result.id === check.id))
+    .filter((result) => !result.passed);
+  if (failed.length === 0) {
+    // Without a review, passed checks are the verdict.
+    if (cycle.review === 'skipped') {
+      concludeOutcome(cycle, entry, {
+        by: 'checks', approved: approves(cycle, entry), observation, defects: [],
+        evidence: (ref === null ? [] : [ref]).map((item) => reference(item, 'checks')),
+      });
+    }
+    return;
+  }
+  // Each criterion bound to a failed check gets a defect; a failed check binding none still gets one.
+  const failedIds = new Set(failed.map((result) => result.id));
+  const defects = cycle.bindings.filter((bound) => failedIds.has(bound.check))
+    .map((bound) => checkFailureDefect(bound.criterion,
+      failed.find((result) => result.id === bound.check)));
+  for (const result of failed) {
+    if (!cycle.bindings.some((bound) => bound.check === result.id)) {
+      defects.push(checkFailureDefect('*', result));
+    }
+  }
+  const references = [...failed.map((result) => result.evidence), ...(ref === null ? [] : [ref])];
+  concludeOutcome(cycle, entry, {
+    by: 'checks', approved: false, observation, defects,
+    evidence: references.map((item) => reference(item, 'checks')),
+  });
+}
+
+// The plan task a final-scope correction changes: its writer's owner task, else its task-reviewer's.
+function correctionOwner(draft, entry) {
+  const owned = entry.dispatches.find((dispatch) => dispatch.role === 'writer')
+    ?? entry.dispatches.find((dispatch) => dispatch.role === 'task-reviewer');
+  if (owned === undefined || owned.ownerTask === null) return null;
+  return planTask(draft, owned.ownerTask);
+}
+
+// The final review is recorded last: after every authorized task review and, when the correction
+// changes an integration or design task, after an approved one.
+function checkFinalReviewOrder(draft, cycle, entry, identity) {
+  const taskReviewed = entry.reviews.some((review) => review.role === 'task-reviewer');
+  if (entry.dispatches.some((dispatch) => dispatch.role === 'task-reviewer') && !taskReviewed) {
+    refuse(REFUSAL.OUTCOME_ORDER, 'the authorized task-reviewer is recorded before the final-reviewer', identity);
+  }
+  const owner = cycle.scope === 'final' && entry.kind === 'correction' ? correctionOwner(draft, entry) : null;
+  if (owner !== null && TASK_REVIEWED_COMPLEXITIES.has(owner.complexity)
+    && !entry.reviews.some((review) => review.role === 'task-reviewer' && review.status === 'APPROVED')) {
+    refuse(REFUSAL.FINAL_BYPASS, `a final-scope correction of ${owner.complexity} task ${owner.task} needs an `
+      + 'approved task review before the final review', identity);
+  }
+}
+
+function reviewFailureDefect(role, status, evidence) {
+  return guardDefect({
+    criterion: '*', check: 'review', cause: `review-${status.toLowerCase()}`, metric: null,
+    expected: 'a complete, valid review: APPROVED, or ISSUES_FOUND with a blocking defect',
+    observed: `${role} status ${status}`,
+    proof: evidence,
+    correction: `obtain a complete, valid ${role} review without weakening any criterion`,
+    nextCheck: 'review',
+  });
+}
+
+// Validates an APPROVED or ISSUES_FOUND report and returns its normalized defects (each rubric defect
+// carrying its dimension score as metric) and rubric verdict. An invalid report is refused with its
+// `review` code: the guard records such a review as INVALID instead.
+function assessReview(draft, cycle, entry, record, identity) {
+  const { role, ownerTask, status, defects, rubric } = record;
+  const invalid = (failed) => refuse(failed.code, `the ${role} report is not a valid review (${failed.message}); `
+    + 'the guard records it as INVALID', identity);
+  const previous = previousOutcome(cycle, entry.iteration)?.conclusion.defects ?? [];
+  const normalized = attempt(() => normalizeEntries(cycle.bindings, defects, previous));
+  if (!normalized.ok) invalid(normalized);
+  // A final-scope task review scores only the rubric criteria of the task it reviews.
+  const owner = cycle.scope === 'final' && role === 'task-reviewer' ? planTask(draft, ownerTask) : null;
+  const rubricBindings = owner === null ? cycle.bindings
+    : cycle.bindings.filter((bound) => owner.criterionIds.includes(bound.criterion));
+  const scored = attempt(() => checkRubric(rubricBindings, rubric, normalized.value));
+  if (!scored.ok) invalid(scored);
+  const blocking = normalized.value.some((defect) => defect.blocking);
+  if ((status === 'APPROVED') === blocking) {
+    invalid({
+      code: REVIEW_INVALID.STATUS_INCONSISTENT,
+      message: status === 'APPROVED' ? 'APPROVED with a blocking defect' : 'ISSUES_FOUND without a blocking defect',
+    });
+  }
+  const scores = new Map(rubric.map((item) => [item.criterion, item]));
+  return {
+    defects: normalized.value.map((defect) => (defect.check === 'rubric'
+      ? { ...defect, metric: scores.get(defect.criterion)?.[defect.dimension].score ?? null } : defect)),
+    rubric: { approved: scored.value.every((item) => item.approved), criteria: scored.value },
+  };
+}
+
+function recordReview(draft, record, { ref, identity }) {
+  const cycle = requireOpenCycle(draft, record, identity);
+  const { iteration, role, ownerTask, status, defects, rubric, evidence, before, after } = record;
+  schema(REVIEWER_ROLES.has(role), `role must be one of: ${[...REVIEWER_ROLES].join(', ')}`, identity);
+  schema(ownerTask === null || isTaskId(ownerTask), 'ownerTask must be null or a task ID', identity);
+  schema(REVIEW_STATUSES.has(status), `status must be one of: ${[...REVIEW_STATUSES].join(', ')}`, identity);
+  schema(Array.isArray(defects), 'defects must be an array', identity);
+  schema(Array.isArray(rubric), 'rubric must be an array', identity);
+  schema(Array.isArray(evidence) && evidence.every(isDigestReference),
+    'evidence must be an array of { path, digest } references', identity);
+  schema(VERDICT_STATUSES.has(status) || evidence.length > 0,
+    `a review recorded ${status} needs evidence to prove it`, identity);
+  schema(isHex64(before) && isHex64(after), 'before and after must be lowercase 64-hex digests', identity);
+  const entry = requireCurrentIteration(cycle, iteration, identity);
+  const dispatch = entry.dispatches.find((item) => item.role === role);
+  if (dispatch === undefined) refuse(REFUSAL.OUTCOME_ORDER, `iteration ${iteration} authorized no ${role}`, identity);
+  if (entry.reviews.some((review) => review.role === role)) {
+    refuse(REFUSAL.OUTCOME_ORDER, `the ${role} of iteration ${iteration} was already recorded`, identity);
+  }
+  if (dispatch.ownerTask !== ownerTask) {
+    refuse(REFUSAL.ROLE_NOT_ALLOWED, `the ${role} was authorized for owner task ${dispatch.ownerTask}, `
+      + `not ${ownerTask}`, identity);
+  }
+  if (entry.checks === null) refuse(REFUSAL.OUTCOME_ORDER, 'a review follows the recorded checks', identity);
+  // A reviewer must judge the checked tree and leave it unchanged; a mismatch is an integrity fault the
+  // guard answers by halting the run.
+  if (before !== entry.checks.observation || before !== after) {
+    refuse(HALT.INTEGRITY, 'the review did not observe the checked tree unchanged', identity);
+  }
+  if (role === 'final-reviewer') checkFinalReviewOrder(draft, cycle, entry, identity);
+
+  const references = ref === null ? evidence : [...evidence, ref];
+  const review = {
+    role, ownerTask, status, defects: [], rubric: null, evidence: evidence.map((item) => reference(item)),
+    observation: before, ref: ref === null ? null : reference(ref),
+  };
+  if (!VERDICT_STATUSES.has(status)) {
+    entry.reviews.push(review);
+    concludeOutcome(cycle, entry, {
+      by: 'review', approved: false, observation: before, defects: [reviewFailureDefect(role, status, evidence[0])],
+      evidence: references.map((item) => reference(item, 'review-failure')),
+    });
+    return;
+  }
+  Object.assign(review, assessReview(draft, cycle, entry, record, identity));
+  entry.reviews.push(review);
+  // ISSUES_FOUND concludes the iteration failed; an APPROVED task review in the final scope leaves it
+  // open for the final review, whose verdict concludes it.
+  if (status === 'ISSUES_FOUND' || role === verdictRole(cycle)) {
+    concludeOutcome(cycle, entry, {
+      by: 'review', approved: status === 'APPROVED' && approves(cycle, entry), observation: before,
+      defects: entry.reviews.flatMap((item) => item.defects),
+      evidence: references.map((item) => reference(item, 'review')),
+    });
+  }
 }
 
 function haltRun(draft, record, { identity }) {
@@ -708,6 +1498,19 @@ const RECORDS = Object.freeze({
   },
   CYCLE_STOPPED: { fields: ['scope', 'cycle', 'reason', 'note'], apply: stopCycleExplicitly },
   RUN_HALTED: { fields: ['reason', 'evidence', 'observation'], apply: haltRun },
+  WRITER_RECORDED: {
+    fields: [
+      'scope', 'cycle', 'iteration', 'status', 'evidence', 'responseDigest', 'observation', 'candidate', 'changedPaths',
+    ],
+    apply: recordWriter,
+  },
+  CHECKS_RECORDED: { fields: ['scope', 'cycle', 'iteration', 'observation', 'checks'], apply: recordChecks },
+  REVIEW_RECORDED: {
+    fields: [
+      'scope', 'cycle', 'iteration', 'role', 'ownerTask', 'status', 'defects', 'rubric', 'evidence', 'before', 'after',
+    ],
+    apply: recordReview,
+  },
 });
 
 // --- public API -----------------------------------------------------------------------------------
@@ -779,6 +1582,24 @@ export function replayCorrectionRecords(records, options) {
   return { ok: true, state };
 }
 
+// The next step inside an unconcluded iteration: its first authorization, then the outcomes in order
+// (the writer's, the checks, each authorized reviewer's), then the verdict reviewer's authorization.
+function iterationStep(cycle, entry, step) {
+  const dispatched = (role) => entry.dispatches.some((dispatch) => dispatch.role === role);
+  if (entry.kind === 'diagnosis') {
+    return { action: dispatched('diagnostic') ? 'record' : 'authorize', ...step, role: 'diagnostic' };
+  }
+  if (dispatched('writer') && entry.writer === null) return { action: 'record', ...step, role: 'writer' };
+  if (entry.dispatches.length === 0 && entry.checks === null) {
+    return { action: 'authorize', ...step, role: permittedRoles(cycle, entry)[0] };
+  }
+  if (entry.checks === null) return { action: 'checks', ...step };
+  const pending = ['task-reviewer', 'final-reviewer']
+    .find((role) => dispatched(role) && !entry.reviews.some((review) => review.role === role));
+  if (pending !== undefined) return { action: 'record', ...step, role: pending };
+  return { action: 'authorize', ...step, role: verdictRole(cycle) };
+}
+
 // The step for the most recently opened cycle; null before any cycle exists.
 export function nextCorrectionStep(state) {
   assertState(state, 'nextCorrectionStep');
@@ -790,16 +1611,106 @@ export function nextCorrectionStep(state) {
   if (cycle.status !== 'OPEN') return { action: 'stopped', ...at, reason: cycle.stopReason };
   const latest = cycle.iterations.at(-1);
   if (latest === undefined) return { action: 'reserve', ...at, iteration: 1, kind: 'initial' };
-  if (latest.conclusion === null) {
-    const step = { ...at, iteration: latest.iteration };
-    if (latest.dispatches.length === 0) return { action: 'authorize', ...step, role: permittedRoles(cycle, latest)[0] };
-    return { action: 'record', ...step, role: latest.dispatches.at(-1).role };
-  }
+  if (latest.conclusion === null) return iterationStep(cycle, latest, { ...at, iteration: latest.iteration });
   const iteration = cycle.reserved + 1;
   if (cycle.retries.some((retry) => retry.iteration === iteration)) {
     return { action: 'reserve', ...at, iteration, kind: 'correction' };
   }
+  if (cycle.diagnosisRequired) {
+    return { action: 'reserve', ...at, iteration, kind: 'diagnosis', reason: 'comparison-unavailable' };
+  }
   return { action: 'retry-or-diagnosis', ...at, iteration, diagnosisAvailable: !cycle.diagnosisUsed };
+}
+
+// The checks, bindings and review mode a cycle of `scope` must open with. A task scope takes its plan
+// task; the final scope takes the delivered (approved) plan tasks. Returns fresh plain objects.
+export function deriveCycleBindings(input) {
+  if (!isPlainObject(input)) throw new TypeError('deriveCycleBindings: input must be a plain object');
+  assertOptions(input, DERIVE_KEYS, 'deriveCycleBindings');
+  const { scope, task = null, deliveredTasks = null, rubricCriteria = [], reviewOptIn = false } = input;
+  const normalized = { scope, task, deliveredTasks, rubricCriteria, reviewOptIn };
+  const problem = bindingInputProblem(normalized);
+  if (problem !== null) throw new TypeError(`deriveCycleBindings: ${problem}`);
+  return deriveBindings(normalized);
+}
+
+// Normalizes a reviewer's defect entries: `{ ok: true, defects }`, or a failure with a
+// `CORRECTION_CODES.review` code for which the guard records the review as INVALID. `previous` is the
+// defect list of the previous comparable outcome, or null when there is none.
+export function normalizeDefects(input) {
+  if (!isPlainObject(input)) throw new TypeError('normalizeDefects: input must be a plain object');
+  assertOptions(input, NORMALIZE_KEYS, 'normalizeDefects');
+  const missing = NORMALIZE_KEYS.filter((key) => !Object.hasOwn(input, key));
+  if (missing.length > 0) throw new TypeError(`normalizeDefects: missing ${missing.join(', ')}`);
+  const { bindings, entries, previous } = input;
+  assertBindings(bindings, 'normalizeDefects');
+  if (previous !== null) assertDefects(previous, 'normalizeDefects', 'previous');
+  const result = attempt(() => normalizeEntries(bindings, entries, previous ?? []));
+  return result.ok ? { ok: true, defects: result.value } : result;
+}
+
+// Validates a reviewer's rubric: `{ ok: true, approved, criteria }`, or a failure with a
+// `CORRECTION_CODES.review` code for which the guard records the review as INVALID. `defects` are the
+// review's defects (normalized, or the reviewer's entries); `bindings` name the rubric criteria.
+export function validateRubric(input) {
+  if (!isPlainObject(input)) throw new TypeError('validateRubric: input must be a plain object');
+  assertOptions(input, RUBRIC_KEYS, 'validateRubric');
+  const missing = RUBRIC_KEYS.filter((key) => !Object.hasOwn(input, key));
+  if (missing.length > 0) throw new TypeError(`validateRubric: missing ${missing.join(', ')}`);
+  const { bindings, rubric, defects } = input;
+  assertBindings(bindings, 'validateRubric');
+  if (!Array.isArray(defects) || !defects.every(isPlainObject)) {
+    throw new TypeError('validateRubric: defects must be an array of defect objects');
+  }
+  const result = attempt(() => checkRubric(bindings, rubric, defects));
+  if (!result.ok) return result;
+  return { ok: true, approved: result.value.every((entry) => entry.approved), criteria: result.value };
+}
+
+// Compares a concluded correction outcome with the previous comparable outcome of its cycle (null when
+// there is none). Each current defect whose id the previous outcome reports is improved (strictly
+// better metric in its binding's direction), stagnant, or unavailable (a missing metric or no bound
+// direction); other ids are new. The verdict is 'none' without a previous outcome, else 'stagnant' when
+// any defect stagnated, else 'unavailable' when any comparison was, else 'progress'. Outcomes are
+// objects carrying a `defects` array of normalized defects.
+export function compareOutcomes(previous, current, bindings) {
+  const isOutcome = (value) => isPlainObject(value) && Array.isArray(value.defects);
+  if (previous !== null && !isOutcome(previous)) {
+    throw new TypeError('compareOutcomes: previous must be null or an outcome with a defects array');
+  }
+  if (!isOutcome(current)) throw new TypeError('compareOutcomes: current must be an outcome with a defects array');
+  if (previous !== null) assertDefects(previous.defects, 'compareOutcomes', 'previous.defects');
+  assertDefects(current.defects, 'compareOutcomes', 'current.defects');
+  assertBindings(bindings, 'compareOutcomes');
+  return compare(previous, current, bindings);
+}
+
+// Ranks a cycle's candidates, best first: the baseline (iteration 0, the opening observation) and every
+// iteration with an accepted writer. A candidate is verified by the latest iteration whose checks
+// verified it; evidence and approval are attributed only to the candidate that iteration verified,
+// never to another candidate with the same digest. Order: verified first, then fewer blocking
+// defects, more satisfied mandatory bindings, the lower command metric sum, the higher rubric total,
+// and the earlier iteration.
+export function rankCandidates(cycleState) {
+  if (!PRODUCED_CYCLES.has(cycleState)) {
+    throw new TypeError('rankCandidates: cycleState must be a cycle of a state this module produced');
+  }
+  const cycle = cycleState;
+  const candidates = [
+    { iteration: 0, observation: cycle.observation, candidate: null },
+    ...cycle.iterations.filter((entry) => entry.writer?.accepted).map((entry) => ({
+      iteration: entry.iteration, observation: entry.writer.observation, candidate: reference(entry.writer.candidate),
+    })),
+  ];
+  const verifiers = new Map();
+  for (const entry of cycle.iterations) {
+    if (entry.checks !== null) verifiers.set(candidateOwner(cycle, entry)?.iteration ?? 0, entry);
+  }
+  return candidates.map((candidate) => {
+    const verifier = verifiers.get(candidate.iteration);
+    if (verifier === undefined) return { ...candidate, ...UNVERIFIED, approved: false };
+    return { ...candidate, ...verificationScore(cycle, verifier), approved: verifier.conclusion?.approved === true };
+  }).sort(compareCandidates);
 }
 
 export function validateRetryRequest(state, request) {
