@@ -27,6 +27,10 @@
 //   FAKE_HARNESS_USAGE_RETRANSMIT — repeat completion events byte-for-byte
 //   FAKE_HARNESS_USAGE_HUGE       — emit large (still source-valid) usage counts
 //   FAKE_HARNESS_MARKER_PHASE     — '1' adds a phase= field to correlated child markers (a retired note shape)
+//   FAKE_HARNESS_ALSO_MARK        — "<phase>:<EVENT>" — in `done` mode that phase also appends EVENT as a second
+//                                   correlated marker of the same attempt
+//   FAKE_HARNESS_RESULT_INDEX_TEXT — task entries that replace the index's receipt projection after the terminal
+//                                   projection (the correction summary block stays)
 // Modes:
 //   done     — append the phase's completion marker (review → READY_FOR_PR), exit 0
 //   blocked  — append BLOCKED with a reason, exit 1 (a child that gave up)
@@ -38,6 +42,16 @@
 //   stubborn — like sleep, but the tool subprocess ignores SIGTERM (proves the
 //              conductor's SIGKILL sweep reaches a descendant that survives the
 //              group SIGTERM after the direct child is already gone)
+//   correction-partial        — implement: Task 1 is approved, Task 2 stagnates and stops (its best candidate
+//                               retained), Task 3 depends on Task 2 and is blocked, and the final cycle approves
+//                               the delivered work; the marker is PARTIAL. review: records PARTIAL_REVIEWED
+//   correction-reopen-forgery — as correction-partial (implement or review), after which the child appends a
+//                               forged REOPEN_AUTHORIZED record to the guard history
+//   correction-history-rewrite — implement: a complete guarded run, after which the child rewrites record-1.json
+//   correction-final-stopped  — implement: the final review finds an issue and the final cycle is stopped (the
+//                               run is PARTIAL); the fresh attempt records DONE, a resumed attempt PARTIAL
+//   review-forged-ready       — review: records READY_FOR_PR (after a partial implementation)
+//   The correction modes run as `done` in every phase they do not act in.
 // Every implement scenario that reaches implement acceptance also drives the real
 // correction guard (scripts/correction-guard.mjs, drive autopilot) around its
 // task-result receipts and reviewer gates; see correctionGuard below.
@@ -48,9 +62,11 @@ import { planPhaseContext, reviewPhaseContext } from '../../scripts/autopilot-co
 import { beginTask, recordTaskResult, inspectTaskResult, projectTaskResults, parseTaskResultProjection } from '../../scripts/task-results.mjs';
 import {
   admitCorrectionRetry, authorizeCorrectionDispatch, nextCorrectionAction, openCorrectionCycle, openCorrectionRun,
-  projectCorrectionSummary, readCorrectionHead, recordCorrectionChecks, recordCorrectionInterruption,
-  recordCorrectionReview, recordCorrectionWriter, reserveCorrectionIteration,
+  projectCorrectionSummary, proveCorrectionIsolation, readCorrectionHead, recordCorrectionChecks,
+  recordCorrectionInterruption, recordCorrectionReview, recordCorrectionWriter, reserveCorrectionIteration,
+  stopCorrectionCycle,
 } from '../../scripts/correction-guard.mjs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 
 const prompt = process.argv[2] ?? '';
@@ -199,11 +215,21 @@ function correctionGuard(manifest, specName) {
       return must(projectCorrectionSummary(root, { ...actor,
         taskResultIndex: `.formula/work/tasks/${specName}/task-result-index.md` }), 'project');
     },
-    // The terminal projection of a run every synthetic scenario completes.
-    finish() {
+    // Stops the open cycle of `scope` explicitly (a cycle that stops on its own needs no call).
+    stop(scope, reason, note) {
+      must(stopCorrectionCycle(root, { ...actor, scope, reason, note }), `stop ${scope}`);
+    },
+    // Proves the stopped cycle of `scope` isolated, in the expected `mode`.
+    proveIsolation(scope, mode) {
+      if (expect('prove-isolation').scope !== scope) throw new Error(`correction guard: ${scope} is not the next isolation proof`);
+      const proven = must(proveCorrectionIsolation(root, { ...actor, scope }), `prove-isolation ${scope}`);
+      if (proven.mode !== mode) throw new Error(`correction guard proved ${scope} ${proven.mode}, not ${mode}`);
+    },
+    // The terminal projection of a run every synthetic scenario completes, with its expected outcome.
+    finish(outcome = 'COMPLETE') {
       expect('terminal');
       const { summary } = guard.project();
-      if (summary.outcome !== 'COMPLETE') throw new Error(`correction guard: the run is ${summary.outcome}, not COMPLETE`);
+      if (summary.outcome !== outcome) throw new Error(`correction guard: the run is ${summary.outcome}, not ${outcome}`);
     },
   };
   return guard;
@@ -238,41 +264,36 @@ async function materializePhaseArtifacts() {
     const planText = planPath ? readFileSync(join(process.cwd(), planPath), 'utf8') : '';
     const taskIds = [...planText.matchAll(/^#{2,}\s+Task\s+([A-Za-z0-9]+)\b/gim)].map((match) => match[1]);
     const indexPath = `.formula/work/tasks/${specName}/task-result-index.md`;
-    writeFileSync(
-      join(taskDir, 'task-result-index.md'),
-      process.env.FAKE_HARNESS_RESULT_INDEX_TEXT ?? '# Results\n',
-    );
-    // Malformed-index and skipped-gate fixtures never reach acceptance; only real task work is guarded.
-    const guard = process.env.FAKE_HARNESS_RESULT_INDEX_TEXT || process.env.FAKE_HARNESS_SKIP_REVIEW_GATE === '1'
-      ? null : correctionGuard(manifest, specName);
-    if (!process.env.FAKE_HARNESS_RESULT_INDEX_TEXT) {
-      guard?.open();
-      // A guarded task cycle concludes before the next one opens: a reviewed task's review approves it.
-      const reviewed = new Set(guard === null ? [] : planPhaseContext(planText).tasks
-        .filter((task) => task.complexity !== 'mechanical').map((task) => task.task));
-      const states = [];
-      for (const id of taskIds) {
-        const state = `.formula/work/tasks/${specName}/task-${id}-execution-1`;
-        if (!existsSync(`${state}-baseline.json`)) {
-          guard?.openCycle(`task-${id}`);
-          await guardedWriter(guard, state, () => {
-            beginTask(process.cwd(), state, { runId: manifest.runId, attempt: manifest.attempt, task: id,
-              execution: 1, role: 'implementer', report: `.formula/work/tasks/${specName}/task-${id}-report.md`, planPath,
-              parentState: states.at(-1) ?? null });
-            if (id === taskIds[0] && process.env.FAKE_HARNESS_WORK_FILES === '1') {
-              writeFileSync('tracked.txt', 'implemented\n'); writeFileSync('brand-new.txt', 'created by the implementer\n');
-            }
-            const report = `.formula/work/tasks/${specName}/task-${id}-report.md`;
-            writeFileSync(report, 'Synthetic implementation report.\n');
-            const result = recordTaskResult(process.cwd(), state, `status: DONE\nartifact: ${report}\nsignals: tdd:red-green\n`);
-            if (!result.accepted) throw new Error(`synthetic task result rejected: ${result.reason}`);
-          });
-        }
-        states.push(state);
-        projectTaskResults(process.cwd(), { indexPath, states });
-        if (reviewed.has(id)) {
-          setReviewReference(process.cwd(), { indexPath, state: approveTaskGate(manifest, `.formula/work/tasks/${specName}`, guard, id) });
-        }
+    writeFileSync(join(taskDir, 'task-result-index.md'), '# Results\n');
+    // A skipped-gate fixture never opens the guard; every other implementation, including a malformed-index
+    // fixture (whose index is swapped in after the terminal projection), is guarded.
+    const guard = process.env.FAKE_HARNESS_SKIP_REVIEW_GATE === '1' ? null : correctionGuard(manifest, specName);
+    guard?.open();
+    // A guarded task cycle concludes before the next one opens: a reviewed task's review approves it.
+    const reviewed = new Set(guard === null ? [] : planPhaseContext(planText).tasks
+      .filter((task) => task.complexity !== 'mechanical').map((task) => task.task));
+    const states = [];
+    for (const id of taskIds) {
+      const state = `.formula/work/tasks/${specName}/task-${id}-execution-1`;
+      if (!existsSync(`${state}-baseline.json`)) {
+        guard?.openCycle(`task-${id}`);
+        await guardedWriter(guard, state, () => {
+          beginTask(process.cwd(), state, { runId: manifest.runId, attempt: manifest.attempt, task: id,
+            execution: 1, role: 'implementer', report: `.formula/work/tasks/${specName}/task-${id}-report.md`, planPath,
+            parentState: states.at(-1) ?? null });
+          if (id === taskIds[0] && process.env.FAKE_HARNESS_WORK_FILES === '1') {
+            writeFileSync('tracked.txt', 'implemented\n'); writeFileSync('brand-new.txt', 'created by the implementer\n');
+          }
+          const report = `.formula/work/tasks/${specName}/task-${id}-report.md`;
+          writeFileSync(report, 'Synthetic implementation report.\n');
+          const result = recordTaskResult(process.cwd(), state, `status: DONE\nartifact: ${report}\nsignals: tdd:red-green\n`);
+          if (!result.accepted) throw new Error(`synthetic task result rejected: ${result.reason}`);
+        });
+      }
+      states.push(state);
+      projectTaskResults(process.cwd(), { indexPath, states });
+      if (reviewed.has(id)) {
+        setReviewReference(process.cwd(), { indexPath, state: approveTaskGate(manifest, `.formula/work/tasks/${specName}`, guard, id) });
       }
     }
     if (process.env.FAKE_HARNESS_SKIP_BRANCH_DIFF !== '1') {
@@ -550,6 +571,24 @@ function reviewDefect(criterion, cause, observed, correction) {
   return { criterion, check: 'review', dimension: null, cause, severity: 'critical', expected: 'the reviewed work is correct',
     observed, proof: 'synthetic reviewer evidence', correction, nextCheck: 'review', supersedes: null, justification: null };
 }
+// Begins the final reviewer gate (iteration 1) of the open final cycle: authorized for its review guard
+// state, checked, and referenced from the index before the review begins.
+async function beginFinalGate(manifest, specName, guard) {
+  const dir = `.formula/work/tasks/${specName}`, indexPath = `${dir}/task-result-index.md`;
+  const config = { ...reviewConfig(manifest, dir, 'final'), plan: `.formula/work/plans/${specName}.md`, index: indexPath };
+  const state = reviewState(dir, config);
+  guard?.authorize('final-reviewer', state);
+  await guard?.checks();
+  setReviewReference(process.cwd(), { indexPath, state });
+  beginReview(process.cwd(), state, config);
+  return { config, state };
+}
+// Approves the begun final reviewer gate and records the approval with the guard.
+function approveFinalGate(config, state, guard) {
+  writeFileSync(config.report, '## Verdict\nApproved; all task receipts checked.\n');
+  if (!checkReview(process.cwd(), state, reviewEnvelope(config)).accepted) throw new Error('synthetic final gate rejected');
+  guard?.recordReview('final-reviewer', state, 'APPROVED');
+}
 async function materializeReviewGates(manifest, specName, guard = null) {
   if (process.env.FAKE_HARNESS_SKIP_REVIEW_GATE === '1') return;
   const dir = `.formula/work/tasks/${specName}`;
@@ -566,12 +605,7 @@ async function materializeReviewGates(manifest, specName, guard = null) {
   // The final cycle is due: its summary is projected (PENDING) before the final review begins.
   guard?.openCycle('final');
   guard?.project();
-  let config = { ...reviewConfig(manifest, dir, 'final'), plan, index: indexPath };
-  let state = reviewState(dir, config);
-  guard?.authorize('final-reviewer', state);
-  await guard?.checks();
-  setReviewReference(process.cwd(), { indexPath, state });
-  beginReview(process.cwd(), state, config);
+  let { config, state } = await beginFinalGate(manifest, specName, guard);
   if (process.env.FAKE_HARNESS_FINAL_ISSUES === '1') {
     writeFileSync(config.report, 'Issues found in branch integration.\n');
     writeFileSync(config.issues, 'Fix branch ordering.\n');
@@ -607,12 +641,28 @@ async function materializeReviewGates(manifest, specName, guard = null) {
     beginReview(process.cwd(), state, config);
     if (!readFileSync(`${previousState}-original.json`).equals(previousBytes)) throw new Error('previous review evidence overwritten');
   }
-  writeFileSync(config.report, '## Verdict\nApproved; all task receipts checked.\n');
-  if (!checkReview(process.cwd(), state, reviewEnvelope(config)).accepted) throw new Error('synthetic final gate rejected');
-  guard?.recordReview('final-reviewer', state, 'APPROVED');
-  guard?.finish();
+  if (mode === 'correction-final-stopped') {
+    // The final review finds an issue and the final cycle is stopped: the run ends PARTIAL, unapproved.
+    writeFileSync(config.report, 'Issues found in the integrated delivery.\n');
+    writeFileSync(config.issues, 'Complete the integration.\n');
+    if (checkReview(process.cwd(), state, reviewEnvelope(config, 'ISSUES_FOUND')).status !== 'ISSUES_FOUND') throw new Error('expected final issues');
+    const [criterion] = route.tasks[0].criterionIds;
+    guard?.recordReview('final-reviewer', state, 'ISSUES_FOUND',
+      [reviewDefect(criterion, 'incomplete-integration', 'the integration is incomplete', 'complete the integration')]);
+    guard?.stop('final', 'HUMAN_INTERRUPTED', 'the final review stopped the run');
+    guard?.finish('PARTIAL');
+  } else {
+    approveFinalGate(config, state, guard);
+    guard?.finish();
+  }
   // Every mutation follows the terminal projection: it stands in for a change the conductor must refuse.
   index = readFileSync(indexPath, 'utf8');
+  const receipts = /^<!-- steepy-task-results: v2 -->\n[\s\S]*?\n<!-- \/steepy-task-results -->\n/m;
+  if (process.env.FAKE_HARNESS_RESULT_INDEX_TEXT) {
+    // The fixture's (malformed) task entries replace the receipt projection; the summary block stays.
+    if (!receipts.test(index)) throw new Error('result-index fixture found no projection block');
+    writeFileSync(indexPath, index.replace(receipts, process.env.FAKE_HARNESS_RESULT_INDEX_TEXT.replace(/^# Results\n+/, '')));
+  }
   const mutation = process.env.FAKE_HARNESS_GATE_MUTATION;
   if (mutation === 'drop-task') writeFileSync(indexPath, index.replace(/^Reviewer gate Task 1:.*\n/m, ''));
   if (mutation === 'change-handoff') writeFileSync(indexPath, index.replace(/tdd:red-green/, 'changed-signal'));
@@ -626,9 +676,8 @@ async function materializeReviewGates(manifest, specName, guard = null) {
   if (mutation === 'bullet-index') {
     // Manual-drive bullets in place of the receipt projection; reviewer references stay.
     const bullets = parseTaskResultProjection(index).map((e) => `- Task ${e.task}: ${e.status}; artifact: ${e.artifact}; changed-paths: ${e.changedPaths.join(', ') || 'none'}; signals: ${e.signals.join(', ') || 'none'}\n`).join('');
-    const block = /^<!-- steepy-task-results: v2 -->\n[\s\S]*?\n<!-- \/steepy-task-results -->\n/m;
-    if (!block.test(index)) throw new Error('bullet-index mutation found no projection block');
-    writeFileSync(indexPath, index.replace(block, bullets));
+    if (!receipts.test(index)) throw new Error('bullet-index mutation found no projection block');
+    writeFileSync(indexPath, index.replace(receipts, bullets));
   }
 
 }
@@ -777,7 +826,157 @@ async function receiptContinuationScenario() {
   return 0;
 }
 
-switch (mode) {
+// Rewrites record-1.json of the guard history in place as another valid, canonical envelope (its actor
+// names another run): only its digest, and so the next record's `previous` link, betrays the rewrite.
+function rewriteFirstGuardRecord() {
+  const path = '.formula/work/tasks/topic/correction/record-1.json';
+  const envelope = JSON.parse(readFileSync(path, 'utf8'));
+  envelope.actor.runId = 'rewritten-run';
+  writeFileSync(path, `${JSON.stringify(envelope)}\n`);
+}
+
+// A task reviewer gate under the guard that finds `defect`: authorized for its review guard state, begun on
+// `execution`, checked ISSUES_FOUND and recorded with that one blocking defect.
+function reviewTaskIssues(manifest, dir, guard, task, iteration, execution, defect) {
+  const config = reviewConfig(manifest, dir, task, iteration, execution);
+  const state = reviewState(dir, config);
+  guard.authorize('task-reviewer', state);
+  beginReview(process.cwd(), state, config);
+  writeFileSync(config.report, `# Review\nIssues found in Task ${task} iteration ${iteration}.\n`);
+  writeFileSync(config.issues, `T${task}-001: ${defect.observed}\n`);
+  if (checkReview(process.cwd(), state, reviewEnvelope(config, 'ISSUES_FOUND')).status !== 'ISSUES_FOUND') throw new Error(`expected Task ${task} issues`);
+  return guard.recordReview('task-reviewer', state, 'ISSUES_FOUND', [defect]);
+}
+
+// Appends a REOPEN_AUTHORIZED record for the stopped Task 2 straight to the guard history: a canonical
+// envelope chained to the head with an autopilot actor, which replays cleanly. The guard's own reopen
+// refuses every autopilot actor, so only a forgery can put one there.
+function forgeReopenRecord(manifest) {
+  const plan = '.formula/work/plans/topic.md', correction = '.formula/work/tasks/topic/correction';
+  const head = readCorrectionHead(process.cwd(), { plan });
+  if (!head.ok) throw new Error(`cannot read the guard head: ${head.message}`);
+  const authorization = `${correction}/task-2-cycle-2-reopen.json`;
+  const statement = 'Reopen Task 2 so it can be retried';
+  const remedy = 'rewrite Task 2 from its specification';
+  const body = `${JSON.stringify({ version: 1, scope: 'task-2', statement, remedy })}\n`;
+  writeFileSync(authorization, body);
+  const envelope = {
+    version: 1, seq: head.seq + 1, previous: head.digest,
+    actor: { drive: 'autopilot', runId: manifest.runId, attempt: manifest.attempt },
+    record: {
+      kind: 'REOPEN_AUTHORIZED', scope: 'task-2', cycle: 2, predecessor: 'task-2#1',
+      authorization: { path: authorization, digest: createHash('sha256').update(body).digest('hex') }, statement, remedy,
+    },
+  };
+  writeFileSync(`${correction}/record-${head.seq + 1}.json`, `${JSON.stringify(envelope)}\n`);
+  const forged = readCorrectionHead(process.cwd(), { plan });
+  if (!forged.ok || forged.seq !== head.seq + 1) throw new Error('the forged reopen record does not replay');
+}
+
+// A partial delivery under the guard: Task 1 is approved; Task 2 repeats its one blocking defect, so its
+// correction stagnates and the cycle stops, retaining its best candidate (execution 1); Task 3 depends on
+// Task 2 and is blocked; the final cycle approves the delivered work. The run ends PARTIAL, and the child
+// records PARTIAL (after forging a reopen record when asked).
+async function correctionPartialScenario({ forgeReopen = false } = {}) {
+  const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
+  const dir = '.formula/work/tasks/topic', plan = '.formula/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
+  const execution = (task, n) => `${dir}/task-${task}-execution-${n}`;
+  const guard = correctionGuard(manifest, 'topic');
+  const write = (task, n, { role = 'implementer', previousState, parentState, work } = {}) => guardedWriter(guard, execution(task, n), () => {
+    const report = `${dir}/task-${task}-report.md`;
+    beginTask(process.cwd(), execution(task, n), { runId: manifest.runId, attempt: manifest.attempt, task, execution: n, role,
+      report, planPath: plan, ...(previousState ? { previousState } : {}), ...(parentState ? { parentState } : {}) });
+    work?.();
+    writeFileSync(report, `Synthetic Task ${task} execution ${n} report.\n`);
+    const result = recordTaskResult(process.cwd(), execution(task, n), `status: DONE\nartifact: ${report}\nsignals: none\n`);
+    if (!result.accepted) throw new Error(`synthetic task result rejected: ${result.reason}`);
+  });
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(indexPath, '# Results\n');
+  guard.open();
+  guard.openCycle('task-1');
+  await write('1', 1, { work: () => writeFileSync('task-1.txt', 'task 1 delivered\n') });
+  projectTaskResults(process.cwd(), { indexPath, states: [execution('1', 1)] });
+  setReviewReference(process.cwd(), { indexPath, state: approveTaskGate(manifest, dir, guard, '1') });
+  const defect = reviewDefect('SC2', 'missing-case', 'the Task 2 change misses its case', 'add the missing case');
+  guard.openCycle('task-2');
+  await write('2', 1, { parentState: execution('1', 1), work: () => writeFileSync('task-2.txt', 'task 2 attempt\n') });
+  const found = reviewTaskIssues(manifest, dir, guard, '2', 1, execution('2', 1), defect);
+  guard.retry({ kind: 'defect', target: 'SC2', evidence: found.ref,
+    observedFailure: 'the Task 2 review found its case missing', hypothesis: 'the writer skipped the case',
+    remedy: 'add the missing case', difference: 'the correction adds the case', confirmingCheck: 'review' });
+  // The correction changes no source: the tree stays the retained best candidate, execution 1.
+  await write('2', 2, { role: 'fix', previousState: execution('2', 1), parentState: execution('2', 1) });
+  reviewTaskIssues(manifest, dir, guard, '2', 2, execution('2', 2), defect);
+  guard.proveIsolation('task-2', 'retained-best');
+  // Task 3 is blocked behind the stopped Task 2: the final cycle opens on the PENDING summary.
+  guard.openCycle('final');
+  guard.project();
+  const { config, state } = await beginFinalGate(manifest, 'topic', guard);
+  approveFinalGate(config, state, guard);
+  guard.finish('PARTIAL');
+  writeFileSync(`${dir}/ledger.md`, 'Task 1: complete\nTask 2: stopped\nTask 3: blocked\n');
+  if (forgeReopen) forgeReopenRecord(manifest);
+  append(phase, 'PARTIAL', correlated('Task 1 delivered; Task 2 stopped; Task 3 blocked'));
+  return 0;
+}
+
+// A run whose final cycle the child stopped (see materializeReviewGates): the fresh attempt claims DONE for
+// it; a resumed attempt records PARTIAL for that earlier attempt's stopped final, with no new work.
+async function finalStoppedScenario() {
+  const trace = '.formula/work/tasks/topic/final-stopped-trace.txt';
+  if (!existsSync(trace)) {
+    await materializePhaseArtifacts();
+    writeFileSync(trace, 'stopped-final\n');
+    append(phase, 'DONE', correlated('claims DONE for a stopped final'));
+    return 0;
+  }
+  appendFileSync(trace, 'resumed\n');
+  append(phase, 'PARTIAL', correlated('the stopped final of an earlier attempt'));
+  return 0;
+}
+
+// Also appends a second correlated marker for this attempt when FAKE_HARNESS_ALSO_MARK names this phase.
+function alsoMarkIfAsked() {
+  const [target, event] = (process.env.FAKE_HARNESS_ALSO_MARK ?? '').split(':');
+  if (target === phase && event) append(phase, event, correlated('a second marker for the same attempt'));
+}
+
+// The correction scenarios act in implement (and some in review); every other phase runs them as `done`.
+const CORRECTION_PHASES = Object.freeze({
+  'correction-history-rewrite': ['implement'],
+  'correction-final-stopped': ['implement'],
+  'correction-partial': ['implement', 'review'],
+  'correction-reopen-forgery': ['implement', 'review'],
+  'review-forged-ready': ['review'],
+});
+const scenario = CORRECTION_PHASES[mode] && !CORRECTION_PHASES[mode].includes(phase) ? 'done' : mode;
+
+switch (scenario) {
+  case 'correction-history-rewrite':
+    // A complete guarded implementation whose child then rewrites the history it recorded.
+    await materializePhaseArtifacts();
+    rewriteFirstGuardRecord();
+    append(phase, 'DONE', correlated('rewrote the correction guard history'));
+    process.exit(0);
+    break;
+  case 'correction-final-stopped':
+    process.exit(await finalStoppedScenario());
+    break;
+  case 'correction-partial':
+  case 'correction-reopen-forgery': {
+    const forgeReopen = scenario === 'correction-reopen-forgery';
+    if (phase === 'implement') process.exit(await correctionPartialScenario({ forgeReopen }));
+    // The review of a partial delivery records PARTIAL_REVIEWED, never READY_FOR_PR.
+    if (forgeReopen) forgeReopenRecord(JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8')));
+    append(phase, 'PARTIAL_REVIEWED', correlated('reviewed the partial delivery'));
+    process.exit(0);
+    break;
+  }
+  case 'review-forged-ready':
+    append(phase, 'READY_FOR_PR', correlated('claims READY_FOR_PR for a partial delivery'));
+    process.exit(0);
+    break;
   case 'receipt-needs-context':
   case 'receipt-wrong-ancestor':
     process.exit(await receiptContinuationScenario());
@@ -794,6 +993,7 @@ switch (mode) {
   case 'done':
     await materializePhaseArtifacts();
     append(phase, phase === 'review' ? 'READY_FOR_PR' : 'DONE', correlated(`fake harness completed ${phase}`));
+    alsoMarkIfAsked();
     forgeIfAsked();
     switchBranchIfAsked();
     process.exit(0);
