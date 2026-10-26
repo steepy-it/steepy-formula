@@ -10,6 +10,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
+  buildDiagnosisManifest,
+  buildFinalDiagnosisManifest,
   buildFinalReviewManifest,
   buildFixManifest,
   buildImplementManifest,
@@ -1124,6 +1126,127 @@ test('task-role CLI uses strict role-specific named paths and writes a valid man
   ], { encoding: 'utf8' });
   assert.equal(missingFinalStandard.status, 1);
   assert.match(missingFinalStandard.stderr, /final-review requires at least one relevant standard/);
+});
+
+const RUN_DIR = '.formula/work/tasks/context-efficient';
+const EVIDENCE_A = `${RUN_DIR}/correction/task-1-cycle-1-iteration-1-check-1-evidence.md`;
+const EVIDENCE_B = `${RUN_DIR}/correction/task-1-cycle-1-iteration-2-check-1-evidence.md`;
+const DIAGNOSIS_OUT = `${RUN_DIR}/correction/task-1-cycle-1-iteration-2-diagnosis.json`;
+const FINAL_DIAGNOSIS_OUT = `${RUN_DIR}/correction/final-cycle-1-iteration-2-diagnosis.json`;
+
+function seedEvidence(repoRoot) {
+  for (const path of [EVIDENCE_A, EVIDENCE_B]) {
+    mkdirSync(dirname(join(repoRoot, path)), { recursive: true });
+    writeFileSync(join(repoRoot, path), 'failing check output\n');
+  }
+}
+
+test('diagnosis manifests expose the failing evidence and reject malformed inputs', (t) => {
+  const repoRoot = materialize(t);
+  seedEvidence(repoRoot);
+  const diagnosisInput = {
+    ...base, repoRoot, task: 1, outputs: [DIAGNOSIS_OUT],
+    briefPath: `${RUN_DIR}/task-1-brief.md`,
+    evidencePaths: [EVIDENCE_A, EVIDENCE_B],
+    taskDiffPath: `${RUN_DIR}/task-1.diff`,
+    standardPaths: [scriptsContext],
+    hubIndexPath: contextPath,
+  };
+  const diagnosis = buildDiagnosisManifest(diagnosisInput);
+  assert.equal(diagnosis.scope.role, 'diagnosis');
+  assert.equal(diagnosis.scope.phase, 'implement');
+  assert.equal(diagnosis.scope.task, 1);
+  assert.equal(diagnosis.objective, 'Diagnose the failed correction cycle for Task 1 without changing source');
+  assert.deepEqual(diagnosis.required.map((item) => item.path), [
+    `${RUN_DIR}/task-1-brief.md`, EVIDENCE_A, EVIDENCE_B, `${RUN_DIR}/task-1.diff`, scriptsContext,
+  ]);
+  assert.deepEqual(diagnosis.required.slice(1, 3).map((item) => item.purpose), ['failing correction evidence', 'failing correction evidence']);
+  assert.deepEqual(diagnosis.onDemand.map((item) => item.path), [contextPath]);
+  assert.deepEqual(diagnosis.outputs, [DIAGNOSIS_OUT]);
+  assert.deepEqual(buildTaskManifest('diagnosis', diagnosisInput), diagnosis);
+
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, evidencePaths: [] }), /at least one evidence path/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, evidencePaths: undefined }), /at least one evidence path/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, evidencePaths: [EVIDENCE_A, EVIDENCE_A] }), /duplicate evidence path/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, outputs: [`${RUN_DIR}/task-1-report.md`] }), /work path/u);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, outputs: [] }), /exactly one/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, outputs: [DIAGNOSIS_OUT, DIAGNOSIS_OUT] }), /exactly one/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, evidencePaths: [`${RUN_DIR}/correction/missing-evidence.md`] }), /does not exist/i);
+
+  const finalInput = {
+    ...base, repoRoot, outputs: [FINAL_DIAGNOSIS_OUT],
+    criteriaPath: `${RUN_DIR}/success-criteria.md`,
+    taskResultIndexPath: `${RUN_DIR}/task-result-index.md`,
+    branchDiffPath: `${RUN_DIR}/branch-diff.txt`,
+    evidencePaths: [EVIDENCE_A],
+    standardPaths: [scriptsContext, adaptersContext],
+  };
+  const finalDiagnosis = buildFinalDiagnosisManifest(finalInput);
+  assert.equal(finalDiagnosis.scope.role, 'final-diagnosis');
+  assert.equal(finalDiagnosis.scope.task, undefined);
+  assert.equal(finalDiagnosis.objective, 'Diagnose the failed final-review cycle without changing source');
+  assert.deepEqual(finalDiagnosis.required.map((item) => item.path), [
+    `${RUN_DIR}/success-criteria.md`, `${RUN_DIR}/task-result-index.md`, `${RUN_DIR}/branch-diff.txt`,
+    EVIDENCE_A, scriptsContext, adaptersContext,
+  ]);
+  assert.equal(finalDiagnosis.required[3].purpose, 'failing correction evidence');
+  assert.deepEqual(finalDiagnosis.onDemand, []);
+  assert.deepEqual(buildTaskManifest('final-diagnosis', finalInput), finalDiagnosis);
+  assert.throws(() => buildFinalDiagnosisManifest({ ...finalInput, criteriaPath: '.formula/work/specs/context-efficient.md' }), /criteria-only artifact/i);
+  assert.throws(() => buildFinalDiagnosisManifest({ ...finalInput, evidencePaths: [] }), /at least one evidence path/i);
+  assert.throws(() => buildFinalDiagnosisManifest({ ...finalInput, evidencePaths: [EVIDENCE_A, EVIDENCE_A] }), /duplicate evidence path/i);
+  const noCriteria = {
+    ...finalDiagnosis,
+    required: finalDiagnosis.required.filter((entry) => entry.purpose !== 'success-criteria source'),
+  };
+  assert.throws(() => validateContextManifest(noCriteria, { repoRoot }), /requires a criteria-only artifact/i);
+  assert.throws(() => validateContextManifest({ ...finalDiagnosis, scope: { ...finalDiagnosis.scope, task: 1 } }, { repoRoot }), /must not declare a task/i);
+});
+
+test('the CLI writes diagnosis manifests and rejects role-invalid options for both diagnosis roles', (t) => {
+  const repoRoot = materialize(t);
+  seedEvidence(repoRoot);
+  const run = (args) => spawnSync(process.execPath, [scriptPath, '--repo-root', repoRoot, '--run-id', base.runId, '--model-tier', 'standard', ...args], { encoding: 'utf8' });
+  const taskOutput = `${RUN_DIR}/context/task-1-diagnosis-1.json`;
+  const taskArgs = [
+    '--role', 'diagnosis', '--task', '1', '--brief', `${RUN_DIR}/task-1-brief.md`,
+    '--evidence', EVIDENCE_A, '--evidence', EVIDENCE_B, '--task-diff', `${RUN_DIR}/task-1.diff`,
+    '--standard', scriptsContext, '--hub-index', contextPath, '--artifact-output', DIAGNOSIS_OUT,
+  ];
+  const written = run([...taskArgs, '--output', taskOutput]);
+  assert.equal(written.status, 0, written.stderr);
+  const taskManifest = JSON.parse(readFileSync(join(repoRoot, taskOutput), 'utf8'));
+  assert.equal(taskManifest.scope.role, 'diagnosis');
+  assert.deepEqual(taskManifest.required.map(({ path }) => path), [
+    `${RUN_DIR}/task-1-brief.md`, EVIDENCE_A, EVIDENCE_B, `${RUN_DIR}/task-1.diff`, scriptsContext,
+  ]);
+  assert.deepEqual(taskManifest.outputs, [DIAGNOSIS_OUT]);
+
+  const finalOutput = `${RUN_DIR}/context/final-diagnosis-1.json`;
+  const finalArgs = [
+    '--role', 'final-diagnosis', '--criteria', `${RUN_DIR}/success-criteria.md`,
+    '--task-result-index', `${RUN_DIR}/task-result-index.md`, '--branch-diff', `${RUN_DIR}/branch-diff.txt`,
+    '--evidence', EVIDENCE_A, '--standard', scriptsContext, '--artifact-output', FINAL_DIAGNOSIS_OUT,
+  ];
+  const finalWritten = run([...finalArgs, '--output', finalOutput]);
+  assert.equal(finalWritten.status, 0, finalWritten.stderr);
+  assert.equal(JSON.parse(readFileSync(join(repoRoot, finalOutput), 'utf8')).scope.role, 'final-diagnosis');
+
+  const rejectedTask = run([...taskArgs, '--criteria', `${RUN_DIR}/success-criteria.md`, '--output', `${RUN_DIR}/context/task-1-diagnosis-2.json`]);
+  assert.equal(rejectedTask.status, 1);
+  assert.match(rejectedTask.stderr, /--criteria is not valid for role diagnosis/);
+  const rejectedFinal = run([...finalArgs, '--hub-index', contextPath, '--output', `${RUN_DIR}/context/final-diagnosis-2.json`]);
+  assert.equal(rejectedFinal.status, 1);
+  assert.match(rejectedFinal.stderr, /--hub-index is not valid for role final-diagnosis/);
+  const evidenceOnImplementer = run([
+    '--role', 'implementer', '--task', '1', '--brief', `${RUN_DIR}/task-1-brief.md`, '--standard', scriptsContext,
+    '--evidence', EVIDENCE_A, '--output', `${RUN_DIR}/context/task-1-implement-3.json`,
+  ]);
+  assert.equal(evidenceOnImplementer.status, 1);
+  assert.match(evidenceOnImplementer.stderr, /--evidence is not valid for role implementer/);
+  const badOutput = run([...taskArgs.slice(0, -1), `${RUN_DIR}/task-1-report.md`, '--output', `${RUN_DIR}/context/task-1-diagnosis-3.json`]);
+  assert.equal(badOutput.status, 1);
+  assert.equal(existsSync(join(repoRoot, `${RUN_DIR}/context/task-1-diagnosis-3.json`)), false);
 });
 
 test('task-role CLI accepts only protocol 2', (t) => {
