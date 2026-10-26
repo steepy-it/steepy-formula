@@ -32,6 +32,7 @@ import {
   validateContextManifest,
   writeContextManifest,
 } from '../scripts/autopilot-context.mjs';
+import { formatCorrectionSummaryBlock } from '../scripts/correction-state.mjs';
 import { phasePrompt } from '../scripts/autopilot.mjs';
 import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
 import { writeProjectConfig } from '../scripts/formula/core/project-config.mjs';
@@ -1674,4 +1675,85 @@ test('--verify-plan rejects a plan without Dependencies and keeps its success li
   const accepted = run();
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.equal(accepted.stdout, 'plan OK — 2 task(s): 1, 2\n');
+});
+
+// --- partial handoff: the correction summary block --------------------------------------------------
+
+const PARTIAL_PLAN = [
+  '# Plan', '',
+  '## Task 1', '', '- **Surface:** scripts', '- **Complexity:** integration', '- **Dependencies:** none', '- **Test command:** `npm test`', '- **Success criteria:** SC1', '',
+  '## Task 2', '', '- **Surface:** scripts', '- **Complexity:** design', '- **Dependencies:** none', '- **Test command:** `npm test`', '- **Success criteria:** SC2, SC4', '',
+  '## Task 3', '', '- **Surface:** scripts', '- **Complexity:** mechanical', '- **Dependencies:** 2', '- **Test command:** `npm test`', '- **Success criteria:** SC3', '',
+].join('\n');
+const PARTIAL_RUN = '.formula/work/tasks/topic';
+const RETAINED = `${PARTIAL_RUN}/task-2-execution-1`;
+// A valid correction summary: Task 1 completed, Task 2 stopped retaining RETAINED, Task 3 blocked by it.
+function correctionSummary(overrides = {}) {
+  const outcome = overrides.outcome ?? 'PARTIAL';
+  return {
+    version: 1, outcome, approval: outcome === 'COMPLETE' ? 'APPROVED' : 'UNAPPROVED', planDigest: 'a'.repeat(64),
+    completed: ['1'],
+    stopped: [{
+      task: '2', cycle: 1, reason: 'HUMAN_INTERRUPTED', iterations: { reserved: 1, diagnosis: 0 }, unresolvedDefects: [],
+      comparison: [], bestCandidate: { iteration: 1, observation: 'b'.repeat(64), snapshot: null }, execution: RETAINED, nextRemedy: null,
+    }],
+    blocked: [{ task: '3', causes: ['2'] }],
+    criteria: outcome === 'PENDING' ? { SC2: 'failed', SC3: 'blocked', SC4: 'failed' } : { SC1: 'satisfied', SC2: 'failed', SC3: 'blocked', SC4: 'failed' },
+    final: { cycle: 1, status: 'APPROVED', reason: 'APPROVED', iterations: { reserved: 1, diagnosis: 0 }, approvedObservation: 'b'.repeat(64) },
+    cycles: [], halt: null, ...overrides,
+  };
+}
+const taskOneEntry = { task: '1', status: 'DONE', artifact: `${PARTIAL_RUN}/task-1-report.md`, changedPaths: ['source.txt'], signals: [],
+  receipt: `${PARTIAL_RUN}/task-1-execution-1` };
+const receiptsBlock = (entries) => `<!-- steepy-task-results: v2 -->\n\`\`\`json\n${JSON.stringify(entries, null, 2)}\n\`\`\`\n<!-- /steepy-task-results -->\n`;
+const partialIndex = (summary = correctionSummary(), entries = [taskOneEntry]) => `# Results\n\n${receiptsBlock(entries)}\n${formatCorrectionSummaryBlock(summary)}\n`
+  + `Reviewer gate final: ${PARTIAL_RUN}/final-review-guard-attempt-1-iteration-1\n`;
+
+test('review routing of a partial handoff: delivered tasks, the declared omissions and every plan criterion', () => {
+  const route = reviewPhaseContext(PARTIAL_PLAN, partialIndex());
+  assert.deepEqual(route.tasks.map(({ task }) => task), ['1']);
+  assert.deepEqual(route.omitted, [
+    { task: '2', reason: 'stopped', execution: RETAINED },
+    { task: '3', reason: 'dependency-blocked', execution: null },
+  ]);
+  assert.equal(route.correctionOutcome, 'PARTIAL');
+  assert.deepEqual(route.criterionIds, ['SC1', 'SC2', 'SC4', 'SC3'], 'the stopped and blocked tasks keep their criteria in plan order');
+  assert.equal(route.evidence, 'result-index:reviewed-tasks=1;phase-controller-tier=standard;distribution=mechanical:0,integration:1,design:0');
+  assert.deepEqual(Object.keys(route), ['tasks', 'modelTier', 'testCommand', 'criterionIds', 'evidence', 'omitted', 'correctionOutcome']);
+  // A block projected when the final cycle became due, and a CRLF index, route the same way.
+  const pending = reviewPhaseContext(PARTIAL_PLAN, partialIndex(correctionSummary({ outcome: 'PENDING', final: null })));
+  assert.deepEqual([pending.correctionOutcome, pending.omitted], ['PENDING', route.omitted]);
+  assert.deepEqual(reviewPhaseContext(PARTIAL_PLAN, partialIndex().replaceAll('\n', '\r\n')).omitted, route.omitted);
+  // A manual bullet index carries the same block.
+  const bullets = `# Results\n\n- Task 1: DONE; artifact: ${PARTIAL_RUN}/task-1-report.md; changed-paths: source.txt; signals: none\n\n`
+    + `${formatCorrectionSummaryBlock(correctionSummary({ stopped: [{ ...correctionSummary().stopped[0], execution: null }] }))}\n`;
+  assert.deepEqual(reviewPhaseContext(PARTIAL_PLAN, bullets).omitted.map(({ execution }) => execution), [null, null]);
+});
+
+test('review routing without a summary block keeps its complete-run shape and omission refusal', () => {
+  const index = `# Results\n\n${receiptsBlock([taskOneEntry])}`;
+  assert.throws(() => reviewPhaseContext(PARTIAL_PLAN, index), /^Error: task result index omits plan task ids: 2, 3$/);
+  const entries = ['1', '2', '3'].map((task) => ({ ...taskOneEntry, task, artifact: `${PARTIAL_RUN}/task-${task}-report.md`,
+    receipt: `${PARTIAL_RUN}/task-${task}-execution-1` }));
+  const route = reviewPhaseContext(PARTIAL_PLAN, `# Results\n\n${receiptsBlock(entries)}`);
+  assert.deepEqual(Object.keys(route), ['tasks', 'modelTier', 'testCommand', 'criterionIds', 'evidence']);
+  assert.deepEqual(route.criterionIds, ['SC1', 'SC2', 'SC4', 'SC3']);
+});
+
+test('review routing refuses omissions the summary does not declare and results it does not allow', () => {
+  const stoppedTwo = correctionSummary().stopped[0];
+  const entry = (task) => ({ ...taskOneEntry, task, artifact: `${PARTIAL_RUN}/task-${task}-report.md`, receipt: `${PARTIAL_RUN}/task-${task}-execution-1` });
+  for (const [label, index, pattern] of [
+    ['an undeclared omission', partialIndex(correctionSummary({ blocked: [] })), /^Error: task result index omits plan task ids: 3$/],
+    ['a result for a blocked task', partialIndex(correctionSummary(), [taskOneEntry, entry('3')]), /^Error: task result index has a result for dependency-blocked task 3$/],
+    ['a result for a stopped task', partialIndex(correctionSummary(), [taskOneEntry, entry('2')]), /^Error: task result index has a result for stopped task 2$/],
+    ['a completed task without a result', partialIndex(correctionSummary({ completed: ['1', '3'] })), /^Error: correction summary completed task 3 has no task result$/],
+    ['a declared task outside the plan', partialIndex(correctionSummary({ stopped: [stoppedTwo, { ...stoppedTwo, task: '9', execution: null }] })),
+      /^Error: correction summary names unknown plan task ids: 9$/],
+    ['a task both stopped and blocked', partialIndex(correctionSummary({ blocked: [{ task: '2', causes: ['2'] }, { task: '3', causes: ['2'] }] })),
+      /^Error: correction summary names task 2 more than once$/],
+    ['a malformed block', partialIndex().replace('"version": 1', '"version": 2'), /parseCorrectionSummaryBlock: version must be 1/],
+  ]) {
+    assert.throws(() => reviewPhaseContext(PARTIAL_PLAN, index), pattern, label);
+  }
 });

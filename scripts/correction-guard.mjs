@@ -49,16 +49,27 @@
 // `{ ok: false, code, message, identity }` with a CORRECTION_GUARD_CODES or reducer code; a TypeError is
 // thrown only for a malformed call (an unknown input or seam key, a seam that is not a function).
 //
+// `verify-handoff` is read-only, like `verify`: it appends no record. It hands off only a terminal
+// (COMPLETE or PARTIAL) run whose index carries the run's summary block byte for byte and routes exactly
+// the stopped and blocked tasks as omitted. On autopilot the reviewer handoff must verify and every
+// execution on the task-results lineage, and every reviewer gate the index names, must be a dispatch the
+// guard authorized and recorded; anything else is an unauthorized dispatch. On a manual drive the latest
+// recording of each evidence path of the concluding iterations (of every approved cycle and of the latest
+// final cycle) must match current bytes, and the source must be the final cycle's approved observation
+// (COMPLETE) or its last checks observation (PARTIAL). Its approval is the summary's: a partial run is
+// never approved.
+//
 // Usage: node scripts/correction-guard.mjs --repo-root <root> --plan <plan> --action <open|next|open-cycle|
-// reserve|authorize|record-interruption|admit-retry|stop|reopen|project|verify|record-writer|verify-check|
-// record-review|record-diagnosis|prove-isolation> [options]; stdout carries exactly one JSON line, and the
-// manual writer, reviewer and diagnostic responses arrive on stdin. `main` resolves to the exit code.
+// reserve|authorize|record-interruption|admit-retry|stop|reopen|project|verify|verify-handoff|record-writer|
+// verify-check|record-review|record-diagnosis|prove-isolation> [options]; stdout carries exactly one JSON
+// line, and the manual writer, reviewer and diagnostic responses arrive on stdin. `main` resolves to the
+// exit code.
 //
 // Exit codes:
 //   0   success
 //   1   refused transition or invalid input
 //   2   usage error
-//   3   integrity failure (run halted or evidence corrupt)
+//   3   integrity failure (run halted, evidence corrupt or an unauthorized dispatch)
 //   25  migrate refusal, checked before any output or write
 
 import { createHash } from 'node:crypto';
@@ -68,7 +79,7 @@ import {
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { planPhaseContext } from './autopilot-context.mjs';
+import { planPhaseContext, reviewPhaseContext } from './autopilot-context.mjs';
 import { collectReviewEvidence } from './capture-review-evidence.mjs';
 import {
   CORRECTION_CODES,
@@ -87,10 +98,10 @@ import {
   validateRubric,
 } from './correction-state.mjs';
 import { migrateRefusal } from './formula/core/markdown-hub.mjs';
-import { inspectReview } from './reviewer-response.mjs';
+import { captureRetainedApproval, inspectReview, verifyImplementReviews } from './reviewer-response.mjs';
 import { assertSafeRelPath } from './sanitize.mjs';
 import { changedSourcePaths, observeSource, validateSourceObservation } from './source-observation.mjs';
-import { inspectTaskResult } from './task-results.mjs';
+import { inspectTaskResult, verifyTaskResults } from './task-results.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 
 function deepFreeze(value) {
@@ -109,6 +120,9 @@ export const CORRECTION_GUARD_CODES = deepFreeze({
   STEP_INVALID: 'STEP_INVALID',
   RECEIPT_PENDING: 'RECEIPT_PENDING',
   CAPTURE_FAILED: 'CAPTURE_FAILED',
+  HANDOFF_NOT_TERMINAL: 'HANDOFF_NOT_TERMINAL',
+  HANDOFF_INVALID: 'HANDOFF_INVALID',
+  UNAUTHORIZED_DISPATCH: 'UNAUTHORIZED_DISPATCH',
   RUN_HALTED: CORRECTION_CODES.refusal.RUN_HALTED,
   INTEGRITY: CORRECTION_CODES.halt.INTEGRITY,
 });
@@ -1789,6 +1803,216 @@ export function proveCorrectionIsolation(root, input, seams = {}) {
   });
 }
 
+// --- handoff --------------------------------------------------------------------------------------
+
+const HANDOFF_KEYS = Object.freeze(['planPath', 'indexPath', 'runId', 'attempt', 'retainedApproval']);
+const REVIEWER_GATE = /^Reviewer gate (?:Task ([1-9]\d*)|final): (\S+)$/u;
+const TERMINAL_OUTCOMES = new Set(['COMPLETE', 'PARTIAL']);
+const byNumber = (left, right) => Number(left) - Number(right);
+
+// Runs a verification of the reviewer or task-result modules, which throw plain errors, refusing any of
+// them as a handoff that does not verify.
+function verifying(what, build) {
+  try {
+    return build();
+  } catch (error) {
+    if (error instanceof GuardRefusal) throw error;
+    return refuse(CODES.HANDOFF_INVALID, `${what}: ${error.message}`, {});
+  }
+}
+
+// Whether `text` carries `block` byte for byte as its one summary block.
+function carriesBlock(text, block, path) {
+  try {
+    if (parseCorrectionSummaryBlock(text) === null) return false;
+  } catch (error) {
+    refuse(CODES.INTEGRITY, `${path} carries a malformed correction summary block: ${error.message}`, { path });
+  }
+  const open = block.slice(0, block.indexOf('\n'));
+  const close = block.slice(block.lastIndexOf('\n') + 1);
+  const start = text.indexOf(open);
+  const end = text.indexOf(close, start);
+  return start !== -1 && end !== -1 && text.slice(start, end + close.length) === block;
+}
+
+// Every iteration of the run, with its cycle, in record order.
+function iterationsOf(state) {
+  return state.cycleOrder.flatMap((key) => state.cycles[key].iterations.map((entry) => ({ cycle: state.cycles[key], entry })));
+}
+
+const digestOf = (root, path) => {
+  const bytes = readEvidence(root, path);
+  return bytes === null ? null : sha256(bytes);
+};
+
+// Autopilot: the reviewer handoff verifies, and every execution on the task-results lineage and every
+// reviewer gate the index names is a dispatch the guard authorized and recorded: an execution with the
+// digest of its result file, a review with the digest of its stored result. Otherwise the dispatch ran
+// outside the guard.
+function verifyAutopilotHandoff(root, state, route, text, options) {
+  verifying('the reviewer handoff does not verify', () => verifyImplementReviews(root, options));
+  const omittedExecutions = route.omitted.filter(({ execution }) => execution !== null)
+    .map(({ task, execution }) => ({ task, state: execution }));
+  const { executions } = verifying('the task results do not verify', () => verifyTaskResults(root, {
+    indexPath: options.indexPath, expectedTasks: route.tasks, omittedExecutions,
+  }));
+  const iterations = iterationsOf(state);
+  for (const { state: execution } of executions) {
+    const result = `${execution}-result.json`;
+    const digest = digestOf(root, result);
+    const recorded = iterations.some(({ entry }) => entry.writer !== null
+      && entry.dispatches.some((dispatch) => dispatch.role === 'writer' && dispatch.target === execution)
+      && entry.writer.evidence.some((reference) => reference.path === result && reference.digest === digest));
+    if (!recorded) {
+      refuse(CODES.UNAUTHORIZED_DISPATCH, `execution ${execution} has no guard-authorized writer recorded with its result`,
+        { execution });
+    }
+  }
+  for (const line of text.split(/\r?\n/u)) {
+    const gate = REVIEWER_GATE.exec(line);
+    if (gate === null) continue;
+    const [, task, reviewState] = gate;
+    const role = task === undefined ? 'final-reviewer' : 'task-reviewer';
+    const original = `${reviewState}-original.json`;
+    const digest = digestOf(root, original);
+    const owns = (cycle, dispatch) => (task === undefined ? cycle.scope === 'final'
+      : cycle.scope === `task-${task}` || (cycle.scope === 'final' && dispatch.ownerTask === task));
+    const recorded = iterations.some(({ cycle, entry }) => entry.dispatches.some((dispatch) => dispatch.role === role
+      && dispatch.target === reviewState && owns(cycle, dispatch))
+      && entry.reviews.some((review) => review.role === role
+        && review.evidence.some((reference) => reference.path === original && reference.digest === digest)));
+    if (!recorded) {
+      refuse(CODES.UNAUTHORIZED_DISPATCH, `reviewer gate ${reviewState} has no guard-authorized review recorded with its result`,
+        { reviewState });
+    }
+  }
+}
+
+// The evidence references an iteration recorded, in record order: its writer's and candidate, its checks',
+// its reviews', then those its conclusion bound (a diagnosis artifact, an interruption record).
+function iterationEvidence(entry) {
+  return [
+    ...(entry.writer === null ? [] : [...entry.writer.evidence, entry.writer.candidate]),
+    ...(entry.checks === null ? [] : entry.checks.results.map((result) => result.evidence)),
+    ...entry.reviews.flatMap((review) => review.evidence),
+    ...(entry.conclusion?.evidence ?? []),
+  ];
+}
+
+// Manual drive: over the concluding iterations of every approved cycle and of the latest final cycle, the
+// latest recording of each path governs (a final-scope correction rewrites a task's fixed report and review
+// names) and must match current bytes; the source is the final cycle's approved observation when COMPLETE,
+// else its last checks observation, or the tree it opened on when it recorded no checks.
+function verifyManualHandoff(root, state, summary, observation) {
+  const cycles = state.cycleOrder.map((key) => state.cycles[key]);
+  const final = cycles.findLast((cycle) => cycle.scope === 'final');
+  if (final === undefined) refuse(CODES.INTEGRITY, 'the run has no final cycle to hand off', {});
+  const latest = new Map();
+  for (const cycle of cycles) {
+    if (cycle !== final && cycle.status !== 'APPROVED') continue;
+    for (const entry of cycle.iterations.slice(-1)) {
+      for (const { path, digest } of iterationEvidence(entry)) latest.set(path, digest);
+    }
+  }
+  for (const [path, digest] of latest) {
+    if (!matchesCurrentBytes(root, observation, { path, digest })) {
+      refuse(CODES.INTEGRITY, `${path} no longer matches its recorded evidence`, { path, digest });
+    }
+  }
+  const complete = summary.outcome === 'COMPLETE';
+  const expected = complete ? final.approvedObservation
+    : final.iterations.findLast((entry) => entry.checks !== null)?.checks.observation ?? final.observation;
+  if (observation.digest !== expected) {
+    refuse(CODES.INTEGRITY, `the source is not the final cycle's ${complete ? 'approved observation' : 'last checks observation'}`,
+      { expected, observed: observation.digest });
+  }
+}
+
+// Verifies the handoff of a terminal run, read-only: `{ ok, outcome, approval, summary }`. In order: the run
+// replays without drift and is COMPLETE or PARTIAL (else HANDOFF_NOT_TERMINAL; a halt or drift passes through);
+// the index carries its summary block byte for byte (else INTEGRITY); the index routes for review, omitting
+// exactly the stopped and blocked tasks (else HANDOFF_INVALID); then the drive's evidence. An autopilot drive
+// takes its run id and attempt (and an earlier attempt's `retainedApproval`, as captureRetainedApproval
+// captures it); a manual drive takes none.
+export function verifyCorrectionHandoff(root, input, seams = {}) {
+  return guarded(() => {
+    const label = 'verifyCorrectionHandoff';
+    if (typeof root !== 'string' || root.length === 0) throw new TypeError(`${label}: root must be a non-empty string`);
+    closed(input, HANDOFF_KEYS, label, 'input');
+    closed(seams, SEAM_KEYS, label, 'seam');
+    const observe = seams.observe ?? observeSource;
+    if (typeof observe !== 'function') throw new TypeError(`${label}: the observe seam must be a function`);
+    const { planPath, indexPath, runId, attempt, retainedApproval = null } = input;
+    const paths = runPaths(planPath);
+    if (indexPath !== paths.index) {
+      refuse(CODES.INPUT_INVALID, `indexPath must be this run's index ${paths.index}`, { indexPath: String(indexPath) });
+    }
+    const verified = verifyCorrectionRun(root, { plan: planPath }, { observe });
+    if (!verified.ok) refuse(verified.code, verified.message, verified.identity);
+    const { summary } = verified;
+    if (!TERMINAL_OUTCOMES.has(summary.outcome)) {
+      refuse(CODES.HANDOFF_NOT_TERMINAL, `the run is ${summary.outcome}; only a COMPLETE or PARTIAL run hands off`,
+        { outcome: summary.outcome });
+    }
+    const { state } = load(root, paths);
+    const { drive } = state.run;
+    resolveActor(root, paths, drive, { runId, attempt });
+    if (drive === 'manual' && retainedApproval !== null) {
+      refuse(CODES.ACTOR_INVALID, 'a manual drive has no retained final approval', { drive });
+    }
+    const bytes = readEvidence(root, paths.index);
+    const text = bytes === null ? '' : bytes.toString('utf8');
+    if (!carriesBlock(text, formatCorrectionSummaryBlock(summary), paths.index)) {
+      refuse(CODES.INTEGRITY, `${paths.index} does not carry the run's summary block`, { path: paths.index });
+    }
+    let plan;
+    try {
+      plan = readWorkPath(root, paths.plan, { encoding: 'utf8' });
+    } catch (error) {
+      refuse(CODES.PLAN_INVALID, `cannot read the plan: ${error.message}`, { plan: paths.plan });
+    }
+    const route = verifying('the handoff does not route', () => reviewPhaseContext(plan, text));
+    const routed = route.omitted.map(({ task }) => task).sort(byNumber);
+    const declared = [...summary.stopped, ...summary.blocked].map(({ task }) => task).sort(byNumber);
+    if (!sameValue(routed, declared)) {
+      refuse(CODES.HANDOFF_INVALID, `the index omits tasks ${routed.join(', ') || 'none'}, not the stopped and blocked `
+        + `tasks ${declared.join(', ') || 'none'}`, {});
+    }
+    if (drive === 'autopilot') {
+      verifyAutopilotHandoff(root, state, route, text, { planPath, indexPath, runId, attempt, retainedApproval });
+    } else {
+      verifyManualHandoff(root, state, summary, observeRoot(observe, root));
+    }
+    return { ok: true, outcome: summary.outcome, approval: summary.approval, summary };
+  });
+}
+
+// The verify-handoff action of the CLI: its options as verifyCorrectionHandoff's input. --resume-final names
+// an earlier attempt's retained final review state, captured as reviewer-response captures it; a capture
+// naming another state is refused.
+function verifyHandoffAction(root, { plan, taskResultIndex, runId, attempt, resumeFinal }) {
+  const input = {
+    planPath: plan, indexPath: taskResultIndex,
+    ...(runId === undefined ? {} : { runId }), ...(attempt === undefined ? {} : { attempt }),
+  };
+  if (resumeFinal === undefined) return verifyCorrectionHandoff(root, input);
+  return guarded(() => {
+    const paths = runPaths(plan);
+    if (taskResultIndex !== paths.index) {
+      refuse(CODES.INPUT_INVALID, `the task result index must be this run's index ${paths.index}`, {});
+    }
+    if (!isSupplied(runId) || !isSupplied(attempt)) {
+      refuse(CODES.ACTOR_INVALID, '--resume-final names an earlier attempt\'s approval and needs the run id and attempt', {});
+    }
+    const retainedApproval = verifying('the retained final approval does not verify',
+      () => captureRetainedApproval(root, { planPath: plan, indexPath: taskResultIndex, runId, attempt }));
+    if (retainedApproval?.state !== resumeFinal) {
+      refuse(CODES.INPUT_INVALID, `--resume-final ${resumeFinal} is not the retained final approval`, { resumeFinal });
+    }
+    return verifyCorrectionHandoff(root, { ...input, retainedApproval });
+  });
+}
+
 // --- CLI ------------------------------------------------------------------------------------------
 
 const USAGE = `usage: node scripts/correction-guard.mjs --repo-root <root> --plan .formula/work/plans/<name>.md
@@ -1808,6 +2032,8 @@ actions:
   reopen               --authorization <the exact correction-reopen path>
   project              --task-result-index <the run's task-result-index.md>
   verify
+  verify-handoff       --task-result-index <the run's task-result-index.md>
+                       [--resume-final <the retained final review guard state of an earlier attempt>]
   record-writer        --scope <scope> --iteration <n> [--execution <the authorized execution receipt>]
   verify-check         --scope <scope> --iteration <n>
   record-review        --scope <scope> --iteration <n> --role task-reviewer|final-reviewer
@@ -1816,8 +2042,11 @@ actions:
   record-diagnosis     --scope <scope> --iteration <n>
   prove-isolation      --scope <task-N>
 
-Every mutating action (all but next and verify) takes --run-id <id> --attempt <n> on an autopilot drive
-and refuses them on a manual drive; reopen refuses them on every drive.
+Every mutating action (all but next, verify and verify-handoff) takes --run-id <id> --attempt <n> on an
+autopilot drive and refuses them on a manual drive; reopen refuses them on every drive. verify-handoff,
+read-only, takes them on an autopilot drive too, binding the reviewer handoff to that attempt; it exits 1
+for a run that is not terminal or a handoff that does not verify, and 3 for corrupt evidence or an
+execution or review gate the guard never authorized.
 record-writer and record-review read the child's four-field response from stdin on a manual drive only (an
 autopilot drive binds --execution / --review-state and never reads stdin); record-diagnosis reads the
 diagnostic's response from stdin on every drive.
@@ -1827,7 +2056,7 @@ Exit codes:
   0   success
   1   refused transition or invalid input
   2   usage error
-  3   integrity failure (run halted or evidence corrupt)
+  3   integrity failure (run halted, evidence corrupt or an unauthorized dispatch)
   25  migrate refusal, checked before any output or write
 `;
 
@@ -1854,6 +2083,7 @@ const CLI_OPTIONS = Object.freeze({
   execution: STRING,
   defects: STRING,
   'review-state': STRING,
+  'resume-final': STRING,
   'run-id': STRING,
   attempt: STRING,
 });
@@ -1882,6 +2112,9 @@ const CLI_ACTIONS = Object.freeze({
   reopen: { run: reopenCorrectionScope, required: ['authorization'], optional: ACTOR_OPTIONS },
   project: { run: projectCorrectionSummary, required: ['task-result-index'], optional: ACTOR_OPTIONS },
   verify: { run: verifyCorrectionRun, required: [], optional: [] },
+  'verify-handoff': {
+    run: verifyHandoffAction, required: ['task-result-index'], optional: ['resume-final', ...ACTOR_OPTIONS],
+  },
   'record-writer': {
     run: recordCorrectionWriter,
     required: ['scope', 'iteration'],
@@ -1982,7 +2215,9 @@ function runDrive(root, plan) {
 function exitCodeFor(result) {
   if (result.ok) return 0;
   if (result.code === CODES.USAGE) return 2;
-  if (result.code === CODES.INTEGRITY || result.code === CODES.RUN_HALTED) return 3;
+  if (result.code === CODES.INTEGRITY || result.code === CODES.RUN_HALTED || result.code === CODES.UNAUTHORIZED_DISPATCH) {
+    return 3;
+  }
   return 1;
 }
 

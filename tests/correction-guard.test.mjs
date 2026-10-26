@@ -28,12 +28,13 @@ import {
   reopenCorrectionScope,
   reserveCorrectionIteration,
   stopCorrectionCycle,
+  verifyCorrectionHandoff,
   verifyCorrectionRun,
 } from '../scripts/correction-guard.mjs';
 import { CORRECTION_CODES, deriveCycleBindings, parseCorrectionSummaryBlock } from '../scripts/correction-state.mjs';
-import { beginReview, checkReview } from '../scripts/reviewer-response.mjs';
+import { beginReview, checkReview, setReviewReference } from '../scripts/reviewer-response.mjs';
 import { observeSource } from '../scripts/source-observation.mjs';
-import { beginTask, parseTaskResultProjection, recordTaskResult } from '../scripts/task-results.mjs';
+import { beginTask, parseTaskResultProjection, projectTaskResults, recordTaskResult } from '../scripts/task-results.mjs';
 
 const PLAN = '.formula/work/plans/run.md';
 const RUN = '.formula/work/tasks/run';
@@ -2060,7 +2061,7 @@ const EXIT_TABLE = {
   0: 'success',
   1: 'refused transition or invalid input',
   2: 'usage error',
-  3: 'integrity failure (run halted or evidence corrupt)',
+  3: 'integrity failure (run halted, evidence corrupt or an unauthorized dispatch)',
   25: 'migrate refusal, checked before any output or write',
 };
 
@@ -2226,4 +2227,458 @@ test('the verify-check CLI refuses a step that is not the checks without running
   assert.equal(result.status, 1);
   assert.equal(result.json.code, CORRECTION_GUARD_CODES.STEP_INVALID);
   assert.equal(exists(checkEvidencePath(1)), false);
+}));
+
+// --- verify-handoff -------------------------------------------------------------------------------
+
+const AUTOPILOT = Object.freeze({ runId: 'run-1', attempt: 1 });
+const ap = (input = {}) => manual({ ...AUTOPILOT, ...input });
+const exec = (task, n) => `${RUN}/task-${task}-execution-${n}`;
+const reportOf = (task) => `${RUN}/task-${task}-report.md`;
+const reviewOf = (task) => `${RUN}/task-${task}-review.md`;
+const issuesOf = (task) => `${RUN}/task-${task}-issues.md`;
+const guardState = (scope, iteration) => `${RUN}/${scope}-review-guard-attempt-1-iteration-${iteration}`;
+const defectsOf = (scope, iteration, role) => `${CORRECTION}/${scope}-cycle-1-iteration-${iteration}`
+  + `${scope === 'final' && role === 'task-reviewer' ? '-task-reviewer' : ''}-defects.json`;
+// Task 3 depends on the stopped Task 2 (blocked); in the fork plan it is independent and runs after it.
+const PLAN_PARTIAL = planText(planTask(1), planTask(2), planTask(3, { complexity: 'mechanical', dependencies: '2' }));
+const PLAN_FORK = planText(planTask(1), planTask(2), planTask(3));
+const handoff = (root, input = {}) => verifyCorrectionHandoff(root, { planPath: PLAN, indexPath: INDEX, ...input });
+const ok = (result) => { assert.equal(result.ok, true, `${result.code}: ${result.message}`); return result; };
+const nextAction = (root) => nextCorrectionAction(root, manual()).next;
+
+// Authorizes `role` for `target` in `scope` iteration `iteration` on the run's drive.
+function authorizeRole(root, actor, { scope, iteration, role, target, ownerTask, affectedCriteria }) {
+  return ok(authorizeCorrectionDispatch(root, { ...actor, scope, iteration, role, target,
+    ...(ownerTask === undefined ? {} : { ownerTask, affectedCriteria: affectedCriteria ?? [] }) }));
+}
+
+// The autopilot writer of `scope` iteration `iteration`: execution `n` of `task`, authorized by the guard,
+// begun and recorded with task-results with `work` inside it, then recorded by the guard.
+function apWriter({ root, put }, { scope, iteration, task, n, role = 'implementer', status = 'DONE', previous, parent, work, ownerTask, affectedCriteria }) {
+  authorizeRole(root, ap(), { scope, iteration, role: 'writer', target: exec(task, n), ownerTask, affectedCriteria });
+  beginTask(root, exec(task, n), { ...AUTOPILOT, task, execution: n, role, report: reportOf(task), planPath: PLAN,
+    ...(previous ? { previousState: previous } : {}), ...(parent ? { parentState: parent } : {}) });
+  work?.();
+  put(reportOf(task), `Report of ${task}.${n}\n`);
+  recordTaskResult(root, exec(task, n), `status: ${status}\nartifact: ${reportOf(task)}\nsignals: none\n`);
+  return ok(recordCorrectionWriter(root, ap({ scope, iteration, execution: exec(task, n) })));
+}
+
+async function checksOf(root, actor, scope, iteration) {
+  return ok(await recordCorrectionChecks(root, { ...actor, scope, iteration }, { collectEvidence: collector().collectEvidence }));
+}
+
+// The autopilot review `state` of `scope` iteration `iteration` by `role` (already authorized for `state`),
+// begun, checked with `verdict` and recorded with its defects.
+function apReview({ root, put }, { scope, iteration, role, state, verdict = 'APPROVED', task, execution, ownerTask, defects = [] }) {
+  const final = role === 'final-reviewer';
+  const [report, issues] = final ? [FINAL_REVIEW, FINAL_ISSUES] : [reviewOf(task), issuesOf(task)];
+  const guardIteration = Number(state.slice(state.lastIndexOf('-') + 1));
+  beginReview(root, state, { ...AUTOPILOT, iteration: guardIteration, task: final ? 'final' : task, report, issues,
+    ...(final ? { plan: PLAN, index: INDEX } : { execution }) });
+  put(report, `${verdict} by the ${role} of ${scope} iteration ${iteration}\n`);
+  if (verdict === 'ISSUES_FOUND') put(issues, `- the issue found in ${scope} iteration ${iteration}\n`);
+  assert.equal(checkReview(root, state, `status: ${verdict}\nartifact: ${verdict === 'ISSUES_FOUND' ? issues : report}\nsignals: none\n`).status, verdict);
+  const path = defectsOf(scope, iteration, role);
+  put(path, defectsBody({ scope, iteration, verdict, defects }));
+  const recorded = ok(recordCorrectionReview(root, ap({ scope, iteration, role, defects: path, reviewState: state,
+    ...(ownerTask === undefined ? {} : { ownerTask }) })));
+  assert.equal(recorded.status, verdict);
+  return recorded;
+}
+
+// Task `task` approved in its own cycle by one autopilot writer (execution 1 after `parent`) and its review.
+async function apApprovedTask(repo, task, parent) {
+  const scope = `task-${task}`;
+  ok(openCorrectionCycle(repo.root, ap({ scope })));
+  ok(reserveCorrectionIteration(repo.root, ap({ scope, iteration: 1, kind: 'initial' })));
+  apWriter(repo, { scope, iteration: 1, task, n: 1, parent, work: () => repo.put(`task-${task}.txt`, `task ${task} delivered\n`) });
+  await checksOf(repo.root, ap(), scope, 1);
+  authorizeRole(repo.root, ap(), { scope, iteration: 1, role: 'task-reviewer', target: guardState(scope, 1) });
+  apReview(repo, { scope, iteration: 1, role: 'task-reviewer', state: guardState(scope, 1), task, execution: exec(task, 1) });
+}
+
+// Retries `scope` (task N or final) at iteration 2 for the issue its iteration 1 review reported.
+function retryForIssue({ root, put, bytes }, actor, scope, issuesPath, target) {
+  put(retryPath(1, scope), `${JSON.stringify(retryRequest({ path: issuesPath, digest: sha256(bytes(issuesPath)) }, {
+    scope, kind: 'defect', target, confirmingCheck: 'review', observedFailure: `the review of ${scope} found an issue`,
+    hypothesis: 'the writer skipped the regression case', remedy: 'add the regression case', difference: 'the correction adds the case',
+  }))}\n`);
+  ok(admitCorrectionRetry(root, { ...actor, request: retryPath(1, scope) }));
+  ok(reserveCorrectionIteration(root, { ...actor, scope, iteration: 2, kind: 'correction' }));
+}
+
+// Stops `scope` unless its cycle already stopped on its own, then proves its isolation in `mode`.
+function stopAndIsolate(root, actor, scope, mode) {
+  if (nextAction(root).action !== 'prove-isolation') {
+    ok(stopCorrectionCycle(root, { ...actor, scope, reason: 'HUMAN_INTERRUPTED', note: 'stopped by the user' }));
+  }
+  assert.equal(ok(proveCorrectionIsolation(root, { ...actor, scope })).mode, mode);
+}
+
+// An autopilot run through the guard. Task 1 is approved. Task 2 stops in `shape`:
+//   retained      its DONE writer (a source change, passing checks) gets an ISSUES_FOUND review: retained-best;
+//   blocked-leaf  as retained, then its correction writer reports BLOCKED without a change: retained-best;
+//   revert        as blocked-leaf, but the BLOCKED writer restores the opening tree: baseline-equal.
+// In the fork plan Task 3 then runs, its parent the retained execution or, after baseline-equal, Task 1's.
+// The final review opens on the PENDING summary and records `finalVerdict` (unless `finalReview` is false);
+// an ISSUES_FOUND final stops.
+async function autopilotHandoff(repo, { plan = PLAN_PARTIAL, shape = 'retained', finalVerdict = 'APPROVED', beforeFinalReview, finalReview = true } = {}) {
+  const { root, put } = repo;
+  const fork = plan === PLAN_FORK;
+  put(manifestPath(1), manifest('run-1', 1));
+  ok(openCorrectionRun(root, ap({ drive: 'autopilot' })));
+  await apApprovedTask(repo, '1');
+  ok(openCorrectionCycle(root, ap({ scope: 'task-2' })));
+  ok(reserveCorrectionIteration(root, ap({ scope: 'task-2', iteration: 1, kind: 'initial' })));
+  apWriter(repo, { scope: 'task-2', iteration: 1, task: '2', n: 1, parent: exec(1, 1), work: () => put('task-2.txt', 'task 2 attempt\n') });
+  await checksOf(root, ap(), 'task-2', 1);
+  authorizeRole(root, ap(), { scope: 'task-2', iteration: 1, role: 'task-reviewer', target: guardState('task-2', 1) });
+  apReview(repo, { scope: 'task-2', iteration: 1, role: 'task-reviewer', state: guardState('task-2', 1), verdict: 'ISSUES_FOUND',
+    task: '2', execution: exec(2, 1), defects: [defectEntry({ criterion: 'SC2' })] });
+  if (shape !== 'retained') {
+    retryForIssue(repo, ap(), 'task-2', issuesOf('2'), 'SC2');
+    apWriter(repo, { scope: 'task-2', iteration: 2, task: '2', n: 2, role: 'fix', status: 'BLOCKED', previous: exec(2, 1), parent: exec(2, 1),
+      work: shape === 'revert' ? () => unlinkSync(join(root, 'task-2.txt')) : undefined });
+  }
+  stopAndIsolate(root, ap(), 'task-2', shape === 'revert' ? 'baseline-equal' : 'retained-best');
+  if (fork) await apApprovedTask(repo, '3', shape === 'revert' ? exec(1, 1) : exec(2, 1));
+  projectTaskResults(root, { indexPath: INDEX, states: fork ? [exec(1, 1), exec(3, 1)] : [exec(1, 1)] });
+  ok(openCorrectionCycle(root, ap({ scope: 'final' })));
+  ok(projectCorrectionSummary(root, ap({ taskResultIndex: INDEX })));
+  ok(reserveCorrectionIteration(root, ap({ scope: 'final', iteration: 1, kind: 'initial' })));
+  authorizeRole(root, ap(), { scope: 'final', iteration: 1, role: 'final-reviewer', target: guardState('final', 1) });
+  await checksOf(root, ap(), 'final', 1);
+  for (const task of fork ? ['1', '3'] : ['1']) setReviewReference(root, { indexPath: INDEX, state: guardState(`task-${task}`, 1) });
+  setReviewReference(root, { indexPath: INDEX, state: guardState('final', 1) });
+  await beforeFinalReview?.(repo);
+  if (!finalReview) return;
+  apReview(repo, { scope: 'final', iteration: 1, role: 'final-reviewer', state: guardState('final', 1), verdict: finalVerdict,
+    defects: finalVerdict === 'ISSUES_FOUND' ? [defectEntry()] : [] });
+  if (finalVerdict === 'ISSUES_FOUND') ok(stopCorrectionCycle(root, ap({ scope: 'final', reason: 'HUMAN_INTERRUPTED', note: 'stopped by the user' })));
+  assert.equal(nextAction(root).action, 'terminal');
+  ok(projectCorrectionSummary(root, ap({ taskResultIndex: INDEX })));
+}
+
+const summaryOf = (repo) => parseCorrectionSummaryBlock(repo.bytes(INDEX).toString('utf8'));
+
+test('a partial autopilot handoff with an accepted retained execution verifies UNAPPROVED', () => withRepo(PLAN_PARTIAL, async (repo) => {
+  await autopilotHandoff(repo);
+  const summary = summaryOf(repo);
+  assert.deepEqual([summary.outcome, summary.completed, summary.blocked], ['PARTIAL', ['1'], [{ task: '3', causes: ['2'] }]]);
+  assert.equal(summary.stopped[0].execution, exec(2, 1));
+  const head = readCorrectionHead(repo.root, manual()).seq;
+  const verified = ok(handoff(repo.root, AUTOPILOT));
+  assert.deepEqual(Object.keys(verified), ['ok', 'outcome', 'approval', 'summary']);
+  assert.deepEqual([verified.outcome, verified.approval], ['PARTIAL', 'UNAPPROVED']);
+  assert.deepEqual(verified.summary, summary);
+  assert.equal(readCorrectionHead(repo.root, manual()).seq, head, 'verify-handoff appends no record');
+}));
+
+test('the partial lineage shapes hand off: a BLOCKED leaf, a revert to the baseline and forks around both', async () => {
+  for (const [label, plan, shape, executionOf2] of [
+    ['a BLOCKED leaf last', PLAN_PARTIAL, 'blocked-leaf', exec(2, 1)],
+    ['A: a fork around the BLOCKED leaf', PLAN_FORK, 'blocked-leaf', exec(2, 1)],
+    ['B: a revert to the baseline, nothing after', PLAN_PARTIAL, 'revert', null],
+    ['C: a revert, then a fork from the pre-cycle tip', PLAN_FORK, 'revert', null],
+  ]) {
+    await withRepo(plan, async (repo) => {
+      await autopilotHandoff(repo, { plan, shape });
+      const summary = summaryOf(repo);
+      assert.equal(summary.stopped[0].execution, executionOf2, label);
+      assert.deepEqual(summary.completed, plan === PLAN_FORK ? ['1', '3'] : ['1'], label);
+      const verified = handoff(repo.root, AUTOPILOT);
+      assert.equal(verified.ok, true, `${label}: ${verified.code}: ${verified.message}`);
+      assert.deepEqual([verified.outcome, verified.approval], ['PARTIAL', 'UNAPPROVED'], label);
+    });
+  }
+});
+
+test('a stopped final hands off UNAPPROVED from its stored ISSUES_FOUND review', () => withRepo(PLAN_PARTIAL, async (repo) => {
+  await autopilotHandoff(repo, { finalVerdict: 'ISSUES_FOUND' });
+  const verified = ok(handoff(repo.root, AUTOPILOT));
+  assert.deepEqual([verified.outcome, verified.approval, verified.summary.final.status], ['PARTIAL', 'UNAPPROVED', 'STOPPED']);
+}));
+
+test('a complete autopilot run hands off APPROVED', () => withRepo(PLAN_ONE, async (repo) => {
+  const { root, put } = repo;
+  put(manifestPath(1), manifest('run-1', 1));
+  ok(openCorrectionRun(root, ap({ drive: 'autopilot' })));
+  await apApprovedTask(repo, '1');
+  projectTaskResults(root, { indexPath: INDEX, states: [exec(1, 1)] });
+  ok(openCorrectionCycle(root, ap({ scope: 'final' })));
+  ok(reserveCorrectionIteration(root, ap({ scope: 'final', iteration: 1, kind: 'initial' })));
+  authorizeRole(root, ap(), { scope: 'final', iteration: 1, role: 'final-reviewer', target: guardState('final', 1) });
+  await checksOf(root, ap(), 'final', 1);
+  setReviewReference(root, { indexPath: INDEX, state: guardState('task-1', 1) });
+  setReviewReference(root, { indexPath: INDEX, state: guardState('final', 1) });
+  apReview(repo, { scope: 'final', iteration: 1, role: 'final-reviewer', state: guardState('final', 1) });
+  ok(projectCorrectionSummary(root, ap({ taskResultIndex: INDEX })));
+  const verified = ok(handoff(root, AUTOPILOT));
+  assert.deepEqual([verified.outcome, verified.approval], ['COMPLETE', 'APPROVED']);
+}));
+
+test('verify-handoff refuses a run that is not terminal, a tampered summary block and an index that does not route', () => withRepo(PLAN_PARTIAL, async (repo) => {
+  const { root, put, bytes } = repo;
+  let pending = null;
+  await autopilotHandoff(repo, { beforeFinalReview: () => { pending = handoff(root, AUTOPILOT); } });
+  assert.equal(pending.code, CORRECTION_GUARD_CODES.HANDOFF_NOT_TERMINAL, pending.message);
+  const index = bytes(INDEX).toString('utf8');
+  put(INDEX, index.replace('"reason": "HUMAN_INTERRUPTED"', '"reason": "EXHAUSTED"'));
+  assert.equal(parseCorrectionSummaryBlock(bytes(INDEX).toString('utf8')).stopped[0].reason, 'EXHAUSTED', 'the tampered block still parses');
+  const tampered = handoff(root, AUTOPILOT);
+  assert.equal(tampered.code, CORRECTION_GUARD_CODES.INTEGRITY, tampered.message);
+  put(INDEX, index.replace(/<!-- steepy-task-results: v2 -->[\s\S]*<!-- \/steepy-task-results -->\n/u, ''));
+  const unrouted = handoff(root, AUTOPILOT);
+  assert.equal(unrouted.code, CORRECTION_GUARD_CODES.HANDOFF_INVALID, unrouted.message);
+  assert.match(unrouted.message, /no reviewed task entries/u);
+  put(INDEX, index);
+  ok(handoff(root, AUTOPILOT));
+  // A drift passes through as the integrity failure it is, and no record is appended.
+  const head = readCorrectionHead(root, manual()).seq;
+  put('source.txt', 'drifted after the run\n');
+  const drifted = handoff(root, AUTOPILOT);
+  assert.deepEqual([drifted.code, drifted.message], [CORRECTION_GUARD_CODES.INTEGRITY, DRIFT]);
+  assert.equal(readCorrectionHead(root, manual()).seq, head);
+}));
+
+test('verify-handoff binds the autopilot actor and the reviewer handoff', () => withRepo(PLAN_PARTIAL, async (repo) => {
+  const { root, put } = repo;
+  await autopilotHandoff(repo);
+  assert.equal(handoff(root).code, CORRECTION_GUARD_CODES.ACTOR_INVALID);
+  assert.equal(handoff(root, { runId: 'run-1', attempt: 2 }).code, CORRECTION_GUARD_CODES.ACTOR_INVALID);
+  assert.equal(handoff(root, { ...AUTOPILOT, indexPath: `${RUN}/other-index.md` }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  assert.throws(() => handoff(root, { ...AUTOPILOT, extra: true }), TypeError);
+  // An approval the final review no longer binds.
+  put(reviewOf('1'), 'edited after the approval\n');
+  const reviewed = handoff(root, AUTOPILOT);
+  assert.equal(reviewed.code, CORRECTION_GUARD_CODES.HANDOFF_INVALID, reviewed.message);
+}));
+
+test('an execution or a review gate the guard never authorized is an unauthorized dispatch (exit 3)', async () => {
+  // Task 1's first execution ran outside the guard; its retry is the authorized writer.
+  await withRepo(PLAN_PARTIAL, async (repo) => {
+    const { root, put } = repo;
+    put(manifestPath(1), manifest('run-1', 1));
+    ok(openCorrectionRun(root, ap({ drive: 'autopilot' })));
+    ok(openCorrectionCycle(root, ap({ scope: 'task-1' })));
+    ok(reserveCorrectionIteration(root, ap({ scope: 'task-1', iteration: 1, kind: 'initial' })));
+    authorizeRole(root, ap(), { scope: 'task-1', iteration: 1, role: 'writer', target: exec(1, 2) });
+    beginTask(root, exec(1, 1), { ...AUTOPILOT, task: '1', execution: 1, role: 'implementer', report: reportOf('1'), planPath: PLAN });
+    put(reportOf('1'), 'Blocked outside the guard.\n');
+    recordTaskResult(root, exec(1, 1), `status: BLOCKED\nartifact: ${reportOf('1')}\nsignals: none\n`);
+    beginTask(root, exec(1, 2), { ...AUTOPILOT, task: '1', execution: 2, role: 'retry', report: reportOf('1'), planPath: PLAN,
+      previousState: exec(1, 1), parentState: exec(1, 1) });
+    put('task-1.txt', 'task 1 delivered\n');
+    put(reportOf('1'), 'Done after the retry.\n');
+    recordTaskResult(root, exec(1, 2), `status: DONE\nartifact: ${reportOf('1')}\nsignals: none\n`);
+    ok(recordCorrectionWriter(root, ap({ scope: 'task-1', iteration: 1, execution: exec(1, 2) })));
+    await checksOf(root, ap(), 'task-1', 1);
+    authorizeRole(root, ap(), { scope: 'task-1', iteration: 1, role: 'task-reviewer', target: guardState('task-1', 1) });
+    apReview(repo, { scope: 'task-1', iteration: 1, role: 'task-reviewer', state: guardState('task-1', 1), task: '1', execution: exec(1, 2) });
+    ok(openCorrectionCycle(root, ap({ scope: 'task-2' })));
+    ok(reserveCorrectionIteration(root, ap({ scope: 'task-2', iteration: 1, kind: 'initial' })));
+    ok(recordCorrectionInterruption(root, ap({ scope: 'task-2', iteration: 1, reason: 'the harness crashed' })));
+    stopAndIsolate(root, ap(), 'task-2', 'baseline-equal');
+    projectTaskResults(root, { indexPath: INDEX, states: [exec(1, 2)] });
+    ok(openCorrectionCycle(root, ap({ scope: 'final' })));
+    ok(projectCorrectionSummary(root, ap({ taskResultIndex: INDEX })));
+    ok(reserveCorrectionIteration(root, ap({ scope: 'final', iteration: 1, kind: 'initial' })));
+    authorizeRole(root, ap(), { scope: 'final', iteration: 1, role: 'final-reviewer', target: guardState('final', 1) });
+    await checksOf(root, ap(), 'final', 1);
+    setReviewReference(root, { indexPath: INDEX, state: guardState('task-1', 1) });
+    setReviewReference(root, { indexPath: INDEX, state: guardState('final', 1) });
+    apReview(repo, { scope: 'final', iteration: 1, role: 'final-reviewer', state: guardState('final', 1) });
+    ok(projectCorrectionSummary(root, ap({ taskResultIndex: INDEX })));
+    const refused = handoff(root, AUTOPILOT);
+    assert.equal(refused.code, CORRECTION_GUARD_CODES.UNAUTHORIZED_DISPATCH, refused.message);
+    assert.deepEqual(refused.identity, { execution: exec(1, 1) });
+    const result = cli(root, ['--action', 'verify-handoff', '--task-result-index', INDEX, '--run-id', 'run-1', '--attempt', '1']);
+    assert.equal(result.status, 3);
+    assert.equal(result.json.code, CORRECTION_GUARD_CODES.UNAUTHORIZED_DISPATCH);
+  });
+  // The final approval the index names was reviewed outside the guard.
+  await withRepo(PLAN_PARTIAL, async (repo) => {
+    const { root, put } = repo;
+    const outside = guardState('final', 2);
+    await autopilotHandoff(repo);
+    setReviewReference(root, { indexPath: INDEX, state: outside, previousState: guardState('final', 1) });
+    beginReview(root, outside, { ...AUTOPILOT, iteration: 2, task: 'final', report: FINAL_REVIEW, issues: FINAL_ISSUES, plan: PLAN, index: INDEX });
+    put(FINAL_REVIEW, 'approved outside the guard\n');
+    assert.equal(checkReview(root, outside, `status: APPROVED\nartifact: ${FINAL_REVIEW}\nsignals: none\n`).accepted, true);
+    const refused = handoff(root, AUTOPILOT);
+    assert.equal(refused.code, CORRECTION_GUARD_CODES.UNAUTHORIZED_DISPATCH, refused.message);
+    assert.deepEqual(refused.identity, { reviewState: outside });
+  });
+});
+
+test('a final-scope fix after the task approval invalidates the stale approval at the handoff', () => withRepo(PLAN_PARTIAL, async (repo) => {
+  const { root, put } = repo;
+  await autopilotHandoff(repo, { finalReview: false });
+  // The final review finds an issue in Task 1; the final correction fixes it from the retained lineage.
+  apReview(repo, { scope: 'final', iteration: 1, role: 'final-reviewer', state: guardState('final', 1), verdict: 'ISSUES_FOUND',
+    defects: [defectEntry()] });
+  retryForIssue(repo, ap(), 'final', FINAL_ISSUES, 'SC1');
+  apWriter(repo, { scope: 'final', iteration: 2, task: '1', n: 2, role: 'fix', previous: exec(1, 1), parent: exec(2, 1),
+    ownerTask: '1', affectedCriteria: ['SC1'], work: () => put('task-1.txt', 'task 1 fixed by the final correction\n') });
+  await checksOf(root, ap(), 'final', 2);
+  authorizeRole(root, ap(), { scope: 'final', iteration: 2, role: 'task-reviewer', target: guardState('task-1', 2), ownerTask: '1' });
+  apReview(repo, { scope: 'final', iteration: 2, role: 'task-reviewer', state: guardState('task-1', 2), task: '1', execution: exec(1, 2), ownerTask: '1' });
+  projectTaskResults(root, { indexPath: INDEX, states: [exec(1, 2)] });
+  setReviewReference(root, { indexPath: INDEX, state: guardState('task-1', 2), previousState: guardState('task-1', 1) });
+  authorizeRole(root, ap(), { scope: 'final', iteration: 2, role: 'final-reviewer', target: guardState('final', 2) });
+  setReviewReference(root, { indexPath: INDEX, state: guardState('final', 2), previousState: guardState('final', 1) });
+  apReview(repo, { scope: 'final', iteration: 2, role: 'final-reviewer', state: guardState('final', 2) });
+  assert.equal(nextAction(root).action, 'terminal');
+  ok(projectCorrectionSummary(root, ap({ taskResultIndex: INDEX })));
+  ok(handoff(root, AUTOPILOT));
+  // Pointing Task 1 back at its stale approval of execution 1 no longer verifies.
+  const index = repo.bytes(INDEX).toString('utf8');
+  put(INDEX, index.replace(`Reviewer gate Task 1: ${guardState('task-1', 2)}`, `Reviewer gate Task 1: ${guardState('task-1', 1)}`));
+  const stale = handoff(root, AUTOPILOT);
+  assert.equal(stale.code, CORRECTION_GUARD_CODES.HANDOFF_INVALID, stale.message);
+  // The stale review's own artifact was rewritten by the final-scope task review, so it proves nothing now.
+  assert.equal(stale.message, 'the reviewer handoff does not verify: invalid approval evidence for Task 1');
+}));
+
+test('the verify-handoff CLI prints the handoff and reuses an earlier final approval only when named', () => withRepo(PLAN_PARTIAL, async (repo) => {
+  const { root, put } = repo;
+  await autopilotHandoff(repo);
+  const args = ['--action', 'verify-handoff', '--task-result-index', INDEX];
+  const verified = cli(root, [...args, '--run-id', 'run-1', '--attempt', '1']);
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.deepEqual([verified.json.ok, verified.json.outcome, verified.json.approval], [true, 'PARTIAL', 'UNAPPROVED']);
+  const usage = cli(root, ['--action', 'verify-handoff']);
+  assert.deepEqual([usage.status, usage.json.code], [2, CORRECTION_GUARD_CODES.USAGE]);
+  // A later attempt hands off the attempt-1 final approval only through --resume-final naming its state.
+  put(manifestPath(2), manifest('run-2', 2));
+  const later = [...args, '--run-id', 'run-2', '--attempt', '2'];
+  const unnamed = cli(root, later);
+  assert.deepEqual([unnamed.status, unnamed.json.code], [1, CORRECTION_GUARD_CODES.HANDOFF_INVALID]);
+  const resumed = cli(root, [...later, '--resume-final', guardState('final', 1)]);
+  assert.equal(resumed.status, 0, resumed.stderr);
+  assert.equal(resumed.json.outcome, 'PARTIAL');
+  const misnamed = cli(root, [...later, '--resume-final', guardState('final', 2)]);
+  assert.deepEqual([misnamed.status, misnamed.json.code], [1, CORRECTION_GUARD_CODES.INPUT_INVALID]);
+  const pendingIndex = repo.bytes(INDEX).toString('utf8').replace('"outcome": "PARTIAL"', '"outcome": "PENDING"');
+  put(INDEX, pendingIndex);
+  assert.equal(cli(root, [...args, '--run-id', 'run-1', '--attempt', '1']).status, 3, 'a block that is not the run summary');
+}));
+
+// The manual writer of `scope` iteration `iteration` writing `task`'s report, with `work` inside it.
+function mWriter({ root, put }, { scope, iteration, task, work, ownerTask, affectedCriteria }) {
+  authorizeRole(root, manual(), { scope, iteration, role: 'writer', target: reportOf(task), ownerTask, affectedCriteria });
+  work?.();
+  put(reportOf(task), `Report of ${scope} iteration ${iteration}\n`);
+  return ok(recordCorrectionWriter(root, manual({ scope, iteration, response: writerResponse({ artifact: reportOf(task) }) })));
+}
+
+// The manual `role` review of `scope` iteration `iteration` with `verdict`, authorized here unless `authorized`.
+function mReview({ root, put }, { scope, iteration, role, task, verdict = 'APPROVED', defects = [], ownerTask, authorized = false }) {
+  const [report, issues] = role === 'final-reviewer' ? [FINAL_REVIEW, FINAL_ISSUES] : [reviewOf(task), issuesOf(task)];
+  if (!authorized) authorizeRole(root, manual(), { scope, iteration, role, target: report, ownerTask });
+  put(report, `${verdict} by the ${role} of ${scope} iteration ${iteration}\n`);
+  if (verdict === 'ISSUES_FOUND') put(issues, `- the issue found in ${scope} iteration ${iteration}\n`);
+  const path = defectsOf(scope, iteration, role);
+  put(path, defectsBody({ scope, iteration, verdict, defects }));
+  const recorded = ok(recordCorrectionReview(root, manual({ scope, iteration, role, defects: path,
+    response: reviewResponse({ status: verdict, artifact: verdict === 'ISSUES_FOUND' ? issues : report }),
+    ...(ownerTask === undefined ? {} : { ownerTask }) })));
+  assert.equal(recorded.status, verdict);
+}
+
+async function mApprovedTask(repo, task) {
+  const scope = `task-${task}`;
+  ok(openCorrectionCycle(repo.root, manual({ scope })));
+  ok(reserveCorrectionIteration(repo.root, manual({ scope, iteration: 1, kind: 'initial' })));
+  mWriter(repo, { scope, iteration: 1, task, work: () => repo.put(`task-${task}.txt`, `task ${task} delivered\n`) });
+  await checksOf(repo.root, manual(), scope, 1);
+  mReview(repo, { scope, iteration: 1, role: 'task-reviewer', task });
+}
+
+const bullet = (task) => `- Task ${task}: DONE; artifact: ${reportOf(task)}; changed-paths: task-${task}.txt; signals: none\n`;
+
+// A manual run with Task 1 approved and its final cycle open on the manual result index, whose final
+// iteration 1 records the final review with `verdict`.
+async function manualFinalReviewed(repo, verdict) {
+  const { root, put } = repo;
+  ok(openCorrectionRun(root, manual({ drive: 'manual' })));
+  await mApprovedTask(repo, '1');
+  ok(openCorrectionCycle(root, manual({ scope: 'final' })));
+  put(INDEX, `# Results\n\n${bullet('1')}`);
+  ok(projectCorrectionSummary(root, manual({ taskResultIndex: INDEX })));
+  ok(reserveCorrectionIteration(root, manual({ scope: 'final', iteration: 1, kind: 'initial' })));
+  authorizeRole(root, manual(), { scope: 'final', iteration: 1, role: 'final-reviewer', target: FINAL_REVIEW });
+  await checksOf(root, manual(), 'final', 1);
+  mReview(repo, { scope: 'final', iteration: 1, role: 'final-reviewer', verdict, authorized: true,
+    defects: verdict === 'ISSUES_FOUND' ? [defectEntry()] : [] });
+}
+
+test('a partial manual handoff verifies its recorded evidence and source', () => withRepo(PLAN_PARTIAL, async (repo) => {
+  const { root, put } = repo;
+  ok(openCorrectionRun(root, manual({ drive: 'manual' })));
+  await mApprovedTask(repo, '1');
+  ok(openCorrectionCycle(root, manual({ scope: 'task-2' })));
+  ok(reserveCorrectionIteration(root, manual({ scope: 'task-2', iteration: 1, kind: 'initial' })));
+  mWriter(repo, { scope: 'task-2', iteration: 1, task: '2', work: () => put('task-2.txt', 'task 2 attempt\n') });
+  await checksOf(root, manual(), 'task-2', 1);
+  mReview(repo, { scope: 'task-2', iteration: 1, role: 'task-reviewer', task: '2', verdict: 'ISSUES_FOUND', defects: [defectEntry({ criterion: 'SC2' })] });
+  stopAndIsolate(root, manual(), 'task-2', 'retained-best');
+  ok(openCorrectionCycle(root, manual({ scope: 'final' })));
+  put(INDEX, `# Results\n\n${bullet('1')}`);
+  ok(projectCorrectionSummary(root, manual({ taskResultIndex: INDEX })));
+  ok(reserveCorrectionIteration(root, manual({ scope: 'final', iteration: 1, kind: 'initial' })));
+  authorizeRole(root, manual(), { scope: 'final', iteration: 1, role: 'final-reviewer', target: FINAL_REVIEW });
+  await checksOf(root, manual(), 'final', 1);
+  mReview(repo, { scope: 'final', iteration: 1, role: 'final-reviewer', authorized: true });
+  ok(projectCorrectionSummary(root, manual({ taskResultIndex: INDEX })));
+  const summary = summaryOf(repo);
+  assert.deepEqual([summary.stopped[0].execution, summary.blocked], [null, [{ task: '3', causes: ['2'] }]]);
+  const verified = ok(handoff(root));
+  assert.deepEqual([verified.outcome, verified.approval], ['PARTIAL', 'UNAPPROVED']);
+  assert.equal(handoff(root, AUTOPILOT).code, CORRECTION_GUARD_CODES.ACTOR_INVALID, 'a manual drive takes no run id or attempt');
+  // A recorded evidence file edited after the run is an integrity failure.
+  put(reviewOf('1'), 'edited after the approval\n');
+  const tampered = cli(root, ['--action', 'verify-handoff', '--task-result-index', INDEX]);
+  assert.equal(tampered.status, 3);
+  assert.deepEqual([tampered.json.code, tampered.json.identity.path], [CORRECTION_GUARD_CODES.INTEGRITY, reviewOf('1')]);
+}));
+
+test('a manual final-scope correction hands off COMPLETE: the latest recording of each path governs', () => withRepo(PLAN_ONE, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  await manualFinalReviewed(repo, 'ISSUES_FOUND');
+  retryForIssue(repo, manual(), 'final', FINAL_ISSUES, 'SC1');
+  mWriter(repo, { scope: 'final', iteration: 2, task: '1', ownerTask: '1', affectedCriteria: ['SC1'],
+    work: () => put('task-1.txt', 'task 1 fixed by the final correction\n') });
+  await checksOf(root, manual(), 'final', 2);
+  mReview(repo, { scope: 'final', iteration: 2, role: 'task-reviewer', task: '1', ownerTask: '1' });
+  mReview(repo, { scope: 'final', iteration: 2, role: 'final-reviewer' });
+  ok(projectCorrectionSummary(root, manual({ taskResultIndex: INDEX })));
+  const verified = ok(handoff(root));
+  assert.deepEqual([verified.outcome, verified.approval], ['COMPLETE', 'APPROVED']);
+  // Task 1's own approval recorded the report and review the final correction rewrote: superseded, not stale.
+  const taskWriter = json(recordPath(5)).record;
+  assert.equal(taskWriter.kind, 'WRITER_RECORDED');
+  assert.notEqual(taskWriter.evidence[0].digest, sha256(bytes(reportOf('1'))));
+  // The superseding recording is checked: its file edited after the fact exits 3.
+  put(reportOf('1'), 'edited after the final correction\n');
+  const tampered = cli(root, ['--action', 'verify-handoff', '--task-result-index', INDEX]);
+  assert.equal(tampered.status, 3);
+  assert.deepEqual([tampered.json.code, tampered.json.identity.path], [CORRECTION_GUARD_CODES.INTEGRITY, reportOf('1')]);
+}));
+
+test('a manual stopped final whose correction left an unchecked change is an integrity failure', () => withRepo(PLAN_ONE, async (repo) => {
+  const { root, put } = repo;
+  await manualFinalReviewed(repo, 'ISSUES_FOUND');
+  retryForIssue(repo, manual(), 'final', FINAL_ISSUES, 'SC1');
+  mWriter(repo, { scope: 'final', iteration: 2, task: '1', ownerTask: '1', affectedCriteria: ['SC1'],
+    work: () => put('task-1.txt', 'an unchecked final correction\n') });
+  ok(stopCorrectionCycle(root, manual({ scope: 'final', reason: 'HUMAN_INTERRUPTED', note: 'stopped before the checks' })));
+  assert.equal(nextAction(root).action, 'terminal');
+  ok(projectCorrectionSummary(root, manual({ taskResultIndex: INDEX })));
+  assert.equal(summaryOf(repo).final.status, 'STOPPED');
+  const refused = handoff(root);
+  assert.equal(refused.code, CORRECTION_GUARD_CODES.INTEGRITY, refused.message);
+  assert.match(refused.message, /checks observation/u);
 }));

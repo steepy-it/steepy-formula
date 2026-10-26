@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { beginReview, checkReview, inspectReview, parseReviewerResponse, verifyImplementReviews, captureRetainedApproval, setReviewReference } from '../scripts/reviewer-response.mjs';
 import { beginTask, recordTaskResult, projectTaskResults } from '../scripts/task-results.mjs';
+import { formatCorrectionSummaryBlock } from '../scripts/correction-state.mjs';
 
 function fixture(fn) {
   const root = mkdtempSync(join(tmpdir(), 'steepy-reviewer-response-'));
@@ -505,4 +506,129 @@ test('reference binding creates exactly one reference and preserves CRLF on repl
   const text = readFileSync(join(root, indexPath), 'utf8');
   assert.ok(text.includes(`Reviewer gate final: ${next}\r\n`));
   assert.equal(text.replace(/\r\n/g, '').includes('\n'), false);
+}));
+
+// --- partial handoff ---------------------------------------------------------------------------------
+
+const partialPlan = '# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n'
+  + '## Task 5\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC2\n\n'
+  + '## Task 6\n- **Surface:** scripts\n- **Complexity:** mechanical\n- **Dependencies:** 5\n- **Success criteria:** SC3\n';
+// The correction summary of the partial run: Task 4 completed, Task 5 stopped retaining `execution`, Task 6
+// blocked by it, and the final in `finalStatus` (null while the final cycle is due).
+function partialSummary(outcome, execution, finalStatus = outcome === 'PENDING' ? null : 'APPROVED') {
+  return {
+    version: 1, outcome, approval: 'UNAPPROVED', planDigest: 'a'.repeat(64), completed: ['4'],
+    stopped: [{ task: '5', cycle: 1, reason: 'HUMAN_INTERRUPTED', iterations: { reserved: 1, diagnosis: 0 }, unresolvedDefects: [],
+      comparison: [], bestCandidate: { iteration: 1, observation: 'b'.repeat(64), snapshot: null }, execution, nextRemedy: null }],
+    blocked: [{ task: '6', causes: ['5'] }],
+    criteria: outcome === 'PENDING' ? { SC2: 'failed', SC3: 'blocked' } : { SC1: finalStatus === 'APPROVED' ? 'satisfied' : 'failed', SC2: 'failed', SC3: 'blocked' },
+    final: finalStatus === null ? null : { cycle: 1, status: finalStatus, reason: finalStatus === 'APPROVED' ? 'APPROVED' : 'HUMAN_INTERRUPTED',
+      iterations: { reserved: 1, diagnosis: 0 }, approvedObservation: finalStatus === 'APPROVED' ? 'b'.repeat(64) : null },
+    cycles: [], halt: null,
+  };
+}
+
+// Task 4 is implemented and approved, then Task 5 runs and stops, retaining its execution (the source keeps
+// its change), and Task 6 is blocked. The index carries the Task 4 receipt and the PENDING summary block.
+function partialFixture(fn) {
+  fixture((ctx) => {
+    const { root, dir, config, state, put, report, envelope, record } = ctx;
+    mkdirSync(join(root, dir, 'context'), { recursive: true });
+    const planPath = '.formula/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
+    put(planPath, partialPlan);
+    put(`${dir}/context/phase-implement-attempt-3.json`, JSON.stringify({ runId: config.runId, attempt: 3, scope: { phase: 'implement', role: 'implement' }, contract: { taskResultProtocol: 2 } }));
+    const e4 = record();
+    beginReview(root, state, { ...config, execution: e4 }); put(report, 'Approved.\n'); checkReview(root, state, envelope());
+    const e5 = `${dir}/task-5-execution-1`, report5 = `${dir}/task-5-report.md`;
+    beginTask(root, e5, { runId: config.runId, attempt: 3, task: '5', execution: 1, role: 'implementer', report: report5, planPath, parentState: e4 });
+    put('task-five.js', 'retained work\n'); put(report5, 'Task 5 report.\n');
+    assert.equal(recordTaskResult(root, e5, `status: DONE\nartifact: ${report5}\nsignals: none\n`).accepted, true);
+    const finalState = `${dir}/final-review-guard-attempt-3-iteration-1`;
+    const finalConfig = { ...config, task: 'final', iteration: 1, report: `${dir}/final-review.md`, issues: `${dir}/final-review-issues.md`, plan: planPath, index: indexPath };
+    put(indexPath, `# Results\nReviewer gate Task 4: ${state}\nReviewer gate final: ${finalState}\n`);
+    projectTaskResults(root, { indexPath, states: [e4] });
+    const receipts = readFileSync(join(root, indexPath), 'utf8');
+    // Projects `summary` as the index's one summary block, keeping every other line.
+    const project = (summary) => {
+      const block = formatCorrectionSummaryBlock(summary);
+      const current = readFileSync(join(root, indexPath), 'utf8');
+      const existing = /<!-- steepy-correction-summary: v1 -->[\s\S]*<!-- \/steepy-correction-summary -->/.exec(current);
+      put(indexPath, existing === null ? `${current}\n${block}\n` : current.replace(existing[0], () => block));
+    };
+    project(partialSummary('PENDING', e5));
+    const verify = (extra = {}) => verifyImplementReviews(root, { planPath, indexPath, runId: config.runId, attempt: 3, ...extra });
+    fn({ ...ctx, planPath, indexPath, receipts, project, finalState, finalConfig, verify, e4, e5 });
+  });
+}
+
+test('a partial handoff begins its final review on the PENDING block and verifies on the terminal one', () => partialFixture(({ root, put, indexPath, receipts, project, finalState, finalConfig, verify, e5 }) => {
+  put(indexPath, receipts);
+  assert.throws(() => beginReview(root, finalState, finalConfig), /task result index omits plan task ids: 5, 6/);
+  project(partialSummary('PENDING', e5));
+  beginReview(root, finalState, finalConfig); put(finalConfig.report, 'Approved delivered work.\n');
+  assert.equal(checkReview(root, finalState, `status: APPROVED\nartifact: ${finalConfig.report}\nsignals: review:clean\n`).accepted, true);
+  project(partialSummary('PARTIAL', e5));
+  assert.equal(verify().status, 'APPROVED', 'the gate approves the delivered work; the summary keeps the run unapproved');
+  // The retained execution is bound: naming another execution, or none, changes the lineage proof.
+  project(partialSummary('PARTIAL', null));
+  assert.throws(() => verify(), /latest task source snapshot drift/);
+}));
+
+test('a reviewer gate for an omitted task is an unknown task reviewer gate', () => partialFixture(({ root, put, indexPath, finalState, finalConfig, verify, dir }) => {
+  beginReview(root, finalState, finalConfig); put(finalConfig.report, 'Approved delivered work.\n');
+  checkReview(root, finalState, `status: APPROVED\nartifact: ${finalConfig.report}\nsignals: review:clean\n`);
+  const index = readFileSync(join(root, indexPath), 'utf8');
+  put(indexPath, `${index}Reviewer gate Task 5: ${dir}/task-5-review-guard-attempt-3-iteration-1\n`);
+  assert.throws(() => verify(), /unknown task reviewer gate/);
+}));
+
+test('a stopped final yields UNAPPROVED from its stored ISSUES_FOUND or BLOCKED review, never from an approval', () => partialFixture(({ root, put, indexPath, project, finalState, finalConfig, verify, e5 }) => {
+  beginReview(root, finalState, finalConfig);
+  put(finalConfig.report, 'Issues Found.\n'); put(finalConfig.issues, 'The delivered work lacks a regression test.\n');
+  assert.equal(checkReview(root, finalState, `status: ISSUES_FOUND\nartifact: ${finalConfig.issues}\nsignals: review:critical\n`).accepted, true);
+  project(partialSummary('PARTIAL', e5, 'STOPPED'));
+  assert.deepEqual(verify(), { state: finalState, runId: 'test-run', attempt: 3, status: 'UNAPPROVED' });
+  // A drifted final review is not its stored result.
+  put(finalConfig.issues, 'edited after the review\n');
+  assert.throws(() => verify(), /stopped final reviewer gate/);
+  put(finalConfig.issues, 'The delivered work lacks a regression test.\n');
+  // A BLOCKED final review stands for a stopped final; an APPROVED one never does.
+  const blocked = finalState.replace('iteration-1', 'iteration-2');
+  setReviewReference(root, { indexPath, state: blocked, previousState: finalState });
+  beginReview(root, blocked, { ...finalConfig, iteration: 2 }); put(finalConfig.report, 'Blocked: the diff is missing.\n');
+  assert.equal(checkReview(root, blocked, `status: BLOCKED\nartifact: ${finalConfig.report}\nsignals: none\n`).status, 'BLOCKED');
+  assert.equal(verify().status, 'UNAPPROVED');
+  const approved = finalState.replace('iteration-1', 'iteration-3');
+  setReviewReference(root, { indexPath, state: approved, previousState: blocked });
+  beginReview(root, approved, { ...finalConfig, iteration: 3 }); put(finalConfig.report, 'Approved.\n');
+  assert.equal(checkReview(root, approved, `status: APPROVED\nartifact: ${finalConfig.report}\nsignals: review:clean\n`).accepted, true);
+  assert.throws(() => verify(), /stopped final reviewer gate/);
+  project(partialSummary('PARTIAL', e5, 'APPROVED'));
+  assert.equal(verify().status, 'APPROVED');
+}));
+
+test('a final fix after the task approval invalidates the stale approval in a partial handoff', () => partialFixture(({ root, put, config, state, report, envelope, planPath, indexPath, project, finalState, finalConfig, verify, dir, e4, e5 }) => {
+  beginReview(root, finalState, finalConfig);
+  put(finalConfig.report, 'Issues Found.\n'); put(finalConfig.issues, 'Task 4 lacks a regression test.\n');
+  checkReview(root, finalState, `status: ISSUES_FOUND\nartifact: ${finalConfig.issues}\nsignals: review:critical\n`);
+  // The final-scope fix of Task 4 continues the lineage from the retained Task 5 execution.
+  const fix = `${dir}/task-4-execution-2`, taskReport = `${dir}/task-4-report.md`;
+  beginTask(root, fix, { runId: config.runId, attempt: 3, task: '4', execution: 2, role: 'fix', report: taskReport, planPath, previousState: e4, parentState: e5 });
+  put('code.js', 'fixed by the final correction\n'); put(taskReport, 'Fixed report.\n');
+  assert.equal(recordTaskResult(root, fix, `status: DONE\nartifact: ${taskReport}\nsignals: none\n`).accepted, true);
+  projectTaskResults(root, { indexPath, states: [fix] });
+  const next = finalState.replace('iteration-1', 'iteration-2');
+  setReviewReference(root, { indexPath, state: next, previousState: finalState });
+  assert.throws(() => beginReview(root, next, { ...finalConfig, iteration: 2 }), /does not approve current execution for Task 4/);
+  const taskState = state.replace('iteration-2', 'iteration-3');
+  beginReview(root, taskState, { ...config, iteration: 3, execution: fix }); put(report, 'Approved the fix.\n');
+  assert.equal(checkReview(root, taskState, envelope()).accepted, true);
+  setReviewReference(root, { indexPath, state: taskState, previousState: state });
+  beginReview(root, next, { ...finalConfig, iteration: 2 }); put(finalConfig.report, 'Approved.\n');
+  checkReview(root, next, `status: APPROVED\nartifact: ${finalConfig.report}\nsignals: review:clean\n`);
+  project(partialSummary('PARTIAL', e5));
+  assert.equal(verify().status, 'APPROVED');
+  // Altered final-fix contents cannot reuse the approval.
+  put(taskReport, 'Altered after the approval.\n');
+  assert.throws(() => verify(), /task report drift/);
 }));

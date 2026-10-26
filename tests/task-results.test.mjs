@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
+import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { beginTask, recordTaskResult, inspectTaskResult, projectTaskResults, verifyTaskResults, parseTaskResultProjection } from '../scripts/task-results.mjs';
 
@@ -308,3 +309,99 @@ test('a branch switch blocks recording without rewriting source and a missing re
     assert.equal(JSON.parse(readFileSync(join(root, `${state}-result.json`))).response, response);
   });
 });
+
+// --- omitted executions: the stopped tasks of a partial handoff -------------------------------------
+
+const execution = (task, n) => `${dir}/task-${task}-execution-${n}`;
+const report = (task) => `${dir}/task-${task}-report.md`;
+// Begins and records execution `n` of `task`, running `work` inside it.
+function executed(root, put, task, n, { role = 'implementer', status = 'DONE', previous, parent, work = () => {} } = {}) {
+  beginTask(root, execution(task, n), { ...config, task, execution: n, role, report: report(task),
+    ...(previous ? { previousState: previous } : {}), ...(parent ? { parentState: parent } : {}) });
+  work();
+  put(report(task), `report ${task}.${n}\n`);
+  return recordTaskResult(root, execution(task, n), response.replace('DONE', status).replace(config.report, report(task)));
+}
+const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+
+test('an omitted execution covers a stopped task on the lineage and binds its proof into the digest', () => fixture(({ root, put }) => {
+  executed(root, put, '1', 1, { work: () => put('one', '1') });
+  const stopped = executed(root, put, '2', 1, { parent: execution('1', 1), work: () => put('two', '2') });
+  projectTaskResults(root, { indexPath, states: [execution('1', 1)] });
+  assert.throws(() => verifyTaskResults(root, { indexPath, expectedTasks: ['1'] }), /latest task source snapshot drift/,
+    'without the omitted execution the verified lineage ends before the current source');
+  const verified = verifyTaskResults(root, { indexPath, expectedTasks: ['1'], omittedExecutions: [{ task: '2', state: execution('2', 1) }] });
+  assert.deepEqual(Object.keys(verified), ['entries', 'proofs', 'omitted', 'executions', 'digest']);
+  assert.deepEqual(verified.executions.map(({ state: path }) => path), [execution('1', 1), execution('2', 1)]);
+  assert.deepEqual(verified.omitted, [{ task: '2', state: execution('2', 1), digest: stopped.digest, sequence: 2, config: stopped.config }]);
+  assert.equal(verified.digest, sha256(JSON.stringify({ entries: verified.entries, proofs: verified.proofs, omitted: verified.omitted })));
+}));
+
+test('an empty omitted list keeps every output byte-identical', () => fixture(({ root, put }) => {
+  executed(root, put, '1', 1, { work: () => put('one', '1') });
+  projectTaskResults(root, { indexPath, states: [execution('1', 1)] });
+  const plain = verifyTaskResults(root, { indexPath, expectedTasks: ['1'] });
+  const empty = verifyTaskResults(root, { indexPath, expectedTasks: ['1'], omittedExecutions: [] });
+  assert.equal(JSON.stringify(empty), JSON.stringify(plain));
+  assert.deepEqual(Object.keys(empty), ['entries', 'proofs', 'executions', 'digest']);
+  assert.equal(empty.digest, sha256(JSON.stringify({ entries: plain.entries, proofs: plain.proofs })));
+}));
+
+test('a retained omitted execution covers a fork around its non-accepted leaf; the leaf itself does not', () => fixture(({ root, put }) => {
+  executed(root, put, '1', 1, { work: () => put('one', '1') });
+  executed(root, put, '2', 1, { parent: execution('1', 1), work: () => put('two', '2') });
+  assert.equal(executed(root, put, '2', 2, { role: 'fix', status: 'BLOCKED', previous: execution('2', 1), parent: execution('2', 1) }).status, 'BLOCKED');
+  executed(root, put, '3', 1, { parent: execution('2', 1), work: () => put('three', '3') });
+  projectTaskResults(root, { indexPath, states: [execution('1', 1), execution('3', 1)] });
+  const verified = verifyTaskResults(root, { indexPath, omittedExecutions: [{ task: '2', state: execution('2', 1) }] });
+  assert.deepEqual(verified.executions.map(({ state: path }) => path), [execution('1', 1), execution('2', 1), execution('3', 1)]);
+  assert.throws(() => verifyTaskResults(root, { indexPath, omittedExecutions: [{ task: '2', state: execution('2', 2) }] }),
+    /task execution chain coverage mismatch/);
+  assert.throws(() => verifyTaskResults(root, { indexPath }), /task execution chain coverage mismatch/, 'an undeclared task on the lineage');
+}));
+
+test('a non-accepted omitted execution that ends the lineage is verified against the current source', () => fixture(({ root, put }) => {
+  executed(root, put, '1', 1, { work: () => put('one', '1') });
+  executed(root, put, '2', 1, { status: 'BLOCKED', parent: execution('1', 1) });
+  projectTaskResults(root, { indexPath, states: [execution('1', 1)] });
+  const omittedExecutions = [{ task: '2', state: execution('2', 1) }];
+  assert.equal(verifyTaskResults(root, { indexPath, omittedExecutions }).omitted[0].sequence, 2);
+  put('drift', 'unattributed');
+  assert.throws(() => verifyTaskResults(root, { indexPath, omittedExecutions }), /latest task source snapshot drift/);
+  assert.equal(verifyTaskResults(root, { indexPath, omittedExecutions, checkCurrent: false }).executions.length, 2);
+}));
+
+test('omitted executions are closed, disjoint, confined to the index directory and recorded', () => fixture(({ root, put }) => {
+  executed(root, put, '1', 1, { work: () => put('one', '1') });
+  executed(root, put, '2', 1, { parent: execution('1', 1), work: () => put('two', '2') });
+  beginTask(root, execution('3', 1), { ...config, task: '3', report: report('3'), parentState: execution('2', 1) });
+  projectTaskResults(root, { indexPath, states: [execution('1', 1)] });
+  const omitted = { task: '2', state: execution('2', 1) };
+  for (const [label, omittedExecutions, pattern] of [
+    ['not an array', omitted, /invalid omitted task executions/],
+    ['an unknown key', [{ ...omitted, reason: 'stopped' }], /invalid omitted task execution schema/],
+    ['an invalid task id', [{ ...omitted, task: '02' }], /invalid omitted task execution/],
+    ['a task with an index result', [{ task: '1', state: execution('1', 1) }], /overlap/],
+    ['the same task twice', [omitted, omitted], /overlap/],
+    ['another task\'s state', [{ task: '3', state: execution('2', 1) }], /correlation mismatch/],
+    ['another directory', [{ task: '2', state: '.formula/work/tasks/other/task-2-execution-1' }], /outside index directory/],
+    ['an execution without a recorded result', [{ task: '3', state: execution('3', 1) }], /no recorded result/],
+  ]) {
+    assert.throws(() => verifyTaskResults(root, { indexPath, omittedExecutions }), pattern, label);
+  }
+  assert.equal(verifyTaskResults(root, { indexPath, omittedExecutions: [omitted] }).omitted.length, 1);
+}));
+
+test('the verify CLI takes the omitted executions as JSON', () => fixture(({ root, put }) => {
+  executed(root, put, '1', 1, { work: () => put('one', '1') });
+  executed(root, put, '2', 1, { parent: execution('1', 1), work: () => put('two', '2') });
+  projectTaskResults(root, { indexPath, states: [execution('1', 1)] });
+  const cli = (...args) => spawnSync(process.execPath, [new URL('../scripts/task-results.mjs', import.meta.url).pathname,
+    '--repo-root', root, '--action', 'verify', '--task-result-index', indexPath, ...args], { encoding: 'utf8' });
+  const verified = cli('--omitted-executions', JSON.stringify([{ task: '2', state: execution('2', 1) }]));
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.deepEqual(JSON.parse(verified.stdout).omitted.map(({ task, state: path }) => [task, path]), [['2', execution('2', 1)]]);
+  const refused = cli();
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /latest task source snapshot drift/);
+}));

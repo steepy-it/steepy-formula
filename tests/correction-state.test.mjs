@@ -3172,7 +3172,7 @@ test('summary of a stopped task: the next remedy, the autopilot execution and th
   // Without anything admitted or recommended there is no next remedy.
   const bare = chain(closureRun(), [taskOpened('1'), stopped(STOP.HUMAN_INTERRUPTED)]);
   assert.equal(summarizeCorrectionRun(bare).stopped[0].nextRemedy, null);
-  // An autopilot run reports the latest accepted writer target of the task.
+  // An autopilot run whose stopped task proved baseline-equal isolation retains none of its executions.
   const autopilot = partialRunRecords().map((record) => {
     if (record.kind === 'RUN_OPENED') return { ...record, drive: 'autopilot' };
     if (record.kind === 'DISPATCH_AUTHORIZED' && record.role === 'writer') {
@@ -3181,7 +3181,8 @@ test('summary of a stopped task: the next remedy, the autopilot execution and th
     return record;
   });
   const autopilotState = chain(createCorrectionState(), autopilot);
-  assert.equal(summarizeCorrectionRun(autopilotState).stopped[0].execution, 'receipt:task-1/iteration-2/');
+  assert.equal(autopilotState.cycles['task-1#1'].isolation.mode, 'baseline-equal');
+  assert.equal(summarizeCorrectionRun(autopilotState).stopped[0].execution, null);
 });
 
 test('summary of a halted run is HALTED and carries the halt', () => {
@@ -3381,7 +3382,7 @@ test('summary nextRemedy: a valid diagnosis recommendation outranks an admitted 
   assert.equal(summarizeCorrectionRun(state).stopped[0].nextRemedy, diagnosed(3).recommendation);
 });
 
-test('summary execution: the newest accepted autopilot writer across the task\'s cycles', () => {
+test('summary execution: a reopened cycle stopped without its isolation proof retains no execution yet', () => {
   const records = [
     ...partialRunRecords(), reopenAuthorized(), taskOpened('1', { cycle: 2, predecessor: 'task-1#1' }),
     reserved(1, 'initial', null, 'task-1', 2), authorized(1, 'writer', {}, 'task-1', 2),
@@ -3395,6 +3396,62 @@ test('summary execution: the newest accepted autopilot writer across the task\'s
     return record;
   });
   const state = chain(createCorrectionState(), records);
+  assert.equal(state.cycles['task-1#2'].isolation, null);
   assert.deepEqual(summarizeCorrectionRun(state).stopped.map(({ task, cycle, execution }) => [task, cycle, execution]),
-    [['1', 2, 'receipt:task-1/c2/i1/']]);
+    [['1', 2, null]]);
+});
+
+// The writer target of task 1's iteration `n` in the autopilot runs below.
+const RECEIPT = (n) => `.formula/work/tasks/2026-10-26-plan/task-1-execution-${n}`;
+
+// An autopilot run whose task 1 writer (iteration 1) reached a verified candidate whose checks pass, whose
+// review found an issue, and whose correction writer (iteration 2) recorded `secondStatus` on `secondObservation`.
+function autopilotCorrected(secondStatus, secondObservation = CANDIDATE(1)) {
+  const reviewEvidence = reviewRecorded(1, 'ISSUES_FOUND').evidence[0];
+  return chain(createCorrectionState(), [
+    runOpened({ drive: 'autopilot' }), cycleOpened('task-1'), reserved(1, 'initial'),
+    authorized(1, 'writer', { target: RECEIPT(1) }), writerRecorded(1), checksRecorded(1), authorized(1, 'task-reviewer'),
+    reviewRecorded(1, 'ISSUES_FOUND', { defects: [defectEntry()] }),
+    admitted(retryRequest({ evidence: { path: reviewEvidence.path, digest: reviewEvidence.digest }, confirmingCheck: 'review' })),
+    reserved(2, 'correction'), authorized(2, 'writer', { target: RECEIPT(2) }),
+    writerRecorded(2, secondStatus, { observation: secondObservation }),
+  ]);
+}
+
+const stopIfOpen = (state) => (state.cycles['task-1#1'].status === 'OPEN' ? apply(state, stopped(STOP.HUMAN_INTERRUPTED)) : state);
+const executionOf = (state) => summarizeCorrectionRun(state).stopped[0].execution;
+
+test('summary execution: the retained writer of a retained-best isolation, never the newest writer', () => {
+  // The correction writer reported BLOCKED without changing the tree: the iteration 1 candidate is retained.
+  const blockedLeaf = stopIfOpen(autopilotCorrected('BLOCKED'));
+  assert.equal(executionOf(blockedLeaf), null, 'no isolation is recorded yet');
+  const retained = apply(blockedLeaf, isolationRecorded('task-1', 1, 'retained-best', CANDIDATE(1)));
+  assert.equal(summarizeCorrectionRun(retained).stopped[0].bestCandidate.iteration, 1);
+  assert.equal(executionOf(retained), RECEIPT(1));
+  // The same stop proven on the opening tree retains none of the task's executions.
+  assert.equal(executionOf(apply(blockedLeaf, isolationRecorded())), null);
+  // A later accepted correction whose checks failed ranks below the verified candidate: it is not retained.
+  const regressed = stopIfOpen(apply(autopilotCorrected('DONE', CANDIDATE(2)), checksRecorded(2, { 'surface-test': FAILED(3) })));
+  assert.equal(executionOf(apply(regressed, isolationRecorded('task-1', 1, 'retained-best', CANDIDATE(1)))), RECEIPT(1));
+  // A manual drive never names an execution.
+  const manualRetained = chain(createCorrectionState(), [
+    runOpened(), cycleOpened('task-1'), reserved(1, 'initial'), authorized(1, 'writer', { target: RECEIPT(1) }),
+    writerRecorded(1), checksRecorded(1), stopped(STOP.HUMAN_INTERRUPTED),
+    isolationRecorded('task-1', 1, 'retained-best', CANDIDATE(1)),
+  ]);
+  assert.equal(executionOf(manualRetained), null);
+});
+
+test('summary execution: a no-change best candidate is recorded baseline-equal and retains no execution', () => {
+  const unchanged = chain(createCorrectionState(), [
+    runOpened({ drive: 'autopilot' }), cycleOpened('task-1'), reserved(1, 'initial'),
+    authorized(1, 'writer', { target: RECEIPT(1) }), writerRecorded(1, 'DONE', { observation: OBSERVATION }),
+    checksRecorded(1, {}, { observation: OBSERVATION }), stopped(STOP.HUMAN_INTERRUPTED),
+  ]);
+  // The best candidate is the verified writer's, but its tree is the opening tree: the proof is baseline-equal.
+  assert.equal(rankCandidates(unchanged.cycles['task-1#1'])[0].iteration, 1);
+  assert.deepEqual(decideIsolation(unchanged, { scope: 'task-1', cycle: 1, observation: OBSERVATION }),
+    { proven: true, mode: 'baseline-equal' });
+  const isolated = apply(unchanged, isolationRecorded());
+  assert.equal(executionOf(isolated), null);
 });

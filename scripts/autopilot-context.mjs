@@ -11,6 +11,7 @@ import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { readProjectConfig } from './formula/core/project-config.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 import { parseTaskResultProjection } from './task-results.mjs';
+import { parseCorrectionSummaryBlock } from './correction-state.mjs';
 
 export const CONTEXT_MANIFEST_SCHEMA_VERSION = 1;
 export const MODEL_TIERS = Object.freeze(['cheap', 'standard', 'most-capable']);
@@ -267,6 +268,36 @@ export function planPhaseContext(planText, { review = false } = {}) {
   };
 }
 
+// The plan tasks a partial handoff omits, in plan order, as its correction summary declares them: each
+// stopped task with the execution it retained, each dependency-blocked task with none. The omitted
+// tasks must be exactly the declared ones, a declared task never has a result, and every completed task
+// has one.
+function declaredOmissions(omittedIds, delivered, summary) {
+  const declared = new Map();
+  const declare = (task, omission) => {
+    if (declared.has(task)) throw new Error(`correction summary names task ${task} more than once`);
+    declared.set(task, omission);
+  };
+  for (const entry of summary.stopped) declare(entry.task, { reason: 'stopped', execution: entry.execution });
+  for (const entry of summary.blocked) declare(entry.task, { reason: 'dependency-blocked', execution: null });
+  for (const [task, { reason }] of declared) {
+    if (delivered.has(task)) throw new Error(`task result index has a result for ${reason} task ${task}`);
+  }
+  for (const task of summary.completed) {
+    if (!delivered.has(task)) throw new Error(`correction summary completed task ${task} has no task result`);
+  }
+  const undeclared = omittedIds.filter((task) => !declared.has(task));
+  if (undeclared.length > 0) throw new Error(`task result index omits plan task ids: ${undeclared.join(', ')}`);
+  const unknown = [...declared.keys()].filter((task) => !omittedIds.includes(task));
+  if (unknown.length > 0) throw new Error(`correction summary names unknown plan task ids: ${unknown.join(', ')}`);
+  return omittedIds.map((task) => ({ task, ...declared.get(task) }));
+}
+
+// The review route of an implemented plan: the reviewed (delivered) tasks of the result index. An index
+// carrying a correction summary block (a partial handoff, its block projected PENDING once the final
+// cycle is due) may omit exactly the stopped and dependency-blocked tasks it declares; the route then
+// also names them (`omitted`), the run's `correctionOutcome`, and every plan criterion for the review to
+// map. Without a block every plan task must have a result.
 export function reviewPhaseContext(planText, resultIndexText) {
   const plan = planPhaseContext(planText);
   const planTasks = new Map();
@@ -279,6 +310,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
   const reviewedIds = [];
   const seen = new Set();
   const normalizedIndex = String(resultIndexText ?? '').replace(/\r\n?/g, '\n');
+  const summary = parseCorrectionSummaryBlock(normalizedIndex);
   const projection = parseTaskResultProjection(normalizedIndex);
   const recordId = (id) => {
     const key = id.toLowerCase();
@@ -314,9 +346,10 @@ export function reviewPhaseContext(planText, resultIndexText) {
   const omittedIds = plan.tasks
     .map((task) => task.task)
     .filter((id) => !seen.has(id.toLowerCase()));
-  if (omittedIds.length > 0) {
+  if (summary === null && omittedIds.length > 0) {
     throw new Error(`task result index omits plan task ids: ${omittedIds.join(', ')}`);
   }
+  const omitted = summary === null ? null : declaredOmissions(omittedIds, seen, summary);
 
   const tasks = reviewedIds.map((id) => planTasks.get(id.toLowerCase()));
   const distribution = complexityDistribution(tasks);
@@ -324,7 +357,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
   const eligibleTier = allMechanical ? 'cheap' : 'standard';
   const modelTier = eligibleTier === 'cheap' ? 'standard' : eligibleTier;
   const testCommands = [...new Set(tasks.map((task) => task.testCommand).filter(Boolean))];
-  const criterionIds = [...new Set(tasks.flatMap((task) => task.criterionIds))];
+  const criterionIds = [...new Set((summary === null ? tasks : plan.tasks).flatMap((task) => task.criterionIds))];
   return {
     tasks,
     modelTier,
@@ -336,6 +369,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
       distributionSegment(distribution),
       ...(eligibleTier === 'cheap' ? ['reviewer-floor=standard'] : []),
     ].join(';'),
+    ...(summary === null ? {} : { omitted, correctionOutcome: summary.outcome }),
   };
 }
 

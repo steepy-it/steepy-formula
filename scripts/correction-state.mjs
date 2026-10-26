@@ -1951,15 +1951,15 @@ function diagnosisCount(cycle) {
   return cycle.iterations.filter((entry) => entry.kind === 'diagnosis').length;
 }
 
-// The writer target of the task's latest accepted writer on an autopilot drive, or null.
-function execution(state, scope) {
-  if (state.run.drive !== 'autopilot') return null;
-  const cycles = state.cycleOrder.map((key) => state.cycles[key]).filter((entry) => entry.scope === scope).reverse();
-  for (const cycle of cycles) {
-    const entry = cycle.iterations.findLast((item) => item.writer?.accepted);
-    if (entry !== undefined) return entry.dispatches.find((dispatch) => dispatch.role === 'writer').target;
-  }
-  return null;
+// The execution a stopped task cycle leaves on the task-results lineage, on an autopilot drive: the writer
+// target of its best-ranked candidate when its recorded isolation is retained-best, the candidate the
+// source was proven to keep. A baseline-equal proof keeps none of the cycle's work, and no execution is
+// retained before the proof is recorded. The recorded mode is read, never recomputed. Null otherwise.
+function execution(state, cycle) {
+  if (state.run.drive !== 'autopilot' || cycle.isolation?.mode !== 'retained-best') return null;
+  const [best] = rank(cycle);
+  const entry = cycle.iterations.find((item) => item.iteration === best.iteration);
+  return entry.dispatches.find((dispatch) => dispatch.role === 'writer').target;
 }
 
 // What a later phase needs about a stopped task: why its latest cycle stopped, what it spent, the
@@ -1979,7 +1979,7 @@ function stoppedSummary(state, task, cycle) {
       defect: id, previous, current, verdict: result,
     })),
     bestCandidate: candidateSnapshot(rank(cycle)[0]),
-    execution: execution(state, `task-${task}`),
+    execution: execution(state, cycle),
     nextRemedy,
   };
 }
