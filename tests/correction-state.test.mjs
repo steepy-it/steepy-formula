@@ -12,6 +12,7 @@ import {
   normalizeDefects,
   rankCandidates,
   replayCorrectionRecords,
+  reviewRubricBindings,
   validateRetryRequest,
   validateRubric,
 } from '../scripts/correction-state.mjs';
@@ -41,7 +42,21 @@ function runOpened(overrides = {}) {
 
 function ok(result) {
   assert.equal(result.ok, true, result.ok ? '' : `${result.code}: ${result.message}`);
+  assertFailuresCarryDefects(result.state);
   return result.state;
+}
+
+// Invariant over every accepted state: an iteration that concluded with a failed outcome carries at
+// least one defect, so no failure lacks feedback and a repeat is comparable.
+function assertFailuresCarryDefects(state) {
+  for (const cycle of Object.values(state.cycles)) {
+    for (const { iteration, conclusion } of cycle.iterations) {
+      if (conclusion?.via === 'outcome' && !conclusion.approved) {
+        assert.ok(conclusion.defects.length > 0,
+          `${cycle.scope}#${cycle.cycle} iteration ${iteration} concluded failed without a defect`);
+      }
+    }
+  }
 }
 
 function refused(result, code) {
@@ -1350,10 +1365,11 @@ test('validateRubric approves only 8/8 with every constraint satisfied', () => {
   });
   const normalizedSupport = normalized([rubricDefect('coverage')]);
   assert.equal(rubricResult([rubricEntry('SC1', { coverage: 0 })], normalizedSupport).criteria[0].score, 6);
+  // An unsatisfied constraint is backed by a blocking review defect on its criterion.
   const unsatisfied = rubricResult([rubricEntry('SC1', {}, [
     { id: 'node-builtins-only', satisfied: true, evidence: 'no imports' },
     { id: 'no-time-conditions', satisfied: false, evidence: 'a deadline option exists' },
-  ])]);
+  ])], [defectEntry({ cause: 'deadline-option' })]);
   assert.deepEqual(unsatisfied.criteria, [{ criterion: 'SC1', score: 8, constraintsSatisfied: false, approved: false }]);
   assert.equal(unsatisfied.approved, false);
   assert.deepEqual(rubricResult([rubricEntry('SC1', {}, [])]).approved, true);
@@ -1403,10 +1419,24 @@ test('validateRubric needs exactly one well-formed entry per rubric criterion', 
 test('validateRubric throws TypeError on a malformed call', () => {
   const { bindings } = cycleOpened();
   for (const call of [undefined, [], { bindings, rubric: [] }, { bindings, rubric: [], defects: [], extra: 1 },
-    { bindings: null, rubric: [], defects: [] }, { bindings, rubric: [], defects: 'none' },
-    { bindings, rubric: [], defects: ['SC1'] }]) {
+    { bindings: null, rubric: [], defects: [] }]) {
     assert.throws(() => validateRubric(call), { name: 'TypeError', message: /^validateRubric: /u });
   }
+});
+
+test('validateRubric returns a structured failure, never a throw, for malformed reviewer defects', () => {
+  const bindings = [commandBinding('SC3', 'surface-test'), gateBinding('SC3'), reviewBinding('SC3'), rubricBinding('SC3')];
+  const rubric = [rubricEntry('SC3', {}, [])];
+  for (const [defects, identity] of [[['SC1'], { entry: 0 }], [[null], { entry: 0 }], ['none', {}],
+    [[defectEntry(), 7], { entry: 1 }]]) {
+    let result;
+    assert.doesNotThrow(() => { result = validateRubric({ bindings, rubric, defects }); });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, REVIEW_CODES.DEFECT_SCHEMA, result.message);
+    assert.equal(typeof result.message, 'string');
+    assert.deepEqual(result.identity, identity);
+  }
+  assert.equal(validateRubric({ bindings, rubric, defects: [{}] }).ok, true);
 });
 
 // --- outcome comparison ---------------------------------------------------------------------------
@@ -1894,11 +1924,10 @@ test('a rubric scoring 7/8, or with an unsatisfied constraint, does not approve 
   assert.equal(conclusion.approved, false);
   assert.deepEqual(conclusion.defects.map(({ id, metric, blocking }) => [id, metric, blocking]),
     [['SC1/rubric:usability/vague-names', 1, false]]);
-  const unsatisfied = apply(reviewing(), reviewRecorded(1, 'APPROVED', {
+  // An APPROVED review with an unsatisfied, unbacked constraint is not a valid review.
+  refused(applyCorrectionRecord(reviewing(), reviewRecorded(1, 'APPROVED', {
     rubric: [rubricEntry('SC1', {}, [{ id: 'node-builtins-only', satisfied: false, evidence: 'imports a package' }])],
-  }));
-  assert.equal(unsatisfied.cycles['task-1#1'].status, 'OPEN');
-  assert.equal(unsatisfied.cycles['task-1#1'].iterations[0].conclusion.approved, false);
+  })), REVIEW_CODES.RUBRIC_UNSUPPORTED);
 });
 
 test('a mechanical task without review approves on its passed checks and authorizes no reviewer', () => {
@@ -2242,4 +2271,209 @@ test('outcome records refuse malformed nested data without throwing', () => {
     assert.doesNotThrow(() => { result = applyCorrectionRecord(state, record); }, `case ${index}`);
     assert.equal(result.ok, false, `case ${index}`);
   }
+});
+
+// --- fix 1: unsatisfied rubric constraints ---------------------------------------------------------
+
+const violatedRubric = (criterion = 'SC1', id = 'node-builtins-only') =>
+  [rubricEntry(criterion, {}, [{ id, satisfied: false, evidence: 'the module imports a package' }])];
+
+test('validateRubric: an unsatisfied constraint needs a blocking review defect with a correction on its criterion', () => {
+  const violated = [rubricEntry('SC1', {}, [
+    { id: 'node-builtins-only', satisfied: true, evidence: 'no imports' },
+    { id: 'no-time-conditions', satisfied: false, evidence: 'a deadline option exists' },
+  ])];
+  const unbacked = rubricRefusal(violated, REVIEW_CODES.RUBRIC_UNSUPPORTED);
+  assert.deepEqual(unbacked.identity, { criterion: 'SC1', constraint: 'no-time-conditions' });
+  for (const defects of [
+    [defectEntry({ severity: 'minor' })],
+    [rubricDefect('clarity', { severity: 'critical' })],
+    [defectEntry({ criterion: 'SC2' })],
+    [defectEntry({ correction: '  ' })],
+  ]) {
+    rubricRefusal(violated, REVIEW_CODES.RUBRIC_UNSUPPORTED, defects);
+  }
+  for (const defects of [[defectEntry()], [defectEntry({ severity: 'important' })], normalized([defectEntry()])]) {
+    assert.deepEqual(rubricResult(violated, defects), {
+      ok: true, approved: false, criteria: [{ criterion: 'SC1', score: 8, constraintsSatisfied: false, approved: false }],
+    });
+  }
+});
+
+test('REVIEW_RECORDED: an unsatisfied constraint is refused unbacked, inconsistent if APPROVED, else carries feedback', () => {
+  const opening = cycleOpened('task-2', {
+    bindings: [commandBinding('SC3', 'surface-test'), gateBinding('SC3'), reviewBinding('SC3'), rubricBinding('SC3')],
+    rubricCriteria: ['SC3'],
+  });
+  const state = chain(opened(), [opening, reserved(1, 'initial', null, 'task-2'), authorized(1, 'writer', {}, 'task-2'),
+    writerRecorded(1, 'DONE', {}, 'task-2'), checksRecorded(1, {}, {}, 'task-2'),
+    authorized(1, 'task-reviewer', {}, 'task-2')]);
+  const review = (status, defects) => reviewRecorded(1, status, { defects, rubric: violatedRubric('SC3', 'k') },
+    'task-reviewer', 'task-2');
+  const unbacked = refused(applyCorrectionRecord(state, review('APPROVED', [])), REVIEW_CODES.RUBRIC_UNSUPPORTED);
+  assert.deepEqual(unbacked.identity, { kind: 'REVIEW_RECORDED', scope: 'task-2', cycle: 1, iteration: 1 });
+  const backing = defectEntry({ criterion: 'SC3', cause: 'constraint-violated' });
+  refused(applyCorrectionRecord(state, review('APPROVED', [backing])), REVIEW_CODES.STATUS_INCONSISTENT);
+  const issues = apply(state, review('ISSUES_FOUND', [backing]));
+  const { conclusion } = issues.cycles['task-2#1'].iterations[0];
+  assert.equal(conclusion.approved, false);
+  assert.deepEqual(conclusion.defects.map((defect) => defect.id), ['SC3/review/constraint-violated']);
+  assertFeedback(conclusion.defects[0]);
+});
+
+test('a repeated unsatisfied constraint stagnates instead of reading as progress with no defect', () => {
+  refused(applyCorrectionRecord(reviewing(), reviewRecorded(1, 'APPROVED', { rubric: violatedRubric() })),
+    REVIEW_CODES.RUBRIC_UNSUPPORTED);
+  const backing = [defectEntry({ cause: 'third-party-import' })];
+  const first = apply(reviewing(), reviewRecorded(1, 'ISSUES_FOUND', { defects: backing, rubric: violatedRubric() }));
+  const second = chain(rewritten(first, 2, reviewRecorded(1).evidence[0]), [
+    checksRecorded(2), authorized(2, 'task-reviewer'),
+    reviewRecorded(2, 'ISSUES_FOUND', { defects: backing, rubric: violatedRubric() }),
+  ]);
+  const { comparison } = cycleOf(second).iterations[1].conclusion;
+  assert.notDeepEqual(comparison, { verdict: 'progress', defects: [] });
+  assert.equal(comparison.verdict, 'stagnant');
+  assert.equal(cycleOf(second).stopReason, STOP.STAGNATED);
+});
+
+// --- fix 1: final-correction steps ----------------------------------------------------------------
+
+const SKIPPED_TASK_ONE = Object.freeze({
+  bindings: [commandBinding('SC1', 'surface-test'), gateBinding('SC1'), commandBinding('SC2', 'surface-test'),
+    gateBinding('SC2')],
+  rubricCriteria: [],
+  review: 'skipped',
+});
+const FINAL_CHECK_IDS = ['surface-test-1', 'coherence-gate'];
+
+// Task 1 (mechanical, review skipped) and task 2 (design) approved, then the final cycle opened on both.
+function deliveredFinal(rubricCriteria = []) {
+  const [mechanical, design] = plan();
+  return chain(opened(), [
+    cycleOpened('task-1', SKIPPED_TASK_ONE), reserved(1, 'initial'), authorized(1, 'writer'), writerRecorded(1),
+    checksRecorded(1),
+    cycleOpened('task-2'), reserved(1, 'initial', null, 'task-2'), authorized(1, 'writer', {}, 'task-2'),
+    writerRecorded(1, 'DONE', {}, 'task-2'), checksRecorded(1, {}, {}, 'task-2'),
+    authorized(1, 'task-reviewer', {}, 'task-2'), reviewRecorded(1, 'APPROVED', {}, 'task-reviewer', 'task-2'),
+    cycleOpened('final', {
+      ...deriveCycleBindings({ scope: 'final', deliveredTasks: [mechanical, design], rubricCriteria }), rubricCriteria,
+    }),
+  ]);
+}
+
+// The final review of iteration 1 finds an SC3 issue; iteration 2's writer changes `ownerTask` and passes the checks.
+function finalOwnedBy(ownerTask, affectedCriteria, rubricCriteria = [], finalRubric = []) {
+  const finalReview = reviewRecorded(1, 'ISSUES_FOUND', {
+    before: OBSERVATION, after: OBSERVATION, rubric: finalRubric,
+    defects: [defectEntry({ criterion: 'SC3', cause: 'missing-design-note' })],
+  }, 'final-reviewer', 'final');
+  return chain(deliveredFinal(rubricCriteria), [
+    reserved(1, 'initial', null, 'final'), authorized(1, 'final-reviewer', {}, 'final'),
+    checksRecorded(1, {}, { observation: OBSERVATION }, 'final', 1, FINAL_CHECK_IDS), finalReview,
+    admitted(finalRetryRequest({ target: 'SC3', confirmingCheck: 'review', evidence: finalReview.evidence[0] })),
+    reserved(2, 'correction', null, 'final'), authorized(2, 'writer', { ownerTask, affectedCriteria }, 'final'),
+    writerRecorded(2, 'DONE', {}, 'final'), checksRecorded(2, {}, {}, 'final', 1, FINAL_CHECK_IDS),
+  ]);
+}
+
+test('nextCorrectionStep steers a design-owned final correction through an approved task review', () => {
+  const at = { scope: 'final', cycle: 1, iteration: 2 };
+  const state = finalOwnedBy('2', ['SC3']);
+  const authorizeTaskReview = { action: 'authorize', ...at, role: 'task-reviewer', ownerTask: '2' };
+  assert.deepEqual(nextCorrectionStep(state), authorizeTaskReview);
+  const finalFirst = apply(state, authorized(2, 'final-reviewer', {}, 'final'));
+  assert.deepEqual(nextCorrectionStep(finalFirst), authorizeTaskReview);
+  // Following the steps to the end never meets FINAL_BYPASS.
+  const taskReviewer = apply(finalFirst, authorized(2, 'task-reviewer', { ownerTask: '2' }, 'final'));
+  assert.deepEqual(nextCorrectionStep(taskReviewer), { action: 'record', ...at, role: 'task-reviewer' });
+  const taskApproved = apply(taskReviewer,
+    reviewRecorded(2, 'APPROVED', { ownerTask: '2', rubric: [] }, 'task-reviewer', 'final'));
+  assert.deepEqual(nextCorrectionStep(taskApproved), { action: 'record', ...at, role: 'final-reviewer' });
+  const approved = apply(taskApproved, reviewRecorded(2, 'APPROVED', { rubric: [] }, 'final-reviewer', 'final'));
+  assert.equal(approved.cycles['final#1'].status, 'APPROVED');
+  const direct = chain(state, [authorized(2, 'task-reviewer', { ownerTask: '2' }, 'final'),
+    reviewRecorded(2, 'APPROVED', { ownerTask: '2', rubric: [] }, 'task-reviewer', 'final')]);
+  assert.deepEqual(nextCorrectionStep(direct), { action: 'authorize', ...at, role: 'final-reviewer' });
+  // A mechanical owner steps straight to the final review.
+  assert.deepEqual(nextCorrectionStep(finalOwnedBy('1', ['SC1'])), { action: 'authorize', ...at, role: 'final-reviewer' });
+});
+
+// --- fix 1: comparable command defects without a criterion ---------------------------------------
+
+test('compareOutcomes compares a command-check defect without a bound criterion, and reports raw metrics', () => {
+  for (const id of ['*/surface-test/command-failed', '*/surface-test-2/command-failed', '*/coherence-gate/command-failed']) {
+    assert.deepEqual(comparison(outcome(outcomeDefect(id, 3)), outcome(outcomeDefect(id, 3)), []),
+      { verdict: 'stagnant', defects: [{ id, previous: 3, current: 3, result: 'stagnant' }] });
+    assert.equal(comparison(outcome(outcomeDefect(id, 3)), outcome(outcomeDefect(id, 1)), []).verdict, 'progress');
+  }
+  // Without a direction the result is unavailable, but the known metrics are still reported.
+  const unbound = 'SC9/review/missing-test';
+  assert.deepEqual(comparison(outcome(outcomeDefect(unbound, 3)), outcome(outcomeDefect(unbound, 1))).defects,
+    [{ id: unbound, previous: 3, current: 1, result: 'unavailable' }]);
+  assert.deepEqual(comparison(outcome(outcomeDefect(unbound, 3)), outcome(outcomeDefect('SC8/review/x', 2))).defects,
+    [{ id: 'SC8/review/x', previous: null, current: 2, result: 'new' }]);
+});
+
+test('a task without criteria stagnates on a repeated command failure', () => {
+  const firstFailure = chain(cycleState('task-4'), [
+    reserved(1, 'initial', null, 'task-4'), authorized(1, 'writer', {}, 'task-4'), writerRecorded(1, 'DONE', {}, 'task-4'),
+    checksRecorded(1, { 'surface-test': FAILED(3) }, {}, 'task-4'),
+    admitted(retryRequest({
+      scope: 'task-4', target: 'surface-test', evidence: checkEvidence(1, 'surface-test', 'task-4'),
+    })),
+    reserved(2, 'correction', null, 'task-4'), authorized(2, 'writer', {}, 'task-4'),
+    writerRecorded(2, 'DONE', {}, 'task-4'),
+  ]);
+  const repeated = apply(firstFailure, checksRecorded(2, { 'surface-test': FAILED(3) }, {}, 'task-4'));
+  assert.equal(repeated.cycles['task-4#1'].stopReason, STOP.STAGNATED);
+  assert.equal(repeated.cycles['task-4#1'].diagnosisRequired, false);
+  const improved = apply(firstFailure, checksRecorded(2, { 'surface-test': FAILED(1) }, {}, 'task-4'));
+  assert.equal(improved.cycles['task-4#1'].status, 'OPEN');
+  assert.deepEqual(improved.cycles['task-4#1'].iterations[1].conclusion.comparison.defects,
+    [{ id: '*/surface-test/command-failed', previous: 3, current: 1, result: 'improved' }]);
+});
+
+// --- fix 1: rubric bindings for a review ---------------------------------------------------------
+
+test('reviewRubricBindings keeps a final-scope task review to its owner task\'s rubric criteria', () => {
+  const [mechanical, design] = plan();
+  const { bindings } = deriveCycleBindings({
+    scope: 'final', deliveredTasks: [mechanical, design], rubricCriteria: ['SC1', 'SC3'],
+  });
+  const ownerRubric = reviewRubricBindings({ scope: 'final', bindings, role: 'task-reviewer', ownerTask: mechanical });
+  assert.deepEqual(ownerRubric, [rubricBinding('SC1')]);
+  assert.deepEqual(reviewRubricBindings({ scope: 'final', bindings, role: 'final-reviewer', ownerTask: null }),
+    [rubricBinding('SC1'), rubricBinding('SC3')]);
+  assert.deepEqual(reviewRubricBindings({
+    scope: 'task-1', bindings: cycleOpened().bindings, role: 'task-reviewer', ownerTask: null,
+  }), [rubricBinding('SC1')]);
+  // The filtered call validates a task review that scores only its owner task's criteria.
+  assert.equal(validateRubric({ bindings: ownerRubric, rubric: [rubricEntry('SC1')], defects: [] }).ok, true);
+  assert.equal(validateRubric({ bindings, rubric: [rubricEntry('SC1')], defects: [] }).code,
+    REVIEW_CODES.RUBRIC_COVERAGE);
+  for (const call of [
+    undefined,
+    { scope: 'final', bindings, role: 'task-reviewer' },
+    { scope: 'final', bindings, role: 'task-reviewer', ownerTask: mechanical, extra: 1 },
+    { scope: 'final', bindings, role: 'task-reviewer', ownerTask: null },
+    { scope: 'final', bindings, role: 'task-reviewer', ownerTask: '1' },
+    { scope: 'final', bindings, role: 'writer', ownerTask: null },
+    { scope: 'final', bindings, role: 'final-reviewer', ownerTask: mechanical },
+    { scope: 'task-1', bindings, role: 'task-reviewer', ownerTask: mechanical },
+    { scope: 'task', bindings, role: 'task-reviewer', ownerTask: null },
+    { scope: 'task-1', bindings, role: 'final-reviewer', ownerTask: null },
+    { scope: 'final', bindings: 'all', role: 'final-reviewer', ownerTask: null },
+  ]) {
+    assert.throws(() => reviewRubricBindings(call), { name: 'TypeError', message: /^reviewRubricBindings: /u });
+  }
+});
+
+test('REVIEW_RECORDED scores a final-scope task review on its owner task\'s rubric criteria only', () => {
+  const state = apply(finalOwnedBy('2', ['SC3'], ['SC1', 'SC3'], [rubricEntry('SC1'), rubricEntry('SC3')]),
+    authorized(2, 'task-reviewer', { ownerTask: '2' }, 'final'));
+  const taskReview = (rubric) => reviewRecorded(2, 'APPROVED', { ownerTask: '2', rubric }, 'task-reviewer', 'final');
+  refused(applyCorrectionRecord(state, taskReview([rubricEntry('SC1'), rubricEntry('SC3')])), REVIEW_CODES.RUBRIC_COVERAGE);
+  const reviewed = apply(state, taskReview([rubricEntry('SC3')]));
+  assert.deepEqual(reviewed.cycles['final#1'].iterations[1].reviews[0].rubric.criteria.map((item) => item.criterion),
+    ['SC3']);
 });

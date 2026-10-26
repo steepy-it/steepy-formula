@@ -152,6 +152,7 @@ const PERMITTED_ROLES = deepFreeze({
 const DERIVE_KEYS = Object.freeze(['scope', 'task', 'deliveredTasks', 'rubricCriteria', 'reviewOptIn']);
 const NORMALIZE_KEYS = Object.freeze(['bindings', 'entries', 'previous']);
 const RUBRIC_KEYS = Object.freeze(['bindings', 'rubric', 'defects']);
+const REVIEW_RUBRIC_KEYS = Object.freeze(['scope', 'bindings', 'role', 'ownerTask']);
 const REVIEW_INVALID = CORRECTION_CODES.review;
 const DEFECT_FIELDS = Object.freeze([
   'criterion', 'check', 'dimension', 'cause', 'severity', 'expected', 'observed', 'proof', 'correction', 'nextCheck',
@@ -171,6 +172,8 @@ const CAUSE_MAX_LENGTH = 64;
 const COHERENCE_GATE = Object.freeze({ id: 'coherence-gate', command: 'builtin' });
 // Four rubric dimensions scored 0-2 each: a rubric criterion passes only at the full 8.
 const RUBRIC_THRESHOLD = 8;
+// The command check ids a derivation produces; every command binding's direction is `lower`.
+const COMMAND_CHECK = /^(?:surface-test(?:-[1-9]\d*)?|coherence-gate)$/u;
 const SCOPE = /^(?:task-([1-9]\d*)|final)$/u;
 const CYCLE_REFERENCE = /^(?:task-[1-9]\d*|final)#[1-9]\d*$/u;
 const HEX64 = /^[0-9a-f]{64}$/u;
@@ -472,6 +475,13 @@ function normalizeEntries(bindings, entries, previous) {
 
 // --- rubric ---------------------------------------------------------------------------------------
 
+// The rubric bindings a review scores: all of the cycle's, or, for a final-scope task review, only
+// those of its owner task's criteria (`owner` is that plan task, else null).
+function rubricBindingsFor(bindings, owner) {
+  return bindings.filter((bound) => bound.check === 'rubric'
+    && (owner === null || owner.criterionIds.includes(bound.criterion))).map((bound) => ({ ...bound }));
+}
+
 function rubricEntryProblem(entry) {
   if (!isPlainObject(entry) || !hasExactKeys(entry, RUBRIC_ENTRY_FIELDS)) {
     return `must have exactly the keys: ${RUBRIC_ENTRY_FIELDS.join(', ')}`;
@@ -497,9 +507,11 @@ function rubricEntryProblem(entry) {
 }
 
 // Validates a reviewer's rubric against the rubric bindings, refusing with a `review` code: one
-// entry per rubric criterion, and every score below 2 backed by a rubric defect on the same criterion
-// and dimension that carries a correction. A criterion is approved only at 8/8 with every constraint
-// satisfied.
+// entry per rubric criterion, every score below 2 backed by a rubric defect on the same criterion and
+// dimension that carries a correction, and every unsatisfied constraint backed by a blocking (critical
+// or important) review defect on the same criterion that carries a correction. A criterion is approved
+// only at 8/8 with every constraint satisfied, so a review reporting an unsatisfied constraint is
+// ISSUES_FOUND: no failure lacks a defect, and a repeated violation stays comparable.
 function checkRubric(bindings, rubric, defects) {
   if (!Array.isArray(rubric)) refuse(REVIEW_INVALID.RUBRIC_SCHEMA, 'rubric must be an array');
   for (const [index, entry] of rubric.entries()) {
@@ -529,6 +541,14 @@ function checkRubric(bindings, rubric, defects) {
           + 'carrying a correction', { criterion, dimension });
       }
     }
+    for (const constraint of entry.constraints.filter((item) => !item.satisfied)) {
+      const backed = defects.some((defect) => defect.check === 'review' && defect.criterion === criterion
+        && BLOCKING_SEVERITIES.has(defect.severity) && isText(defect.correction));
+      if (!backed) {
+        refuse(REVIEW_INVALID.RUBRIC_UNSUPPORTED, `${criterion} constraint ${constraint.id} is unsatisfied without a `
+          + 'blocking review defect carrying a correction', { criterion, constraint: constraint.id });
+      }
+    }
     const score = RUBRIC_DIMENSIONS.reduce((total, dimension) => total + entry[dimension].score, 0);
     const constraintsSatisfied = entry.constraints.every((constraint) => constraint.satisfied);
     return { criterion, score, constraintsSatisfied, approved: score === RUBRIC_THRESHOLD && constraintsSatisfied };
@@ -537,9 +557,12 @@ function checkRubric(bindings, rubric, defects) {
 
 // --- outcome comparison ---------------------------------------------------------------------------
 
+// The binding direction of a defect's (criterion, check); a command-check defect that binds no
+// criterion (`*/<check>/command-failed`) compares like every command binding: lower is better.
 function directionOf(bindings, defect) {
   const bound = bindings.find((entry) => entry.criterion === defect.criterion && entry.check === defect.check);
-  return bound?.direction ?? null;
+  if (bound !== undefined) return bound.direction;
+  return COMMAND_CHECK.test(defect.check) ? 'lower' : null;
 }
 
 // One metric per id: the worst of a repeated current id and the best of a repeated previous id, so a
@@ -553,6 +576,12 @@ function mergedMetric(defects, direction, pick) {
   return pick === 'best' ? best : worst;
 }
 
+// A side's reported metric: merged in the binding direction, else the raw metric of a lone occurrence.
+function shownMetric(defects, direction, pick) {
+  if (direction !== null) return mergedMetric(defects, direction, pick);
+  return defects.length === 1 && Number.isFinite(defects[0].metric) ? defects[0].metric : null;
+}
+
 function compare(previous, current, bindings) {
   if (previous === null) return { verdict: 'none', defects: [] };
   const ids = [...new Set(current.defects.map((defect) => defect.id))];
@@ -560,10 +589,12 @@ function compare(previous, current, bindings) {
     const now = current.defects.filter((defect) => defect.id === id);
     const before = previous.defects.filter((defect) => defect.id === id);
     const direction = directionOf(bindings, now[0]);
-    const metric = direction === null ? null : mergedMetric(now, direction, 'worst');
+    const metric = shownMetric(now, direction, 'worst');
     if (before.length === 0) return { id, previous: null, current: metric, result: 'new' };
-    const earlier = direction === null ? null : mergedMetric(before, direction, 'best');
-    if (earlier === null || metric === null) return { id, previous: earlier, current: metric, result: 'unavailable' };
+    const earlier = shownMetric(before, direction, 'best');
+    if (direction === null || earlier === null || metric === null) {
+      return { id, previous: earlier, current: metric, result: 'unavailable' };
+    }
     const improved = direction === 'lower' ? metric < earlier : metric > earlier;
     return { id, previous: earlier, current: metric, result: improved ? 'improved' : 'stagnant' };
   });
@@ -1339,11 +1370,12 @@ function recordChecks(draft, record, { ref, identity }) {
 }
 
 // The plan task a final-scope correction changes: its writer's owner task, else its task-reviewer's.
-function correctionOwner(draft, entry) {
+// `state` is a draft or a produced state: only its run plan is read.
+function correctionOwner(state, entry) {
   const owned = entry.dispatches.find((dispatch) => dispatch.role === 'writer')
     ?? entry.dispatches.find((dispatch) => dispatch.role === 'task-reviewer');
   if (owned === undefined || owned.ownerTask === null) return null;
-  return planTask(draft, owned.ownerTask);
+  return planTask(state, owned.ownerTask);
 }
 
 // The final review is recorded last: after every authorized task review and, when the correction
@@ -1384,9 +1416,7 @@ function assessReview(draft, cycle, entry, record, identity) {
   if (!normalized.ok) invalid(normalized);
   // A final-scope task review scores only the rubric criteria of the task it reviews.
   const owner = cycle.scope === 'final' && role === 'task-reviewer' ? planTask(draft, ownerTask) : null;
-  const rubricBindings = owner === null ? cycle.bindings
-    : cycle.bindings.filter((bound) => owner.criterionIds.includes(bound.criterion));
-  const scored = attempt(() => checkRubric(rubricBindings, rubric, normalized.value));
+  const scored = attempt(() => checkRubric(rubricBindingsFor(cycle.bindings, owner), rubric, normalized.value));
   if (!scored.ok) invalid(scored);
   const blocking = normalized.value.some((defect) => defect.blocking);
   if ((status === 'APPROVED') === blocking) {
@@ -1583,8 +1613,10 @@ export function replayCorrectionRecords(records, options) {
 }
 
 // The next step inside an unconcluded iteration: its first authorization, then the outcomes in order
-// (the writer's, the checks, each authorized reviewer's), then the verdict reviewer's authorization.
-function iterationStep(cycle, entry, step) {
+// (the writer's, the checks, each authorized reviewer's), then the verdict reviewer's authorization. A
+// final correction of an integration or design task first authorizes the task review of its owner
+// task, which the final review requires.
+function iterationStep(state, cycle, entry, step) {
   const dispatched = (role) => entry.dispatches.some((dispatch) => dispatch.role === role);
   if (entry.kind === 'diagnosis') {
     return { action: dispatched('diagnostic') ? 'record' : 'authorize', ...step, role: 'diagnostic' };
@@ -1594,6 +1626,10 @@ function iterationStep(cycle, entry, step) {
     return { action: 'authorize', ...step, role: permittedRoles(cycle, entry)[0] };
   }
   if (entry.checks === null) return { action: 'checks', ...step };
+  const owner = cycle.scope === 'final' && entry.kind === 'correction' ? correctionOwner(state, entry) : null;
+  if (owner !== null && TASK_REVIEWED_COMPLEXITIES.has(owner.complexity) && !dispatched('task-reviewer')) {
+    return { action: 'authorize', ...step, role: 'task-reviewer', ownerTask: owner.task };
+  }
   const pending = ['task-reviewer', 'final-reviewer']
     .find((role) => dispatched(role) && !entry.reviews.some((review) => review.role === role));
   if (pending !== undefined) return { action: 'record', ...step, role: pending };
@@ -1611,7 +1647,7 @@ export function nextCorrectionStep(state) {
   if (cycle.status !== 'OPEN') return { action: 'stopped', ...at, reason: cycle.stopReason };
   const latest = cycle.iterations.at(-1);
   if (latest === undefined) return { action: 'reserve', ...at, iteration: 1, kind: 'initial' };
-  if (latest.conclusion === null) return iterationStep(cycle, latest, { ...at, iteration: latest.iteration });
+  if (latest.conclusion === null) return iterationStep(state, cycle, latest, { ...at, iteration: latest.iteration });
   const iteration = cycle.reserved + 1;
   if (cycle.retries.some((retry) => retry.iteration === iteration)) {
     return { action: 'reserve', ...at, iteration, kind: 'correction' };
@@ -1636,7 +1672,9 @@ export function deriveCycleBindings(input) {
 
 // Normalizes a reviewer's defect entries: `{ ok: true, defects }`, or a failure with a
 // `CORRECTION_CODES.review` code for which the guard records the review as INVALID. `previous` is the
-// defect list of the previous comparable outcome, or null when there is none.
+// defect list of the previous comparable outcome, or null when there is none. Called standalone, a
+// rubric defect's `metric` is null: its dimension score lives in the rubric, and only REVIEW_RECORDED
+// attaches it, so compare state outcomes rather than standalone results.
 export function normalizeDefects(input) {
   if (!isPlainObject(input)) throw new TypeError('normalizeDefects: input must be a plain object');
   assertOptions(input, NORMALIZE_KEYS, 'normalizeDefects');
@@ -1651,7 +1689,10 @@ export function normalizeDefects(input) {
 
 // Validates a reviewer's rubric: `{ ok: true, approved, criteria }`, or a failure with a
 // `CORRECTION_CODES.review` code for which the guard records the review as INVALID. `defects` are the
-// review's defects (normalized, or the reviewer's entries); `bindings` name the rubric criteria.
+// review's defects, normalized or the reviewer's own entries: untrusted data, so a non-array or a
+// non-object entry is a DEFECT_SCHEMA failure, never a throw. `bindings` name the rubric criteria; for a
+// final-scope task review pass `reviewRubricBindings(...)`, which keeps only the owner task's criteria.
+// `TypeError` is thrown only for a malformed call (input shape, unknown or missing keys, bindings).
 export function validateRubric(input) {
   if (!isPlainObject(input)) throw new TypeError('validateRubric: input must be a plain object');
   assertOptions(input, RUBRIC_KEYS, 'validateRubric');
@@ -1659,20 +1700,50 @@ export function validateRubric(input) {
   if (missing.length > 0) throw new TypeError(`validateRubric: missing ${missing.join(', ')}`);
   const { bindings, rubric, defects } = input;
   assertBindings(bindings, 'validateRubric');
-  if (!Array.isArray(defects) || !defects.every(isPlainObject)) {
-    throw new TypeError('validateRubric: defects must be an array of defect objects');
-  }
-  const result = attempt(() => checkRubric(bindings, rubric, defects));
+  const result = attempt(() => {
+    if (!Array.isArray(defects)) refuse(REVIEW_INVALID.DEFECT_SCHEMA, 'defects must be an array');
+    const malformed = defects.findIndex((defect) => !isPlainObject(defect));
+    if (malformed !== -1) {
+      refuse(REVIEW_INVALID.DEFECT_SCHEMA, `defect ${malformed} must be an object`, { entry: malformed });
+    }
+    return checkRubric(bindings, rubric, defects);
+  });
   if (!result.ok) return result;
   return { ok: true, approved: result.value.every((entry) => entry.approved), criteria: result.value };
 }
 
+// The rubric bindings a review of `role` scores in a cycle of `scope` with `bindings`: every rubric
+// binding, except that a final-scope task review scores only its owner task's criteria. `ownerTask` is
+// that plan task for a final-scope task review and null otherwise. Pass the result to `validateRubric`.
+export function reviewRubricBindings(input) {
+  if (!isPlainObject(input)) throw new TypeError('reviewRubricBindings: input must be a plain object');
+  assertOptions(input, REVIEW_RUBRIC_KEYS, 'reviewRubricBindings');
+  const missing = REVIEW_RUBRIC_KEYS.filter((key) => !Object.hasOwn(input, key));
+  if (missing.length > 0) throw new TypeError(`reviewRubricBindings: missing ${missing.join(', ')}`);
+  const { scope, bindings, role, ownerTask } = input;
+  if (typeof scope !== 'string' || !SCOPE.test(scope)) {
+    throw new TypeError("reviewRubricBindings: scope must be 'task-<N>' or 'final'");
+  }
+  if (scope === 'final' ? !REVIEWER_ROLES.has(role) : role !== 'task-reviewer') {
+    throw new TypeError(`reviewRubricBindings: no ${String(role)} reviews scope '${scope}'`);
+  }
+  assertBindings(bindings, 'reviewRubricBindings');
+  const ownerReview = scope === 'final' && role === 'task-reviewer';
+  if (ownerReview ? !isPlanTask(ownerTask) : ownerTask !== null) {
+    throw new TypeError('reviewRubricBindings: ownerTask must be the reviewed plan task for a final-scope task '
+      + 'review, and null otherwise');
+  }
+  return rubricBindingsFor(bindings, ownerReview ? ownerTask : null);
+}
+
 // Compares a concluded correction outcome with the previous comparable outcome of its cycle (null when
 // there is none). Each current defect whose id the previous outcome reports is improved (strictly
-// better metric in its binding's direction), stagnant, or unavailable (a missing metric or no bound
-// direction); other ids are new. The verdict is 'none' without a previous outcome, else 'stagnant' when
+// better metric in its binding's direction; a command-check defect binding no criterion compares
+// lower-is-better), stagnant, or unavailable (a missing metric or no direction); other ids are new. The verdict is 'none' without a previous outcome, else 'stagnant' when
 // any defect stagnated, else 'unavailable' when any comparison was, else 'progress'. Outcomes are
-// objects carrying a `defects` array of normalized defects.
+// objects carrying a `defects` array of normalized defects, such as an iteration's state conclusion;
+// a rubric defect taken from standalone `normalizeDefects` output has no metric and compares as
+// unavailable. Known metrics are reported even when a result is unavailable.
 export function compareOutcomes(previous, current, bindings) {
   const isOutcome = (value) => isPlainObject(value) && Array.isArray(value.defects);
   if (previous !== null && !isOutcome(previous)) {
