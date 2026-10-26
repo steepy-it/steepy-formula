@@ -54,10 +54,10 @@
 // the stopped and blocked tasks as omitted. On autopilot the reviewer handoff must verify and every
 // execution on the task-results lineage, and every reviewer gate the index names, must be a dispatch the
 // guard authorized and recorded; anything else is an unauthorized dispatch. On a manual drive the latest
-// recording of each evidence path of the concluding iterations (of every approved cycle and of the latest
-// final cycle) must match current bytes, and the source must be the final cycle's approved observation
-// (COMPLETE) or its last checks observation (PARTIAL). Its approval is the summary's: a partial run is
-// never approved.
+// recording of each evidence path of the concluding iterations (of every approved cycle, and of the latest
+// final cycle from the iteration that concluded its last outcome on, so trailing work after it counts too)
+// must match current bytes, and the source must be the final cycle's approved observation (COMPLETE) or its
+// last checks observation (PARTIAL). Its approval is the summary's: a partial run is never approved.
 //
 // Usage: node scripts/correction-guard.mjs --repo-root <root> --plan <plan> --action <open|next|open-cycle|
 // reserve|authorize|record-interruption|admit-retry|stop|reopen|project|verify|verify-handoff|record-writer|
@@ -1899,18 +1899,29 @@ function iterationEvidence(entry) {
   ];
 }
 
-// Manual drive: over the concluding iterations of every approved cycle and of the latest final cycle, the
-// latest recording of each path governs (a final-scope correction rewrites a task's fixed report and review
-// names) and must match current bytes; the source is the final cycle's approved observation when COMPLETE,
-// else its last checks observation, or the tree it opened on when it recorded no checks.
+// The iterations whose evidence a manual handoff checks for `cycle`: an approved cycle's concluding (last)
+// iteration; for the latest final cycle, the iteration that concluded its last outcome and every later one,
+// since an explicit stop can leave trailing work (an empty reservation, an unchecked writer) after it, or
+// every iteration when no outcome concluded.
+function handoffIterations(cycle, final) {
+  if (cycle === final) {
+    const concluded = cycle.iterations.findLastIndex((entry) => entry.conclusion?.via === 'outcome');
+    return cycle.iterations.slice(Math.max(concluded, 0));
+  }
+  return cycle.status === 'APPROVED' ? cycle.iterations.slice(-1) : [];
+}
+
+// Manual drive: over the handoff iterations of every approved cycle and of the latest final cycle, in record
+// order, the latest recording of each path governs (a final-scope correction rewrites a task's fixed report
+// and review names) and must match current bytes; the source is the final cycle's approved observation when
+// COMPLETE, else its last checks observation, or the tree it opened on when it recorded no checks.
 function verifyManualHandoff(root, state, summary, observation) {
   const cycles = state.cycleOrder.map((key) => state.cycles[key]);
   const final = cycles.findLast((cycle) => cycle.scope === 'final');
   if (final === undefined) refuse(CODES.INTEGRITY, 'the run has no final cycle to hand off', {});
   const latest = new Map();
   for (const cycle of cycles) {
-    if (cycle !== final && cycle.status !== 'APPROVED') continue;
-    for (const entry of cycle.iterations.slice(-1)) {
+    for (const entry of handoffIterations(cycle, final)) {
       for (const { path, digest } of iterationEvidence(entry)) latest.set(path, digest);
     }
   }

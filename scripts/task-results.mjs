@@ -359,6 +359,7 @@ export function verifyTaskResults(root, { indexPath, expectedTasks, checkCurrent
   const entries = parseTaskResultProjection(readWorkPath(root, indexPath, { encoding: 'utf8' }));
   if (entries === null) {
     if (required) throw new Error('required v2 task result receipts are missing');
+    if (omittedExecutions.length) throw new Error('omitted task executions need task results');
     return { entries: null, proofs: [], executions: [], digest: null };
   }
   if (!entries.length) throw new Error('task result receipts are empty');

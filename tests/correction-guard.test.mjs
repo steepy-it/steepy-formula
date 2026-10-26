@@ -2422,8 +2422,15 @@ test('a complete autopilot run hands off APPROVED', () => withRepo(PLAN_ONE, asy
 test('verify-handoff refuses a run that is not terminal, a tampered summary block and an index that does not route', () => withRepo(PLAN_PARTIAL, async (repo) => {
   const { root, put, bytes } = repo;
   let pending = null;
-  await autopilotHandoff(repo, { beforeFinalReview: () => { pending = handoff(root, AUTOPILOT); } });
+  let pendingCli = null;
+  await autopilotHandoff(repo, {
+    beforeFinalReview: () => {
+      pending = handoff(root, AUTOPILOT);
+      pendingCli = cli(root, ['--action', 'verify-handoff', '--task-result-index', INDEX, '--run-id', 'run-1', '--attempt', '1']);
+    },
+  });
   assert.equal(pending.code, CORRECTION_GUARD_CODES.HANDOFF_NOT_TERMINAL, pending.message);
+  assert.deepEqual([pendingCli.status, pendingCli.json.code], [1, CORRECTION_GUARD_CODES.HANDOFF_NOT_TERMINAL], 'a run that is not terminal exits 1');
   const index = bytes(INDEX).toString('utf8');
   put(INDEX, index.replace('"reason": "HUMAN_INTERRUPTED"', '"reason": "EXHAUSTED"'));
   assert.equal(parseCorrectionSummaryBlock(bytes(INDEX).toString('utf8')).stopped[0].reason, 'EXHAUSTED', 'the tampered block still parses');
@@ -2681,4 +2688,40 @@ test('a manual stopped final whose correction left an unchecked change is an int
   const refused = handoff(root);
   assert.equal(refused.code, CORRECTION_GUARD_CODES.INTEGRITY, refused.message);
   assert.match(refused.message, /checks observation/u);
+}));
+
+// A manual run whose final iteration 1 recorded an ISSUES_FOUND final review, then, after the admitted
+// retry reserved iteration 2 (with its writer recorded without a source change when `writer`), stopped.
+async function manualStoppedAfterIssues(repo, { writer = false } = {}) {
+  const { root } = repo;
+  await manualFinalReviewed(repo, 'ISSUES_FOUND');
+  retryForIssue(repo, manual(), 'final', FINAL_ISSUES, 'SC1');
+  if (writer) mWriter(repo, { scope: 'final', iteration: 2, task: '1', ownerTask: '1', affectedCriteria: ['SC1'] });
+  ok(stopCorrectionCycle(root, manual({ scope: 'final', reason: 'HUMAN_INTERRUPTED', note: 'stopped after the issue' })));
+  assert.equal(nextAction(root).action, 'terminal');
+  ok(projectCorrectionSummary(root, manual({ taskResultIndex: INDEX })));
+  assert.equal(summaryOf(repo).final.status, 'STOPPED');
+  const verified = ok(handoff(root));
+  assert.deepEqual([verified.outcome, verified.approval], ['PARTIAL', 'UNAPPROVED']);
+}
+
+// The handoff refuses the tampered `path` as an integrity failure, and the CLI exits 3.
+function assertTamperRefused(root, path) {
+  const refused = handoff(root);
+  assert.equal(refused.code, CORRECTION_GUARD_CODES.INTEGRITY, refused.message);
+  assert.equal(refused.identity.path, path);
+  const result = cli(root, ['--action', 'verify-handoff', '--task-result-index', INDEX]);
+  assert.deepEqual([result.status, result.json.code, result.json.identity.path], [3, CORRECTION_GUARD_CODES.INTEGRITY, path]);
+}
+
+test('a manual stopped final checks the evidence of its last concluded outcome behind an empty trailing iteration', () => withRepo(PLAN_ONE, async (repo) => {
+  await manualStoppedAfterIssues(repo);
+  repo.put(FINAL_ISSUES, 'tampered after the fact\n');
+  assertTamperRefused(repo.root, FINAL_ISSUES);
+}));
+
+test('a manual stopped final checks the evidence of its last concluded outcome behind an unchecked writer', () => withRepo(PLAN_ONE, async (repo) => {
+  await manualStoppedAfterIssues(repo, { writer: true });
+  repo.put(FINAL_REVIEW, 'tampered after the fact\n');
+  assertTamperRefused(repo.root, FINAL_REVIEW);
 }));

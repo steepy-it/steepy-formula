@@ -405,3 +405,12 @@ test('the verify CLI takes the omitted executions as JSON', () => fixture(({ roo
   assert.equal(refused.status, 1);
   assert.match(refused.stderr, /latest task source snapshot drift/);
 }));
+
+test('omitted executions are refused when the index carries no task results, even when receipts are optional', () => fixture(({ root, put }) => {
+  executed(root, put, '1', 1, { work: () => put('one', '1') });
+  assert.deepEqual(verifyTaskResults(root, { indexPath, required: false }), { entries: null, proofs: [], executions: [], digest: null });
+  assert.throws(() => verifyTaskResults(root, { indexPath, required: false, omittedExecutions: [{ task: '1', state: execution('1', 1) }] }),
+    /omitted task executions need task results/);
+  assert.throws(() => verifyTaskResults(root, { indexPath, omittedExecutions: [{ task: '1', state: execution('1', 1) }] }),
+    /required v2 task result receipts are missing/);
+}));
