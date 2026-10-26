@@ -31,12 +31,19 @@
 // its task report) and writes the candidate snapshot `<scope>-cycle-<c>-iteration-<i>-candidate.json`
 // with the current bytes of every path changed since the cycle baseline; above 64 MiB the run halts.
 // `verify-check` runs each surface test with the coherence gate through the capture collector into
-// `<scope>-cycle-<c>-iteration-<i>-check-<k>-evidence.md`, and halts the run when the source moves off
-// the candidate. `record-review` binds the reviewer (a reviewer-response receipt or a manual response)
-// with its defects artifact, recording an invalid one INVALID; `record-diagnosis` binds the diagnostic's
-// artifact and decides its validity; `prove-isolation` proves a stopped task cycle isolated or halts the
-// run with recovery evidence. A review or diagnosis that changed the source halts the run, as does any
-// record the reducer refuses as an integrity fault.
+// `<scope>-cycle-<c>-iteration-<i>-check-<k>-evidence.md` (a cycle without a surface test captures the
+// gate alone), and halts the run when a capture, settled or rejected, leaves the source off the
+// candidate. That evidence is written by the collector, which may overwrite a file: the checks are
+// validated before any command runs, so only evidence no record binds yet is ever captured again.
+// `record-review` binds the reviewer (a reviewer-response receipt or a manual response) with the defects
+// artifact named for its step, `<scope>-cycle-<c>-iteration-<i>-defects.json` (a final-scope task review
+// adds `-task-reviewer`), recording an invalid one INVALID. `record-diagnosis` binds the diagnostic's
+// artifact and decides its validity; an empty evidence list is vacuously valid, as every listed digest
+// must match current bytes. `prove-isolation` proves a stopped task cycle isolated or halts the run with
+// recovery evidence. A review or diagnosis that changed the source halts the run, as does any record the
+// reducer refuses as an integrity fault and any integrity failure once an evidence action has prepared
+// (an unverifiable receipt, unreadable evidence, a corrupt baseline), since the chain alone would let the
+// next action carry on; only a snapshot read racing the still-open writer window is a plain refusal.
 //
 // The guard never runs a mutating git command and never writes source files. Data problems come back as
 // `{ ok: false, code, message, identity }` with a CORRECTION_GUARD_CODES or reducer code; a TypeError is
@@ -149,17 +156,20 @@ const serialize = (value) => `${JSON.stringify(value)}\n`;
 // --- refusals -------------------------------------------------------------------------------------
 
 // Thrown inside an action and caught at its public boundary, where it becomes the failure envelope; it
-// never escapes this module.
+// never escapes this module. `evidence` names the references an integrity refusal halts the run with;
+// `transient` marks an integrity refusal that must not halt it (see haltOnIntegrity).
 class GuardRefusal {
-  constructor(code, message, identity) {
+  constructor(code, message, identity, { evidence = null, transient = false } = {}) {
     this.code = code;
     this.message = message;
     this.identity = identity;
+    this.evidence = evidence;
+    this.transient = transient;
   }
 }
 
-function refuse(code, message, identity = {}) {
-  throw new GuardRefusal(code, message, identity);
+function refuse(code, message, identity = {}, options = {}) {
+  throw new GuardRefusal(code, message, identity, options);
 }
 
 function refusalEnvelope(error) {
@@ -621,6 +631,42 @@ function prepare(root, paths, observe, input, {
 function haltRun(root, paths, loaded, actor, { reason, evidence, observation, identity = {} }) {
   const halt = commit(root, stage(loaded, actor, { kind: KINDS.RUN_HALTED, reason, evidence, observation }, paths));
   return refuse(CODES.INTEGRITY, reason, { ...identity, halt: halt.ref });
+}
+
+// The failure handler of an evidence action past `prepare`. There the chain still replays, so an
+// integrity refusal would not stop the run on its own: the next action could carry on. It appends
+// RUN_HALTED instead, with the refusal's message as the reason, its evidence (else the record carrying the
+// last observation) and the action's observation. Anything else passes through unchanged: another code,
+// a refusal that already halted the run, and a refusal marked transient.
+function haltOnIntegrity(root, paths, prepared, error) {
+  if (!(error instanceof GuardRefusal) || error.code !== CODES.INTEGRITY || Object.hasOwn(error.identity, 'halt')
+    || error.transient) {
+    throw error;
+  }
+  const last = lastObservation(prepared.loaded);
+  return haltRun(root, paths, prepared.loaded, prepared.actor, {
+    reason: error.message,
+    evidence: error.evidence ?? (last === null ? [] : [last.ref]),
+    observation: prepared.observation.digest,
+    identity: error.identity,
+  });
+}
+
+// Runs the part of an evidence action that follows `prepare` behind haltOnIntegrity.
+function haltingIntegrity(root, paths, prepared, build) {
+  try {
+    return build();
+  } catch (error) {
+    return haltOnIntegrity(root, paths, prepared, error);
+  }
+}
+
+async function haltingIntegrityAsync(root, paths, prepared, build) {
+  try {
+    return await build();
+  } catch (error) {
+    return haltOnIntegrity(root, paths, prepared, error);
+  }
 }
 
 // Stages an evidence record. A reducer refusal with the halt code is an integrity fault that stops the
@@ -1114,6 +1160,18 @@ function isListOrNone(value, valid) {
 
 const isSignals = (value) => isListOrNone(value, (item) => SIGNAL.test(item));
 
+// The digest references of those of `files` that exist and can be read, for a halt's evidence.
+function existingEvidence(root, files) {
+  return files.flatMap((path) => {
+    try {
+      const bytes = readOptional(root, path);
+      return bytes === null ? [] : [{ path, digest: sha256(bytes) }];
+    } catch {
+      return [];
+    }
+  });
+}
+
 // The bytes at a dispatch target in this run of `family`, which must be present and non-empty.
 function readTargetArtifact(root, paths, target, family, label) {
   try {
@@ -1164,18 +1222,21 @@ function autopilotWriter(root, dispatch, input) {
     refuse(CODES.INPUT_INVALID, `execution must be the authorized writer target ${dispatch.target}`,
       { execution: String(execution) });
   }
+  const files = ['baseline.json', 'capture.json', 'result.json', 'report.md'].map((stage) => `${execution}-${stage}`);
+  const unverified = (cause) => refuse(CODES.INTEGRITY, `the execution receipt does not verify: ${cause}`,
+    { execution }, { evidence: existingEvidence(root, files) });
   let receipt;
   try {
     receipt = inspectTaskResult(root, execution);
   } catch (error) {
-    refuse(CODES.INTEGRITY, `the execution receipt does not verify: ${error.message}`, { execution });
+    unverified(error.message);
   }
   if (receipt.status === 'PENDING') {
     refuse(CODES.RECEIPT_PENDING, `the execution receipt ${execution} is pending; resume it first`, { execution });
   }
-  const evidence = [`${execution}-result.json`, `${execution}-report.md`].map((path) => {
+  const evidence = files.slice(2).map((path) => {
     const bytes = readEvidence(root, path);
-    if (bytes === null) refuse(CODES.INTEGRITY, `${path} is missing`, { path });
+    if (bytes === null) unverified(`${path} is missing`);
     return { path, digest: sha256(bytes) };
   });
   const semantic = receipt.accepted || receipt.retryable;
@@ -1219,10 +1280,13 @@ function sourceBytes(root, path, work) {
       }
     }
   } catch (error) {
-    refuse(CODES.INTEGRITY, `cannot read ${path} for the candidate snapshot: ${error.message}`, { path });
+    refuse(CODES.INTEGRITY, `cannot read ${path} for the candidate snapshot: ${error.message}`, { path },
+      { transient: true });
   }
+  // Transient, never a halt: inside the open writer window the tree may still legitimately change under
+  // the read, and the writer is recorded once it has finished.
   if (bytes.length !== work.size || sha256(bytes) !== work.digest) {
-    refuse(CODES.INTEGRITY, `${path} changed while the candidate snapshot was taken`, { path });
+    refuse(CODES.INTEGRITY, `${path} changed while the candidate snapshot was taken`, { path }, { transient: true });
   }
   return bytes;
 }
@@ -1265,31 +1329,33 @@ const WRITER_KEYS = Object.freeze(['plan', 'scope', 'iteration', 'execution', 'r
 export function recordCorrectionWriter(root, input, seams = {}) {
   return act('recordCorrectionWriter', root, input, seams, WRITER_KEYS, ({ paths, observe }) => {
     const prepared = prepare(root, paths, observe, input, { authorizedWriterWindow: true });
-    const { loaded, actor, observation } = prepared;
-    const { state } = loaded;
-    const { scope, iteration } = input;
-    const step = expectStep(state, { action: 'record', scope, iteration, role: 'writer' });
-    const { cycle, entry } = stepIteration(state, step);
-    const dispatch = entry.dispatches.find((item) => item.role === 'writer');
-    const writer = state.run.drive === 'autopilot'
-      ? autopilotWriter(root, dispatch, input)
-      : manualWriter(root, paths, dispatch, input);
-    const baseline = cycleBaseline(root, paths, cycle);
-    const snapshot = candidateSnapshot(root, paths, prepared, baseline, step);
-    const staged = stage(loaded, actor, {
-      kind: KINDS.WRITER_RECORDED,
-      scope: step.scope,
-      cycle: step.cycle,
-      iteration: step.iteration,
-      status: writer.status,
-      evidence: writer.evidence,
-      responseDigest: writer.responseDigest,
-      observation: observation.digest,
-      candidate: snapshot.ref,
-      changedPaths: snapshot.changedPaths,
-    }, paths);
-    writeEvidence(root, snapshot.ref.path, snapshot.bytes);
-    return { ...mutation('record-writer', commit(root, staged)), candidate: snapshot.ref };
+    return haltingIntegrity(root, paths, prepared, () => {
+      const { loaded, actor, observation } = prepared;
+      const { state } = loaded;
+      const { scope, iteration } = input;
+      const step = expectStep(state, { action: 'record', scope, iteration, role: 'writer' });
+      const { cycle, entry } = stepIteration(state, step);
+      const dispatch = entry.dispatches.find((item) => item.role === 'writer');
+      const writer = state.run.drive === 'autopilot'
+        ? autopilotWriter(root, dispatch, input)
+        : manualWriter(root, paths, dispatch, input);
+      const baseline = cycleBaseline(root, paths, cycle);
+      const snapshot = candidateSnapshot(root, paths, prepared, baseline, step);
+      const staged = stage(loaded, actor, {
+        kind: KINDS.WRITER_RECORDED,
+        scope: step.scope,
+        cycle: step.cycle,
+        iteration: step.iteration,
+        status: writer.status,
+        evidence: writer.evidence,
+        responseDigest: writer.responseDigest,
+        observation: observation.digest,
+        candidate: snapshot.ref,
+        changedPaths: snapshot.changedPaths,
+      }, paths);
+      writeEvidence(root, snapshot.ref.path, snapshot.bytes);
+      return { ...mutation('record-writer', commit(root, staged)), candidate: snapshot.ref };
+    });
   });
 }
 
@@ -1308,16 +1374,17 @@ function lastCount(pattern, excerpt) {
   return Number.isSafeInteger(count) ? count : null;
 }
 
-// The surface-test command (first) and coherence-gate command (last) of a collector receipt.
-function receiptCommands(receipt) {
+// The surface-test command (first; null for a gate-only capture) and the coherence-gate command (last) of a
+// collector receipt.
+function receiptCommands(receipt, gateOnly) {
   const commands = Array.isArray(receipt?.commands) ? receipt.commands : [];
-  const surface = commands[0];
+  const surface = gateOnly ? null : commands[0];
   const gate = commands.findLast((command) => command?.label === COHERENCE_GATE);
   const valid = (command) => isPlainObject(command) && typeof command.passed === 'boolean'
     && (command.exitCode === null || Number.isSafeInteger(command.exitCode));
-  if (surface?.label !== 'surface-test' || !valid(surface) || !valid(gate)) {
-    throw new TypeError('the collectEvidence seam must resolve to a receipt with surface-test and coherence-gate '
-      + 'commands');
+  if ((!gateOnly && (surface?.label !== 'surface-test' || !valid(surface))) || !valid(gate)) {
+    throw new TypeError('the collectEvidence seam must resolve to a receipt with its surface-test and '
+      + 'coherence-gate commands');
   }
   return { surface, gate };
 }
@@ -1337,62 +1404,75 @@ export function recordCorrectionChecks(root, input, seams = {}) {
       throw new TypeError('recordCorrectionChecks: the graphGateArgs seam must be an array of strings');
     }
     const prepared = prepare(root, paths, observe, input);
-    const { loaded, observation } = prepared;
-    const step = expectStep(loaded.state, { action: 'checks', scope: input.scope, iteration: input.iteration });
-    const { cycle } = stepIteration(loaded.state, step);
-    const at = `${paths.dir}/${step.scope}-cycle-${step.cycle}-iteration-${step.iteration}`;
-    const evidencePath = (k) => `${at}-check-${k}-evidence.md`;
-    const record = (checks) => ({
-      kind: KINDS.CHECKS_RECORDED, scope: step.scope, cycle: step.cycle, iteration: step.iteration,
-      observation: observation.digest, checks,
-    });
-    // The order and the candidate are the reducer's to judge, before any command runs.
-    stageOrHalt(root, paths, prepared, record(cycle.checks.map((check) => ({
-      id: check.id, exitCode: null, passed: false, metric: null, evidence: { path: evidencePath(1), digest: UNCHECKED },
-    }))));
-    const surfaces = cycle.checks.filter((entry) => entry.id !== COHERENCE_GATE);
-    if (surfaces.length === 0) {
-      refuse(CODES.CAPTURE_FAILED,
-        `cycle ${step.scope}#${step.cycle} has no surface test to capture the coherence gate with`,
-        { scope: step.scope, cycle: step.cycle });
-    }
-    const results = new Map();
-    const captured = [];
-    let gate = null;
-    for (const [index, check] of surfaces.entries()) {
-      const path = evidencePath(index + 1);
-      let receipt;
-      try {
-        receipt = await collect({ repoRoot: root, evidencePath: path, testCommand: check.command, graphGateArgs });
-      } catch (error) {
-        if (error instanceof TypeError) throw error;
-        refuse(CODES.CAPTURE_FAILED, `the ${check.id} capture failed: ${error.message}`, { check: check.id });
-      }
-      const bytes = readEvidence(root, path);
-      if (bytes === null) refuse(CODES.INTEGRITY, `the ${check.id} capture wrote no evidence ${path}`, { path });
-      const evidence = { path, digest: sha256(bytes) };
-      captured.push(evidence);
-      const after = observeRoot(observe, root);
-      if (after.digest !== observation.digest) {
-        haltRun(root, paths, loaded, prepared.actor, {
-          reason: CHECKS_REASON, evidence: captured, observation: after.digest,
-          identity: { expected: observation.digest, observed: after.digest, check: check.id },
-        });
-      }
-      const commands = receiptCommands(receipt);
-      const { surface } = commands;
-      results.set(check.id, {
-        id: check.id, exitCode: surface.exitCode, passed: surface.passed,
-        metric: lastCount(FAILED_ASSERTIONS, surface.excerpt), evidence,
+    return haltingIntegrityAsync(root, paths, prepared, async () => {
+      const { loaded, observation } = prepared;
+      const step = expectStep(loaded.state, { action: 'checks', scope: input.scope, iteration: input.iteration });
+      const { cycle } = stepIteration(loaded.state, step);
+      const at = `${paths.dir}/${step.scope}-cycle-${step.cycle}-iteration-${step.iteration}`;
+      const evidencePath = (k) => `${at}-check-${k}-evidence.md`;
+      const record = (checks) => ({
+        kind: KINDS.CHECKS_RECORDED, scope: step.scope, cycle: step.cycle, iteration: step.iteration,
+        observation: observation.digest, checks,
       });
-      gate = { command: commands.gate, evidence };
-    }
-    results.set(COHERENCE_GATE, {
-      id: COHERENCE_GATE, exitCode: gate.command.exitCode, passed: gate.command.passed,
-      metric: lastCount(VIOLATIONS, gate.command.excerpt), evidence: gate.evidence,
+      // The order and the candidate are the reducer's to judge, before any command runs.
+      stageOrHalt(root, paths, prepared, record(cycle.checks.map((check) => ({
+        id: check.id, exitCode: null, passed: false, metric: null,
+        evidence: { path: evidencePath(1), digest: UNCHECKED },
+      }))));
+      const surfaces = cycle.checks.filter((entry) => entry.id !== COHERENCE_GATE);
+      // A cycle without a surface test (a final cycle that delivered no task) captures the gate alone.
+      const captures = surfaces.length === 0
+        ? [{ check: { id: COHERENCE_GATE }, request: { gateOnly: true } }]
+        : surfaces.map((check) => ({ check, request: { testCommand: check.command } }));
+      const results = new Map();
+      const captured = [];
+      // Every capture, settled or rejected, must leave the source on the candidate; else the run halts
+      // citing the evidence captured so far.
+      const haltIfMoved = (check, evidence) => {
+        const after = observeRoot(observe, root);
+        if (after.digest !== observation.digest) {
+          haltRun(root, paths, loaded, prepared.actor, {
+            reason: CHECKS_REASON, evidence, observation: after.digest,
+            identity: { expected: observation.digest, observed: after.digest, check: check.id },
+          });
+        }
+      };
+      let gate = null;
+      for (const [index, { check, request }] of captures.entries()) {
+        const path = evidencePath(index + 1);
+        let receipt;
+        try {
+          receipt = await collect({ repoRoot: root, evidencePath: path, ...request, graphGateArgs });
+        } catch (error) {
+          if (error instanceof TypeError) throw error;
+          haltIfMoved(check, [...captured, ...existingEvidence(root, [path])]);
+          refuse(CODES.CAPTURE_FAILED, `the ${check.id} capture failed: ${error.message}`, { check: check.id });
+        }
+        const bytes = readEvidence(root, path);
+        if (bytes === null) {
+          refuse(CODES.INTEGRITY, `the ${check.id} capture wrote no evidence ${path}`, { path },
+            { evidence: captured.length === 0 ? null : [...captured] });
+        }
+        const evidence = { path, digest: sha256(bytes) };
+        captured.push(evidence);
+        haltIfMoved(check, captured);
+        const commands = receiptCommands(receipt, request.gateOnly === true);
+        const { surface } = commands;
+        if (surface !== null) {
+          results.set(check.id, {
+            id: check.id, exitCode: surface.exitCode, passed: surface.passed,
+            metric: lastCount(FAILED_ASSERTIONS, surface.excerpt), evidence,
+          });
+        }
+        gate = { command: commands.gate, evidence };
+      }
+      results.set(COHERENCE_GATE, {
+        id: COHERENCE_GATE, exitCode: gate.command.exitCode, passed: gate.command.passed,
+        metric: lastCount(VIOLATIONS, gate.command.excerpt), evidence: gate.evidence,
+      });
+      const staged = stageOrHalt(root, paths, prepared, record(cycle.checks.map((check) => results.get(check.id))));
+      return mutation('verify-check', commit(root, staged));
     });
-    const staged = stageOrHalt(root, paths, prepared, record(cycle.checks.map((check) => results.get(check.id))));
-    return mutation('verify-check', commit(root, staged));
   }, CHECKS_SEAM_KEYS);
 }
 
@@ -1443,7 +1523,9 @@ function manualReviewer(root, paths, dispatch, input) {
 }
 
 // The autopilot reviewer: the reviewer-response receipt the reviewer was authorized for, which must
-// verify on resume. A receipt without a semantic status is INVALID.
+// verify on resume. A receipt without a semantic status is INVALID. A receipt that cannot be trusted is an
+// integrity refusal citing the receipt files; when its baseline or stored result shows the source
+// changed, or that the source could not be observed, the refusal names the unauthorized change.
 function autopilotReviewer(root, dispatch, input) {
   if (isSupplied(input.response)) {
     refuse(CODES.INPUT_INVALID, 'an autopilot reviewer is recorded from its review guard state, not a response', {});
@@ -1453,26 +1535,35 @@ function autopilotReviewer(root, dispatch, input) {
     refuse(CODES.INPUT_INVALID, `reviewState must be the authorized reviewer target ${dispatch.target}`,
       { reviewState: String(prefix) });
   }
+  const [baselinePath, originalPath] = [`${prefix}-baseline.json`, `${prefix}-original.json`];
+  const stored = existingEvidence(root, [baselinePath, originalPath]);
+  const untrusted = (message) => refuse(CODES.INTEGRITY, message, { reviewState: prefix }, { evidence: stored });
+  const parsed = (path) => {
+    try {
+      const bytes = readOptional(root, path);
+      return bytes === null ? null : JSON.parse(bytes.toString('utf8'));
+    } catch {
+      return null;
+    }
+  };
+  const baseline = parsed(baselinePath);
+  const observed = parsed(originalPath)?.observation;
+  if ((isPlainObject(baseline) && baseline.snapshot !== dispatch.observation)
+    || (isPlainObject(observed) && (observed.error !== null || observed.snapshot !== baseline?.snapshot))) {
+    untrusted(REVIEW_REASON);
+  }
   let result;
   try {
     result = inspectReview(root, prefix);
   } catch (error) {
-    refuse(CODES.INTEGRITY, `the review receipt does not verify: ${error.message}`, { reviewState: prefix });
+    untrusted(`the review receipt does not verify: ${error.message}`);
   }
   if (!Object.hasOwn(result, 'observation')) {
-    refuse(CODES.INTEGRITY, `the review receipt ${prefix} does not verify on resume: ${result.reason}`,
-      { reviewState: prefix });
+    untrusted(`the review receipt does not verify on resume: ${result.reason}`);
   }
-  const [baselinePath, originalPath] = [`${prefix}-baseline.json`, `${prefix}-original.json`];
-  const baselineBytes = readEvidence(root, baselinePath);
-  const { config } = JSON.parse(baselineBytes.toString('utf8'));
   return {
     status: result.envelope === undefined ? 'INVALID' : result.status,
-    evidence: [
-      { path: baselinePath, digest: sha256(baselineBytes) },
-      { path: originalPath, digest: sha256(readEvidence(root, originalPath)) },
-      ...nonEmptyEvidence(root, [config.report, config.issues]),
-    ],
+    evidence: [...stored, ...nonEmptyEvidence(root, [baseline.config.report, baseline.config.issues])],
   };
 }
 
@@ -1517,53 +1608,56 @@ export function recordCorrectionReview(root, input, seams = {}) {
       refuse(CODES.INPUT_INVALID, `role must be one of: ${[...REVIEWER_ROLES].join(', ')}`,
         { role: String(input.role) });
     }
-    try {
-      parseWorkPath(input.defects, 'work-output', 'correction-defects');
-      if (!input.defects.startsWith(`${paths.dir}/`)) throw new Error(`it is not in ${paths.dir}`);
-    } catch (error) {
-      refuse(CODES.INPUT_INVALID, `defects must be a correction-defects path of this run: ${error.message}`,
-        { defects: String(input.defects) });
-    }
     const prepared = prepare(root, paths, observe, input, { driftReason: REVIEW_REASON });
-    const { loaded, observation } = prepared;
-    const { state } = loaded;
-    const { scope, iteration, role } = input;
-    const step = expectStep(state, { action: 'record', scope, iteration, role });
-    const { entry } = stepIteration(state, step);
-    const dispatch = entry.dispatches.find((item) => item.role === step.role);
-    const ownerTask = input.ownerTask ?? null;
-    if (ownerTask !== dispatch.ownerTask) {
-      refuse(REFUSAL.ROLE_NOT_ALLOWED,
-        `the ${step.role} was authorized for owner task ${dispatch.ownerTask}, not ${ownerTask}`,
-        { ownerTask: String(ownerTask) });
-    }
-    const reviewer = state.run.drive === 'autopilot'
-      ? autopilotReviewer(root, dispatch, input)
-      : manualReviewer(root, paths, dispatch, input);
-    const defectsBytes = readEvidence(root, input.defects);
-    const evidence = [
-      ...reviewer.evidence, ...(defectsBytes === null ? [] : [{ path: input.defects, digest: sha256(defectsBytes) }]),
-    ];
-    const assessed = VERDICTS.has(reviewer.status)
-      ? assessDefects(state, step, ownerTask, reviewer.status, defectsBytes)
-      : { status: reviewer.status, defects: [], rubric: [] };
-    if (evidence.length === 0) {
-      refuse(CODES.INPUT_INVALID, `the ${step.role} left no artifact to prove its ${assessed.status} review`, {});
-    }
-    const record = ({ status, defects, rubric }) => ({
-      kind: KINDS.REVIEW_RECORDED, scope: step.scope, cycle: step.cycle, iteration: step.iteration, role: step.role,
-      ownerTask, status, defects, rubric, evidence, before: dispatch.observation, after: observation.digest,
+    return haltingIntegrity(root, paths, prepared, () => {
+      const { loaded, observation } = prepared;
+      const { state } = loaded;
+      const { scope, iteration, role } = input;
+      const step = expectStep(state, { action: 'record', scope, iteration, role });
+      // The defects artifact is named for exactly this step; a final-scope task review, which shares its
+      // iteration with the final review, names its own.
+      const defectsPath = `${paths.dir}/${step.scope}-cycle-${step.cycle}-iteration-${step.iteration}`
+        + `${step.scope === 'final' && step.role === 'task-reviewer' ? '-task-reviewer' : ''}-defects.json`;
+      if (input.defects !== defectsPath) {
+        refuse(CODES.INPUT_INVALID, `defects must be ${defectsPath}, the defects artifact of this ${step.role}`,
+          { defects: String(input.defects) });
+      }
+      const { entry } = stepIteration(state, step);
+      const dispatch = entry.dispatches.find((item) => item.role === step.role);
+      const ownerTask = input.ownerTask ?? null;
+      if (ownerTask !== dispatch.ownerTask) {
+        refuse(REFUSAL.ROLE_NOT_ALLOWED,
+          `the ${step.role} was authorized for owner task ${dispatch.ownerTask}, not ${ownerTask}`,
+          { ownerTask: String(ownerTask) });
+      }
+      const reviewer = state.run.drive === 'autopilot'
+        ? autopilotReviewer(root, dispatch, input)
+        : manualReviewer(root, paths, dispatch, input);
+      const defectsBytes = readEvidence(root, defectsPath);
+      const evidence = [
+        ...reviewer.evidence, ...(defectsBytes === null ? [] : [{ path: defectsPath, digest: sha256(defectsBytes) }]),
+      ];
+      const assessed = VERDICTS.has(reviewer.status)
+        ? assessDefects(state, step, ownerTask, reviewer.status, defectsBytes)
+        : { status: reviewer.status, defects: [], rubric: [] };
+      if (evidence.length === 0) {
+        refuse(CODES.INPUT_INVALID, `the ${step.role} left no artifact to prove its ${assessed.status} review`, {});
+      }
+      const record = ({ status, defects, rubric }) => ({
+        kind: KINDS.REVIEW_RECORDED, scope: step.scope, cycle: step.cycle, iteration: step.iteration, role: step.role,
+        ownerTask, status, defects, rubric, evidence, before: dispatch.observation, after: observation.digest,
+      });
+      let recorded = assessed;
+      let staged;
+      try {
+        staged = stageOrHalt(root, paths, prepared, record(recorded), { reason: REVIEW_REASON });
+      } catch (error) {
+        if (!(error instanceof GuardRefusal) || !REVIEW_REFUSALS.has(error.code)) throw error;
+        recorded = { status: 'INVALID', defects: [], rubric: [] };
+        staged = stageOrHalt(root, paths, prepared, record(recorded), { reason: REVIEW_REASON });
+      }
+      return { ...mutation('record-review', commit(root, staged)), status: recorded.status };
     });
-    let recorded = assessed;
-    let staged;
-    try {
-      staged = stageOrHalt(root, paths, prepared, record(recorded), { reason: REVIEW_REASON });
-    } catch (error) {
-      if (!(error instanceof GuardRefusal) || !REVIEW_REFUSALS.has(error.code)) throw error;
-      recorded = { status: 'INVALID', defects: [], rubric: [] };
-      staged = stageOrHalt(root, paths, prepared, record(recorded), { reason: REVIEW_REASON });
-    }
-    return { ...mutation('record-review', commit(root, staged)), status: recorded.status };
   });
 }
 
@@ -1615,39 +1709,41 @@ function matchesCurrentBytes(root, observation, { path, digest }) {
 export function recordCorrectionDiagnosis(root, input, seams = {}) {
   return act('recordCorrectionDiagnosis', root, input, seams, DIAGNOSIS_KEYS, ({ paths, observe }) => {
     const prepared = prepare(root, paths, observe, input, { driftReason: DIAGNOSIS_REASON });
-    const { loaded, observation } = prepared;
-    const { state } = loaded;
-    const { scope, iteration } = input;
-    const step = expectStep(state, { action: 'record', scope, iteration, role: 'diagnostic' });
-    const { cycle, entry } = stepIteration(state, step);
-    const dispatch = entry.dispatches.find((item) => item.role === 'diagnostic');
-    const target = `${paths.dir}/${step.scope}-cycle-${step.cycle}-iteration-${step.iteration}-diagnosis.json`;
-    if (dispatch.target !== target) {
-      refuse(CODES.INPUT_INVALID, `the diagnostic is authorized for ${dispatch.target}, not the diagnosis ${target}`,
-        { target: dispatch.target });
-    }
-    const bytes = responseBytes(input.response, 'a diagnosis');
-    const artifact = readEvidence(root, target);
-    if (artifact === null) refuse(CODES.INPUT_INVALID, `the diagnosis ${target} is missing`, { target });
-    const fields = parseFields(bytes, state.run.drive === 'autopilot' ? AUTOPILOT_DIAGNOSIS_FIELDS : MANUAL_FIELDS);
-    // DIAGNOSED is the one valid status; INCONCLUSIVE, BLOCKED, NEEDS_CONTEXT or a malformed response is not.
-    const diagnosed = fields !== null && fields.status === 'DIAGNOSED' && fields.artifact === target
-      && isSignals(fields.signals) && (fields['changed-paths'] ?? 'none') === 'none';
-    const body = diagnosisBody(artifact, step);
-    const confirmations = new Set([...cycle.checks.map((check) => check.id), ...REVIEW_CONFIRMATIONS]);
-    const valid = diagnosed && body !== null
-      && ['hypothesis', 'remedy', 'recommendation'].every((field) => isText(body[field]))
-      && confirmations.has(body.confirmingCheck)
-      && body.evidence.every((reference) => matchesCurrentBytes(root, observation, reference));
-    const record = {
-      kind: KINDS.DIAGNOSIS_RECORDED, scope: step.scope, cycle: step.cycle, iteration: step.iteration, valid,
-      ...Object.fromEntries(DIAGNOSIS_TEXT_FIELDS.map((field) => [field, body?.[field] ?? ''])),
-      artifact: { path: target, digest: sha256(artifact) },
-      before: dispatch.observation,
-      after: observation.digest,
-    };
-    const staged = stageOrHalt(root, paths, prepared, record, { reason: DIAGNOSIS_REASON });
-    return { ...mutation('record-diagnosis', commit(root, staged)), valid };
+    return haltingIntegrity(root, paths, prepared, () => {
+      const { loaded, observation } = prepared;
+      const { state } = loaded;
+      const { scope, iteration } = input;
+      const step = expectStep(state, { action: 'record', scope, iteration, role: 'diagnostic' });
+      const { cycle, entry } = stepIteration(state, step);
+      const dispatch = entry.dispatches.find((item) => item.role === 'diagnostic');
+      const target = `${paths.dir}/${step.scope}-cycle-${step.cycle}-iteration-${step.iteration}-diagnosis.json`;
+      if (dispatch.target !== target) {
+        refuse(CODES.INPUT_INVALID, `the diagnostic is authorized for ${dispatch.target}, not the diagnosis ${target}`,
+          { target: dispatch.target });
+      }
+      const bytes = responseBytes(input.response, 'a diagnosis');
+      const artifact = readEvidence(root, target);
+      if (artifact === null) refuse(CODES.INPUT_INVALID, `the diagnosis ${target} is missing`, { target });
+      const fields = parseFields(bytes, state.run.drive === 'autopilot' ? AUTOPILOT_DIAGNOSIS_FIELDS : MANUAL_FIELDS);
+      // DIAGNOSED is the one valid status; INCONCLUSIVE, BLOCKED, NEEDS_CONTEXT or a malformed response is not.
+      const diagnosed = fields !== null && fields.status === 'DIAGNOSED' && fields.artifact === target
+        && isSignals(fields.signals) && (fields['changed-paths'] ?? 'none') === 'none';
+      const body = diagnosisBody(artifact, step);
+      const confirmations = new Set([...cycle.checks.map((check) => check.id), ...REVIEW_CONFIRMATIONS]);
+      const valid = diagnosed && body !== null
+        && ['hypothesis', 'remedy', 'recommendation'].every((field) => isText(body[field]))
+        && confirmations.has(body.confirmingCheck)
+        && body.evidence.every((reference) => matchesCurrentBytes(root, observation, reference));
+      const record = {
+        kind: KINDS.DIAGNOSIS_RECORDED, scope: step.scope, cycle: step.cycle, iteration: step.iteration, valid,
+        ...Object.fromEntries(DIAGNOSIS_TEXT_FIELDS.map((field) => [field, body?.[field] ?? ''])),
+        artifact: { path: target, digest: sha256(artifact) },
+        before: dispatch.observation,
+        after: observation.digest,
+      };
+      const staged = stageOrHalt(root, paths, prepared, record, { reason: DIAGNOSIS_REASON });
+      return { ...mutation('record-diagnosis', commit(root, staged)), valid };
+    });
   });
 }
 
@@ -1660,26 +1756,36 @@ const ISOLATION_KEYS = Object.freeze(['plan', 'scope', ...ACTOR_INPUT]);
 export function proveCorrectionIsolation(root, input, seams = {}) {
   return act('proveCorrectionIsolation', root, input, seams, ISOLATION_KEYS, ({ paths, observe }) => {
     const prepared = prepare(root, paths, observe, input);
-    const { loaded, actor, observation } = prepared;
-    const { state } = loaded;
-    const step = expectStep(state, { action: 'prove-isolation', scope: input.scope });
-    const decision = decideIsolation(state, { scope: step.scope, cycle: step.cycle, observation: observation.digest });
-    if (!decision.proven) {
-      const { bestCandidate, changedPaths } = decision.recovery;
-      const baseline = cycleBaseline(root, paths, state.cycles[`${step.scope}#${step.cycle}`]);
-      haltRun(root, paths, loaded, actor, {
-        reason: `the isolation of ${step.scope}#${step.cycle} is unprovable; changed paths: `
-          + `${changedPaths.length === 0 ? 'none' : changedPaths.join(', ')}`,
-        evidence: [...(bestCandidate.snapshot === null ? [] : [bestCandidate.snapshot]), baseline.ref],
-        observation: observation.digest,
-        identity: { recovery: { bestCandidate, baseline: baseline.ref, changedPaths } },
+    return haltingIntegrity(root, paths, prepared, () => {
+      const { loaded, actor, observation } = prepared;
+      const { state } = loaded;
+      const step = expectStep(state, { action: 'prove-isolation', scope: input.scope });
+      const decision = decideIsolation(state, {
+        scope: step.scope, cycle: step.cycle, observation: observation.digest,
       });
-    }
-    const staged = stageOrHalt(root, paths, prepared, {
-      kind: KINDS.ISOLATION_RECORDED, scope: step.scope, cycle: step.cycle, mode: decision.mode,
-      observation: observation.digest,
+      if (!decision.proven) {
+        const { bestCandidate, changedPaths } = decision.recovery;
+        // The halt still names the best candidate when the baseline artifact itself cannot be read.
+        let baseline = null;
+        try {
+          baseline = cycleBaseline(root, paths, state.cycles[`${step.scope}#${step.cycle}`]).ref;
+        } catch (error) {
+          if (!(error instanceof GuardRefusal)) throw error;
+        }
+        haltRun(root, paths, loaded, actor, {
+          reason: `the isolation of ${step.scope}#${step.cycle} is unprovable; changed paths: `
+            + `${changedPaths.length === 0 ? 'none' : changedPaths.join(', ')}`,
+          evidence: [bestCandidate.snapshot, baseline].filter((reference) => reference !== null),
+          observation: observation.digest,
+          identity: { recovery: { bestCandidate, baseline, changedPaths } },
+        });
+      }
+      const staged = stageOrHalt(root, paths, prepared, {
+        kind: KINDS.ISOLATION_RECORDED, scope: step.scope, cycle: step.cycle, mode: decision.mode,
+        observation: observation.digest,
+      });
+      return { ...mutation('prove-isolation', commit(root, staged)), mode: decision.mode };
     });
-    return { ...mutation('prove-isolation', commit(root, staged)), mode: decision.mode };
   });
 }
 
@@ -1712,8 +1818,9 @@ actions:
 
 Every mutating action (all but next and verify) takes --run-id <id> --attempt <n> on an autopilot drive
 and refuses them on a manual drive; reopen refuses them on every drive.
-record-writer and record-review on a manual drive (no --execution, no --review-state) read the child's
-four-field response from stdin; record-diagnosis reads the diagnostic's response from stdin on every drive.
+record-writer and record-review read the child's four-field response from stdin on a manual drive only (an
+autopilot drive binds --execution / --review-state and never reads stdin); record-diagnosis reads the
+diagnostic's response from stdin on every drive.
 Stdout carries exactly one JSON line.
 
 Exit codes:
@@ -1779,14 +1886,14 @@ const CLI_ACTIONS = Object.freeze({
     run: recordCorrectionWriter,
     required: ['scope', 'iteration'],
     optional: ['execution', ...ACTOR_OPTIONS],
-    stdin: (values) => values.execution === undefined,
+    stdin: (values, drive) => values.execution === undefined && drive() !== 'autopilot',
   },
   'verify-check': { run: recordCorrectionChecks, required: ['scope', 'iteration'], optional: ACTOR_OPTIONS },
   'record-review': {
     run: recordCorrectionReview,
     required: ['scope', 'iteration', 'role', 'defects'],
     optional: ['owner-task', 'review-state', ...ACTOR_OPTIONS],
-    stdin: (values) => values['review-state'] === undefined,
+    stdin: (values, drive) => values['review-state'] === undefined && drive() !== 'autopilot',
   },
   'record-diagnosis': {
     run: recordCorrectionDiagnosis, required: ['scope', 'iteration'], optional: ACTOR_OPTIONS, stdin: () => true,
@@ -1858,7 +1965,18 @@ function parseCli(argv) {
   for (const name of [...spec.required, ...spec.optional]) {
     if (values[name] !== undefined) input[camelCase(name)] = optionValue(name, values[name]);
   }
-  return { root, run: spec.run, input, stdin: spec.stdin?.(values) ?? false };
+  return { root, run: spec.run, input, stdin: spec.stdin?.(values, () => runDrive(root, values.plan)) ?? false };
+}
+
+// The drive of the run, read only to decide whether stdin carries a manual response; null when the run
+// cannot be read, in which case the action itself reports why.
+function runDrive(root, plan) {
+  try {
+    return load(root, runPaths(plan)).state.run?.drive ?? null;
+  } catch (error) {
+    if (error instanceof GuardRefusal) return null;
+    throw error;
+  }
 }
 
 function exitCodeFor(result) {

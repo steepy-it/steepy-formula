@@ -1018,20 +1018,80 @@ test('the autopilot writer refuses a pending receipt, another execution or a res
   assert.equal(exists(candidatePath(1)), false);
 }));
 
-test('receipt or report drift after the writer reported is an integrity failure (exit 3)', () => {
+// The run is halted: the record at `seq` is RUN_HALTED, and every later action refuses the halted run.
+function assertHalted(repo, seq, label, actor = {}) {
+  assert.equal(repo.json(recordPath(seq)).record.kind, 'RUN_HALTED', label);
+  assert.equal(nextCorrectionAction(repo.root, manual()).code, CORRECTION_GUARD_CODES.RUN_HALTED, label);
+  const later = recordCorrectionInterruption(repo.root, manual({ scope: 'task-1', iteration: 1, reason: 'crash', ...actor }));
+  assert.equal(later.code, CORRECTION_GUARD_CODES.RUN_HALTED, label);
+  assert.equal(repo.exists(recordPath(seq + 1)), false, label);
+}
+
+const receiptFiles = (state) => ['baseline.json', 'capture.json', 'result.json', 'report.md'].map((stage) => `${state}-${stage}`);
+
+test('receipt or report drift after the writer reported halts the run (exit 3)', () => {
   const drifts = {
-    'a source edit after the receipt': (put) => put('source.txt', 'edited after the receipt\n'),
-    'a report edit after the receipt': (put) => put(TASK_REPORT, 'edited report\n'),
+    'a source edit after the receipt': [(put) => put('source.txt', 'edited after the receipt\n'), 'task source snapshot drift'],
+    'a report-only edit after the receipt': [(put) => put(TASK_REPORT, 'edited report\n'), 'task report drift'],
   };
-  for (const [label, drift] of Object.entries(drifts)) {
+  for (const [label, [drift, cause]] of Object.entries(drifts)) {
     withRepo(PLAN_TWO, (repo) => {
-      autopilotWriterReported(repo);
+      const actor = autopilotWriterReported(repo);
       drift(repo.put);
       const result = cli(repo.root, ['--action', 'record-writer', '--scope', 'task-1', '--iteration', '1',
         '--execution', EXECUTION, '--run-id', 'run-1', '--attempt', '1']);
       assert.equal(result.status, 3, label);
       assert.equal(result.json.code, CORRECTION_GUARD_CODES.INTEGRITY, label);
+      assert.equal(result.json.message, `the execution receipt does not verify: ${cause}`, label);
+      const { record } = repo.json(recordPath(5));
+      assert.equal(record.reason, result.json.message, label);
+      assert.deepEqual(record.evidence, receiptFiles(EXECUTION).map((path) => ({ path, digest: sha256(repo.bytes(path)) })), label);
+      assert.equal(record.observation, observeSource(repo.root).digest, label);
       assert.equal(repo.exists(candidatePath(1)), false, label);
+      assertHalted(repo, 5, label, actor);
+    });
+  }
+});
+
+test('an integrity failure after the preparation of an evidence action halts the run', async () => {
+  const halts = {
+    'a corrupt cycle baseline before the writer': (repo) => {
+      manualWriterAuthorized(repo.root);
+      repo.put(baselinePath('task-1', 1), '{"version":1,"observation":null}\n');
+      repo.put(TASK_REPORT, 'report\n');
+      return [recordWriter(repo.root), 5];
+    },
+    'a candidate snapshot left with other bytes': (repo) => {
+      manualWriterAuthorized(repo.root);
+      repo.put('source.txt', 'changed by the writer\n');
+      repo.put(candidatePath(1), 'stale\n');
+      repo.put(TASK_REPORT, 'report\n');
+      return [recordWriter(repo.root), 5];
+    },
+    'a capture that wrote no evidence': async (repo) => {
+      manualWriterRecorded(repo);
+      const collectEvidence = async () => ({ commands: [] });
+      return [await verifyCheck(repo.root, { collectEvidence }), 6];
+    },
+    'a symlinked review artifact': async (repo) => {
+      await manualReviewAuthorized(repo);
+      symlinkSync(join(repo.root, 'source.txt'), join(repo.root, REVIEW));
+      repo.put(DEFECTS, defectsBody());
+      return [recordReview(repo.root), 8];
+    },
+    'a symlinked diagnosis artifact': (repo) => {
+      diagnosisAuthorized(repo.root);
+      repo.put(`${CORRECTION}/elsewhere.json`, diagnosisBody());
+      symlinkSync(join(repo.root, CORRECTION, 'elsewhere.json'), join(repo.root, DIAGNOSIS));
+      return [recordDiagnosis(repo.root), 7];
+    },
+  };
+  for (const [label, act] of Object.entries(halts)) {
+    await withRepo(PLAN_TWO, async (repo) => {
+      const [result, seq] = await act(repo);
+      assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY, `${label}: ${result.message}`);
+      assert.equal(repo.json(recordPath(seq)).record.reason, result.message, label);
+      assertHalted(repo, seq, label);
     });
   }
 });
@@ -1069,7 +1129,10 @@ function collector({ surface = {}, gate = {}, during = () => {} } = {}) {
     writeFileSync(join(options.repoRoot, options.evidencePath), `# Review evidence\n\n${options.testCommand}\n`);
     during(options);
     const command = (label, excerpt, overrides) => ({ label, exitCode: 0, passed: true, excerpt, ...overrides });
-    const commands = [command('surface-test', '# fail 0\n', surface), command('coherence-gate', '  violations: 0\n', gate)];
+    const commands = [
+      ...(options.gateOnly ? [] : [command('surface-test', '# fail 0\n', surface)]),
+      command('coherence-gate', '  violations: 0\n', gate),
+    ];
     return { schemaVersion: 1, artifact: options.evidencePath, allPassed: commands.every((entry) => entry.passed), commands };
   };
   return { collectEvidence, calls };
@@ -1103,6 +1166,7 @@ test('verify-check parses the last failure count and violation count, else a nul
   const cases = [
     ['a failure with # fail 3', { exitCode: 1, passed: false, excerpt: '# fail 1\n# subtest\n# fail 3\n' }, {}, [3, 0]],
     ['a missing summary', { exitCode: 1, passed: false, excerpt: 'Error: cannot find module\n' }, {}, [null, 0]],
+    ['CRLF output', { exitCode: 1, passed: false, excerpt: '# tests 5\r\n# fail 2\r\n' }, {}, [2, 0]],
     ['coherence-gate violations', {}, { exitCode: 1, passed: false, excerpt: '  violations: 5\n...\n  violations: 2\n' }, [0, 2]],
     ['a gate without a count', {}, { exitCode: 1, passed: false, excerpt: 'engine unreachable\n' }, [0, null]],
   ];
@@ -1188,6 +1252,26 @@ test('a collector failure refuses the checks without recording them', () => with
   assert.equal(repo.exists(recordPath(6)), false);
 }));
 
+test('a capture that changes the source and then rejects halts the run instead of failing the capture', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  manualWriterRecorded(repo);
+  const collectEvidence = async (options) => {
+    writeFileSync(join(options.repoRoot, options.evidencePath), '# Review evidence\n\npartial\n');
+    put('source.txt', 'mutated by the test command before it timed out\n');
+    throw new Error('process-group convergence timed out');
+  };
+  const result = await verifyCheck(root, { collectEvidence });
+  assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY);
+  assert.equal(result.message, CHECKS_HALT);
+  const { record } = json(recordPath(6));
+  assert.deepEqual(record, {
+    kind: 'RUN_HALTED', reason: CHECKS_HALT,
+    evidence: [{ path: checkEvidencePath(1), digest: sha256(bytes(checkEvidencePath(1))) }],
+    observation: observeSource(root).digest,
+  });
+  assertHalted(repo, 6, 'a rejected capture that changed the source');
+}));
+
 test('only verify-check takes the collector seams, and they are checked', () => withRepo(PLAN_TWO, async (repo) => {
   const { root } = repo;
   manualWriterRecorded(repo);
@@ -1236,6 +1320,62 @@ test('a final cycle captures every surface test, each with its own evidence, and
   assert.deepEqual(record.checks.map((check) => [check.id, check.evidence]), [
     ['surface-test-1', digest(1)], ['surface-test-2', digest(2)], ['coherence-gate', digest(2)],
   ]);
+}));
+
+const PLAN_ONE = planText(planTask(1));
+const FINAL_REVIEW = `${RUN}/final-review.md`;
+const finalDefectsPath = (iteration, role = '') => `${CORRECTION}/final-cycle-1-iteration-${iteration}${role}-defects.json`;
+
+// A one-task plan whose task stopped and proved its isolation: the final cycle opens with no delivered
+// task, so its only check is the coherence gate, and its final reviewer is authorized.
+function gateOnlyFinalAuthorized({ root, json }) {
+  interruptedRun(root);
+  assert.equal(stopCorrectionCycle(root, manual({ scope: 'task-1', reason: 'HUMAN_INTERRUPTED', note: 'paused' })).ok, true);
+  assert.equal(proveCorrectionIsolation(root, manual({ scope: 'task-1' })).ok, true);
+  assert.equal(openCorrectionCycle(root, manual({ scope: 'final' })).ok, true);
+  assert.deepEqual(json(recordPath(7)).record.checks, [{ id: 'coherence-gate', command: 'builtin' }]);
+  reserveCorrectionIteration(root, manual({ scope: 'final', iteration: 1, kind: 'initial' }));
+  assert.equal(authorizeCorrectionDispatch(root, manual({
+    scope: 'final', iteration: 1, role: 'final-reviewer', target: FINAL_REVIEW,
+  })).ok, true);
+}
+
+test('a final cycle without a delivered task captures the coherence gate alone and can conclude', () => withRepo(PLAN_ONE, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  gateOnlyFinalAuthorized(repo);
+  const { collectEvidence, calls } = collector({ gate: { excerpt: 'graph validate\n  violations: 0\n' } });
+  const checked = await recordCorrectionChecks(root, manual({ scope: 'final', iteration: 1 }),
+    { collectEvidence, graphGateArgs: ['--port', 'memory'] });
+  assert.equal(checked.ok, true, checked.message);
+  const path = checkEvidencePath(1, 1, 'final');
+  assert.deepEqual(calls, [{ repoRoot: root, evidencePath: path, gateOnly: true, graphGateArgs: ['--port', 'memory'] }]);
+  assert.deepEqual(json(recordPath(10)).record, {
+    kind: 'CHECKS_RECORDED', scope: 'final', cycle: 1, iteration: 1, observation: observeSource(root).digest,
+    checks: [{ id: 'coherence-gate', exitCode: 0, passed: true, metric: 0, evidence: { path, digest: sha256(bytes(path)) } }],
+  });
+  put(FINAL_REVIEW, 'Status: Approved\n');
+  put(finalDefectsPath(1), defectsBody({ scope: 'final' }));
+  const reviewed = recordCorrectionReview(root, manual({
+    scope: 'final', iteration: 1, role: 'final-reviewer', defects: finalDefectsPath(1),
+    response: reviewResponse({ artifact: FINAL_REVIEW }),
+  }));
+  assert.equal(reviewed.ok, true, reviewed.message);
+  assert.equal(reviewed.status, 'APPROVED');
+  assert.equal(reviewed.next.action, 'terminal');
+  assert.equal(reviewed.next.summary.outcome, 'PARTIAL');
+  assert.equal(reviewed.next.summary.final.status, 'APPROVED');
+}));
+
+test('a source change during a gate-only capture halts the run', () => withRepo(PLAN_ONE, async (repo) => {
+  const { root, put, json } = repo;
+  gateOnlyFinalAuthorized(repo);
+  const { collectEvidence } = collector({ during: () => put('source.txt', 'mutated during the gate\n') });
+  const result = await recordCorrectionChecks(root, manual({ scope: 'final', iteration: 1 }), { collectEvidence });
+  assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY);
+  assert.equal(result.message, CHECKS_HALT);
+  const { record } = json(recordPath(10));
+  assert.deepEqual([record.kind, record.observation], ['RUN_HALTED', observeSource(root).digest]);
+  assert.deepEqual(record.evidence.map((item) => item.path), [checkEvidencePath(1, 1, 'final')]);
 }));
 
 // --- review ---------------------------------------------------------------------------------------
@@ -1303,6 +1443,45 @@ test('a manual APPROVED review is recorded with its artifact and defects digests
   });
   assert.deepEqual(result.next, { action: 'open-cycle', scope: 'task-2' });
 }));
+
+test('a correction review is judged against the previous comparable outcome: a defect may supersede only a reported one', async () => {
+  const defects2 = `${CORRECTION}/task-1-cycle-1-iteration-2-defects.json`;
+  const setup = async (repo) => {
+    const { root, put, bytes } = repo;
+    await manualReviewAuthorized(repo);
+    put(REVIEW, 'Status: Issues Found\n');
+    put(ISSUES, '- add the regression test\n');
+    put(DEFECTS, defectsBody({ verdict: 'ISSUES_FOUND', defects: [defectEntry()] }));
+    assert.equal(recordReview(root, { response: reviewResponse({ status: 'ISSUES_FOUND', artifact: ISSUES }) }).status, 'ISSUES_FOUND');
+    put(retryPath(1), `${JSON.stringify(retryRequest({ path: ISSUES, digest: sha256(bytes(ISSUES)) }, {
+      kind: 'defect', confirmingCheck: 'review', observedFailure: 'the review found no regression test',
+      hypothesis: 'the writer skipped the regression case', remedy: 'add the regression test',
+      difference: 'the correction adds the missing case',
+    }))}\n`);
+    assert.equal(admitCorrectionRetry(root, manual({ request: retryPath(1) })).ok, true);
+    reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 2, kind: 'correction' }));
+    authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 2, role: 'writer', target: TASK_REPORT }));
+    put('source.txt', 'corrected by the writer\n');
+    put(TASK_REPORT, 'report 2\n');
+    assert.equal(recordWriter(root, { iteration: 2 }).ok, true);
+    assert.equal((await verifyCheck(root, { collectEvidence: collector().collectEvidence }, { iteration: 2 })).ok, true);
+    authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 2, role: 'task-reviewer', target: REVIEW }));
+  };
+  const superseding = (supersedes) => defectEntry({
+    cause: 'missing-edge-test', severity: 'important', supersedes,
+    justification: 'the regression test landed; its edge case is still missing',
+  });
+  const cases = [
+    ['a defect superseding the reported one', superseding('SC1/review/missing-test'), 'ISSUES_FOUND'],
+    ['a defect superseding one never reported', superseding('SC1/review/never-reported'), 'INVALID'],
+  ];
+  await withCopies(PLAN_TWO, setup, cases, ({ root, put, json }, [label, entry, status]) => {
+    put(defects2, defectsBody({ iteration: 2, verdict: 'ISSUES_FOUND', defects: [entry] }));
+    const result = recordReview(root, { iteration: 2, defects: defects2, response: reviewResponse({ status: 'ISSUES_FOUND', artifact: ISSUES }) });
+    assert.equal(result.ok, true, `${label}: ${result.message}`);
+    assert.equal(json(result.ref.path).record.status, status, label);
+  });
+});
 
 test('a manual ISSUES_FOUND review names its issues artifact and records the reviewer defects', () => withRepo(PLAN_TWO, async (repo) => {
   const { root, put, bytes, json } = repo;
@@ -1413,6 +1592,11 @@ test('record-review refuses another role, owner task, defects path or a review t
   assert.equal(recordReview(root, { defects: `${RUN}/defects.json` }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
   assert.equal(recordReview(root, { defects: '.formula/work/tasks/other/correction/task-1-cycle-1-iteration-1-defects.json' }).code,
     CORRECTION_GUARD_CODES.INPUT_INVALID);
+  for (const misnamed of ['task-2-cycle-1-iteration-1', 'task-1-cycle-2-iteration-1', 'task-1-cycle-1-iteration-2']) {
+    put(`${CORRECTION}/${misnamed}-defects.json`, defectsBody());
+    assert.equal(recordReview(root, { defects: `${CORRECTION}/${misnamed}-defects.json` }).code,
+      CORRECTION_GUARD_CODES.INPUT_INVALID, `the defects of ${misnamed}`);
+  }
   assert.equal(recordReview(root, { reviewState: REVIEW_STATE }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
   assert.equal(recordReview(root, { response: undefined }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
   const owned = cli(root, ['--action', 'record-review', '--scope', 'task-1', '--iteration', '1', '--role', 'task-reviewer',
@@ -1459,6 +1643,84 @@ test('a reducer integrity refusal of the review appends RUN_HALTED: the reviewer
   assert.deepEqual([record.kind, record.reason], ['RUN_HALTED', REVIEW_HALT]);
 }));
 
+const FINAL_ISSUES = `${RUN}/final-review-issues.md`;
+
+test('a final-scope correction records its writer, checks, the owner task review and the final review, each with its own defects', () => withRepo(PLAN_ONE, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  const collect = { collectEvidence: collector().collectEvidence };
+  const recordOf = (result) => json(result.ref.path).record;
+  const digestOf = (path) => ({ path, digest: sha256(bytes(path)) });
+  // Task 1 is approved by its own cycle.
+  openCorrectionRun(root, manual({ drive: 'manual' }));
+  openCorrectionCycle(root, manual({ scope: 'task-1' }));
+  reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 1, kind: 'initial' }));
+  authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 1, role: 'writer', target: TASK_REPORT }));
+  put('source.txt', 'changed by the writer\n');
+  put(TASK_REPORT, 'report 1\n');
+  assert.equal(recordWriter(root).ok, true);
+  assert.equal((await verifyCheck(root, collect)).ok, true);
+  authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 1, role: 'task-reviewer', target: REVIEW }));
+  put(REVIEW, 'Status: Approved\n');
+  put(DEFECTS, defectsBody());
+  assert.deepEqual(recordReview(root).next, { action: 'open-cycle', scope: 'final' });
+  // The final review finds an issue in task 1.
+  openCorrectionCycle(root, manual({ scope: 'final' }));
+  reserveCorrectionIteration(root, manual({ scope: 'final', iteration: 1, kind: 'initial' }));
+  authorizeCorrectionDispatch(root, manual({ scope: 'final', iteration: 1, role: 'final-reviewer', target: FINAL_REVIEW }));
+  assert.equal((await recordCorrectionChecks(root, manual({ scope: 'final', iteration: 1 }), collect)).ok, true);
+  put(FINAL_REVIEW, 'Status: Issues Found\n');
+  put(FINAL_ISSUES, '- task 1 lacks a regression test\n');
+  put(finalDefectsPath(1), defectsBody({ scope: 'final', verdict: 'ISSUES_FOUND', defects: [defectEntry()] }));
+  const found = recordCorrectionReview(root, manual({
+    scope: 'final', iteration: 1, role: 'final-reviewer', defects: finalDefectsPath(1),
+    response: reviewResponse({ status: 'ISSUES_FOUND', artifact: FINAL_ISSUES }),
+  }));
+  assert.equal(found.status, 'ISSUES_FOUND', found.message);
+  const retry = `${CORRECTION}/final-cycle-1-retry-1.json`;
+  put(retry, `${JSON.stringify(retryRequest(digestOf(FINAL_ISSUES), {
+    scope: 'final', kind: 'defect', observedFailure: 'the final review found no regression test for task 1',
+    hypothesis: 'the task 1 writer skipped the edge case', remedy: 'add the regression test to task 1',
+    difference: 'the correction targets the edge case', confirmingCheck: 'review',
+  }))}\n`);
+  assert.equal(admitCorrectionRetry(root, manual({ request: retry })).ok, true);
+  // The correction of task 1: its writer, the checks, then the owner task review and the final review.
+  reserveCorrectionIteration(root, manual({ scope: 'final', iteration: 2, kind: 'correction' }));
+  const writer = authorizeCorrectionDispatch(root, manual({
+    scope: 'final', iteration: 2, role: 'writer', target: TASK_REPORT, ownerTask: '1', affectedCriteria: ['SC1'],
+  }));
+  assert.equal(writer.ok, true, writer.message);
+  put('source.txt', 'corrected by the final writer\n');
+  put(TASK_REPORT, 'report 2\n');
+  const written = recordCorrectionWriter(root, manual({ scope: 'final', iteration: 2, response: writerResponse({ status: 'DONE' }) }));
+  assert.equal(written.ok, true, written.message);
+  assert.equal(recordOf(written).status, 'DONE');
+  const checked = await recordCorrectionChecks(root, manual({ scope: 'final', iteration: 2 }), collect);
+  assert.equal(checked.ok, true, checked.message);
+  assert.deepEqual(checked.next, { action: 'authorize', scope: 'final', cycle: 1, iteration: 2, role: 'task-reviewer', ownerTask: '1' });
+  authorizeCorrectionDispatch(root, manual({ scope: 'final', iteration: 2, role: 'task-reviewer', target: REVIEW, ownerTask: '1' }));
+  put(REVIEW, 'Status: Approved after the final correction\n');
+  const taskDefects = finalDefectsPath(2, '-task-reviewer');
+  put(taskDefects, defectsBody({ scope: 'final', iteration: 2 }));
+  put(finalDefectsPath(2), defectsBody({ scope: 'final', iteration: 2 }));
+  const taskReview = (defects) => recordCorrectionReview(root, manual({
+    scope: 'final', iteration: 2, role: 'task-reviewer', ownerTask: '1', defects, response: reviewResponse(),
+  }));
+  assert.equal(taskReview(finalDefectsPath(2)).code, CORRECTION_GUARD_CODES.INPUT_INVALID,
+    'a final-scope task review never takes the verdict reviewer\'s defects');
+  const reviewed = taskReview(taskDefects);
+  assert.equal(reviewed.status, 'APPROVED', reviewed.message);
+  assert.deepEqual(recordOf(reviewed).evidence, [digestOf(REVIEW), digestOf(taskDefects)]);
+  authorizeCorrectionDispatch(root, manual({ scope: 'final', iteration: 2, role: 'final-reviewer', target: FINAL_REVIEW }));
+  put(FINAL_REVIEW, 'Status: Approved\n');
+  const final = recordCorrectionReview(root, manual({
+    scope: 'final', iteration: 2, role: 'final-reviewer', defects: finalDefectsPath(2), response: reviewResponse({ artifact: FINAL_REVIEW }),
+  }));
+  assert.equal(final.status, 'APPROVED', final.message);
+  assert.deepEqual(recordOf(final).evidence, [digestOf(FINAL_REVIEW), digestOf(FINAL_ISSUES), digestOf(finalDefectsPath(2))]);
+  assert.equal(final.next.action, 'terminal');
+  assert.equal(final.next.summary.outcome, 'COMPLETE');
+}));
+
 // An autopilot task-1 iteration whose receipt-bound writer and checks are recorded and whose task reviewer
 // is authorized for the review guard REVIEW_STATE, begun with reviewer-response.
 async function autopilotReviewAuthorized(repo) {
@@ -1497,8 +1759,8 @@ test('the autopilot review binds the reviewer-response receipt, its artifacts an
   ]);
 }));
 
-test('an autopilot review receipt that no longer verifies on resume is an integrity failure', () => withRepo(PLAN_TWO, async (repo) => {
-  const { root, put, exists } = repo;
+test('an autopilot review receipt whose stored result saw the source change halts the run', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, bytes, json } = repo;
   const actor = await autopilotReviewAuthorized(repo);
   put(REVIEW, 'Status: Approved\n');
   put('source.txt', 'edited by the reviewer\n');
@@ -1509,8 +1771,28 @@ test('an autopilot review receipt that no longer verifies on resume is an integr
     scope: 'task-1', iteration: 1, role: 'task-reviewer', defects: DEFECTS, reviewState: REVIEW_STATE, ...actor,
   }));
   assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY);
-  assert.match(result.message, /does not verify/u);
-  assert.equal(exists(recordPath(8)), false);
+  assert.equal(result.message, REVIEW_HALT);
+  const { record } = json(recordPath(8));
+  assert.deepEqual([record.kind, record.reason], ['RUN_HALTED', REVIEW_HALT]);
+  assert.deepEqual(record.evidence, [`${REVIEW_STATE}-baseline.json`, `${REVIEW_STATE}-original.json`]
+    .map((path) => ({ path, digest: sha256(bytes(path)) })));
+  assert.equal(record.observation, observeSource(root).digest);
+  assertHalted(repo, 8, 'the review receipt', actor);
+}));
+
+test('an autopilot review whose result was never stored halts the run citing the receipt that exists', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  const actor = await autopilotReviewAuthorized(repo);
+  put(REVIEW, 'Status: Approved\n');
+  put(DEFECTS, defectsBody());
+  const result = recordCorrectionReview(root, manual({
+    scope: 'task-1', iteration: 1, role: 'task-reviewer', defects: DEFECTS, reviewState: REVIEW_STATE, ...actor,
+  }));
+  assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY);
+  assert.match(result.message, /^the review receipt does not verify: /u);
+  assert.deepEqual(json(recordPath(8)).record.evidence,
+    [{ path: `${REVIEW_STATE}-baseline.json`, digest: sha256(bytes(`${REVIEW_STATE}-baseline.json`)) }]);
+  assertHalted(repo, 8, 'a review receipt without its result', actor);
 }));
 
 // --- diagnosis ------------------------------------------------------------------------------------
@@ -1916,6 +2198,26 @@ test('main reads a manual response from the injected stdin only for the actions 
   assert.equal(await main(['--repo-root', root, '--plan', PLAN, '--action', 'record-writer', '--scope', 'task-1', '--iteration', '1'], io), 0);
   assert.equal(reads.length, 1);
   assert.equal(json(recordPath(5)).record.responseDigest, sha256(Buffer.from(writerResponse())));
+}));
+
+test('on an autopilot drive a response-taking action without its receipt option refuses without reading stdin', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root } = repo;
+  autopilotWriterAuthorized(repo);
+  const reads = [];
+  const out = [];
+  const io = {
+    stdout: { write: (text) => out.push(text) }, stderr: { write: () => {} },
+    stdin: () => { reads.push(true); return Buffer.from(writerResponse()); },
+  };
+  const actor = ['--run-id', 'run-1', '--attempt', '1'];
+  const writer = await main(['--repo-root', root, '--plan', PLAN, '--action', 'record-writer', '--scope', 'task-1',
+    '--iteration', '1', ...actor], io);
+  assert.equal(writer, 1);
+  assert.equal(JSON.parse(out.at(-1)).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  const review = await main(['--repo-root', root, '--plan', PLAN, '--action', 'record-review', '--scope', 'task-1',
+    '--iteration', '1', '--role', 'task-reviewer', '--defects', DEFECTS, ...actor], io);
+  assert.equal(review, 1);
+  assert.deepEqual(reads, [], 'stdin is never read for an autopilot receipt-bound action');
 }));
 
 test('the verify-check CLI refuses a step that is not the checks without running any command', () => withRepo(PLAN_TWO, ({ root, exists }) => {

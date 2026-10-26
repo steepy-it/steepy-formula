@@ -339,6 +339,26 @@ test('correction grammar classifies every artifact family and rejects near misse
   assert.equal(parseWorkPath(evidence, 'work-output', 'evidence').family, 'evidence');
 });
 
+test('a final-scope task review names its own defects artifact with the task-reviewer role component', () => {
+  const dir = `.formula/work/tasks/${RUN}/correction`;
+  for (const name of [
+    'final-cycle-1-iteration-2-task-reviewer-defects.json',
+    'final-cycle-1-iteration-2-defects.json',
+    'task-1-cycle-1-iteration-1-defects.json',
+  ]) {
+    assert.equal(parseWorkPath(`${dir}/${name}`, 'work-output', 'correction-defects').family, 'correction-defects', name);
+  }
+  for (const name of [
+    'task-1-cycle-1-iteration-1-task-reviewer-defects.json',
+    'final-cycle-1-iteration-2-final-reviewer-defects.json',
+    'final-cycle-1-iteration-2-task-reviewer.json',
+    'final-cycle-1-iteration-2-task-reviewer-defects.md',
+    'final-cycle-1-iteration-2-task-reviewer-task-reviewer-defects.json',
+  ]) {
+    assert.throws(() => classifyWorkPath(`${dir}/${name}`), /work path/u, name);
+  }
+});
+
 test('loop grammar admits only the dated run directory and closed Gear-4 artifact families', () => {
   for (const [family, path, type] of LOOP_FAMILIES) {
     const parsed = classifyWorkPath(path);

@@ -29,6 +29,8 @@ const CORRECTION_FILES = [
   [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-iteration-[1-9]\\d*-candidate\\.json$`), 'correction-candidate'],
   [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-iteration-[1-9]\\d*-check-[1-9]\\d*-evidence\\.md$`), 'evidence'],
   [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-iteration-[1-9]\\d*-defects\\.json$`), 'correction-defects'],
+  // A final-scope correction iteration may hold two reviews: the owner task's review names its own.
+  [/^final-cycle-[1-9]\d*-iteration-[1-9]\d*-task-reviewer-defects\.json$/, 'correction-defects'],
   [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-iteration-[1-9]\\d*-diagnosis\\.json$`), 'correction-diagnosis'],
   [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-retry-[1-9]\\d*\\.json$`), 'correction-retry'],
   [new RegExp(`^${CORRECTION_SCOPE}-cycle-[1-9]\\d*-reopen\\.json$`), 'correction-reopen'],
