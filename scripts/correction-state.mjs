@@ -13,6 +13,16 @@
 // cycle, and approval needs every check, the review, the rubric and one observed tree. Candidates are
 // ranked by the evidence attributed to each (`rankCandidates`).
 //
+// The run is scheduled from the plan (`nextCorrectionStep`): one cycle is open at a time, a task opens
+// only once its dependencies are approved, so a task blocked by a stopped prerequisite is never
+// dispatched, and the final cycle reviews whatever was delivered once every task concluded. A stopped
+// task cycle must prove its isolation (`decideIsolation`) before the run continues; an unprovable
+// isolation halts the run. Final corrections change only approved tasks. Reopening is never automatic:
+// a human authorization naming the stopped scope and a new remedy opens a linked cycle with a fresh
+// allowance. The terminal summary (`summarizeCorrectionRun`) is projected as a handoff block
+// (`formatCorrectionSummaryBlock`, `parseCorrectionSummaryBlock`); partial work is never approved, and
+// a halted run never projects a handoff.
+//
 // The module is pure: no filesystem, no subprocess, no other scripts/ import. Data problems come back
 // as `{ ok: false, code, message, identity }`; `TypeError` is thrown only for programmer error (a
 // state this module did not produce, a non-plain record, an unknown option key). Records carry no
@@ -96,6 +106,8 @@ export const CORRECTION_RECORD_KINDS = deepFreeze(vocabulary([
   'WRITER_RECORDED',
   'CHECKS_RECORDED',
   'REVIEW_RECORDED',
+  'ISOLATION_RECORDED',
+  'REOPEN_AUTHORIZED',
 ]));
 
 const REFUSAL = CORRECTION_CODES.refusal;
@@ -150,6 +162,35 @@ const PERMITTED_ROLES = deepFreeze({
   },
 });
 const DERIVE_KEYS = Object.freeze(['scope', 'task', 'deliveredTasks', 'rubricCriteria', 'reviewOptIn']);
+const DECIDE_KEYS = Object.freeze(['scope', 'cycle', 'observation']);
+const SUMMARY_OPEN = '<!-- steepy-correction-summary: v1 -->';
+const SUMMARY_CLOSE = '<!-- /steepy-correction-summary -->';
+// Any opening or closing summary marker, of any version, so a foreign or duplicate one is never ignored.
+const SUMMARY_OPEN_PATTERN = /<!--\s*steepy-correction-summary\b/gu;
+const SUMMARY_CLOSE_PATTERN = /<!--\s*\/steepy-correction-summary\b/gu;
+const SUMMARY_FRAME = /^\n```json\n([\s\S]*)\n```\n$/u;
+const SUMMARY_KEYS = Object.freeze([
+  'version', 'outcome', 'approval', 'planDigest', 'completed', 'stopped', 'blocked', 'criteria', 'final', 'cycles',
+  'halt',
+]);
+const STOPPED_SUMMARY_KEYS = Object.freeze([
+  'task', 'cycle', 'reason', 'iterations', 'unresolvedDefects', 'comparison', 'bestCandidate', 'execution',
+  'nextRemedy',
+]);
+const COUNT_KEYS = Object.freeze(['reserved', 'diagnosis']);
+const COMPARISON_KEYS = Object.freeze(['defect', 'previous', 'current', 'verdict']);
+const CANDIDATE_KEYS = Object.freeze(['iteration', 'observation', 'snapshot']);
+const BLOCKED_KEYS = Object.freeze(['task', 'causes']);
+const FINAL_SUMMARY_KEYS = Object.freeze(['cycle', 'status', 'reason', 'iterations', 'approvedObservation']);
+const CYCLE_SUMMARY_KEYS = Object.freeze([
+  'scope', 'cycle', 'predecessor', 'status', 'reason', 'reserved', 'diagnosis',
+]);
+const HALT_KEYS = Object.freeze(['reason', 'evidence']);
+const OUTCOMES = new Set(['PENDING', 'COMPLETE', 'PARTIAL', 'HALTED']);
+const CRITERION_STATUSES = new Set(['satisfied', 'failed', 'blocked']);
+const CYCLE_STATUSES = new Set(['OPEN', 'APPROVED', 'STOPPED']);
+const COMPARISON_RESULTS = new Set(['improved', 'stagnant', 'unavailable', 'new']);
+const ISOLATION_MODES = new Set(['baseline-equal', 'retained-best']);
 const NORMALIZE_KEYS = Object.freeze(['bindings', 'entries', 'previous']);
 const RUBRIC_KEYS = Object.freeze(['bindings', 'rubric', 'defects']);
 const REVIEW_RUBRIC_KEYS = Object.freeze(['scope', 'bindings', 'role', 'ownerTask']);
@@ -767,11 +808,13 @@ function openCycle(draft, record, { identity }) {
         `scope '${scope}' already has a ${blocking.status.toLowerCase()} cycle ${blocking.cycle}`, identity);
     }
   }
-  if (cycle !== 1 || predecessor !== null) {
-    refuse(REFUSAL.REOPEN_INVALID, 'only cycle 1 with a null predecessor can be opened', identity);
-  }
   const key = cycleKey(scope, cycle);
+  if (cycle === 1 ? predecessor !== null : !reopenPermits(draft, scope, cycle, predecessor)) {
+    refuse(REFUSAL.REOPEN_INVALID, cycle === 1 ? 'cycle 1 opens with a null predecessor'
+      : `cycle ${key} after ${predecessor} needs a matching reopen authorization`, identity);
+  }
   if (Object.hasOwn(draft.cycles, key)) refuse(REFUSAL.REOPEN_INVALID, `cycle ${key} was already opened`, identity);
+  checkSchedule(draft, scope, cycle, identity);
 
   // The verification a cycle opens with is not negotiable: it must be exactly the derivation for its
   // scope, so no criterion, check or threshold can be dropped or weakened.
@@ -810,6 +853,9 @@ function openCycle(draft, record, { identity }) {
     admittedRemedies: [],
     nextRemedy: null,
     iterations: [],
+    isolation: null,
+    // The record number at which the cycle left OPEN; set by applyCorrectionRecord.
+    concluded: null,
   };
   draft.cycleOrder.push(key);
 }
@@ -1048,6 +1094,12 @@ function checkOwnership(draft, cycle, entry, record, identity) {
     const owner = ownerTask === null ? null : planTask(draft, ownerTask);
     if (owner === null) {
       refuse(REFUSAL.ROLE_NOT_ALLOWED, `a final-scope ${role} requires a plan-task ownerTask`, identity);
+    }
+    // A stopped or dependency-blocked deliverable is never completed through the final review.
+    const { status } = taskStatuses(draft).get(owner.task);
+    if (role === 'writer' && status !== 'approved') {
+      refuse(REFUSAL.FINAL_BYPASS,
+        `a final-scope writer changes only an approved task; task ${owner.task} is ${status}`, identity);
     }
     if (role === 'writer' && affectedCriteria.length === 0) {
       refuse(REFUSAL.ROLE_NOT_ALLOWED, 'a final-scope writer requires non-empty affectedCriteria', identity);
@@ -1490,6 +1542,113 @@ function recordReview(draft, record, { ref, identity }) {
   }
 }
 
+// --- isolation ------------------------------------------------------------------------------------
+
+function candidateSnapshot({ iteration, observation, candidate }) {
+  return { iteration, observation, snapshot: candidate === null ? null : reference(candidate) };
+}
+
+// Whether `observation`, the tree after a stopped cycle, is isolated from that cycle: the opening tree
+// (baseline-equal), or the best-ranked candidate when it is verified and every check of the iteration
+// that verified it passed (retained-best). Otherwise the recovery names what a human needs to restore it.
+function decide(cycle, observation) {
+  if (observation === cycle.observation) return { proven: true, mode: 'baseline-equal' };
+  const [best] = rank(cycle);
+  const verifier = best.verified ? cycle.iterations.find((entry) => entry.iteration === best.verifiedBy) : undefined;
+  if (verifier !== undefined && observation === best.observation
+    && verifier.checks.results.every((result) => result.passed)) {
+    return { proven: true, mode: 'retained-best' };
+  }
+  const changedPaths = [...new Set(cycle.iterations.flatMap((entry) => entry.writer?.changedPaths ?? []))].sort();
+  return {
+    proven: false,
+    recovery: { bestCandidate: candidateSnapshot(best), baselineObservation: cycle.observation, changedPaths },
+  };
+}
+
+// Continuation after a stopped task cycle needs its isolation proven; an unprovable isolation is an
+// integrity fault the guard answers by halting the run, never a task-local result.
+function recordIsolation(draft, record, { identity }) {
+  const { scope, cycle, mode, observation } = record;
+  schema(typeof scope === 'string' && SCOPE.test(scope) && scope !== 'final', "scope must be 'task-<N>'", identity);
+  schema(isPositiveInteger(cycle), 'cycle must be a positive integer', identity);
+  schema(ISOLATION_MODES.has(mode), `mode must be one of: ${[...ISOLATION_MODES].join(', ')}`, identity);
+  schema(isHex64(observation), 'observation must be a lowercase 64-hex digest', identity);
+  const step = scheduleStep(draft);
+  if (step.action !== 'prove-isolation' || step.scope !== scope || step.cycle !== cycle) {
+    refuse(REFUSAL.RECORD_ORDER,
+      'isolation is recorded once, for the latest stopped task cycle, while no cycle is open', identity);
+  }
+  const key = cycleKey(scope, cycle);
+  const decision = decide(draft.cycles[key], observation);
+  if (!decision.proven) {
+    refuse(HALT.INTEGRITY, `the isolation of ${key} is unprovable: ${observation} is neither its opening tree nor its `
+      + 'verified best candidate', identity);
+  }
+  schema(mode === decision.mode, `mode must be the proven mode '${decision.mode}'`, identity);
+  draft.cycles[key].isolation = { mode, observation };
+}
+
+// --- reopening ------------------------------------------------------------------------------------
+
+// The literal a reopen statement must contain to name `scope`.
+function scopeLiteral(scope) {
+  const task = taskOfScope(scope);
+  return task === null ? 'final review' : `Task ${task}`;
+}
+
+// The statement names the scope literally; a task number is not the prefix of a longer one, so `Task 1`
+// does not name task 10.
+function namesScope(statement, scope) {
+  return new RegExp(`${scopeLiteral(scope)}(?!\\d)`, 'u').test(statement);
+}
+
+// Every remedy admitted or recommended in the scope's cycles, and every earlier reopen remedy of the
+// scope, normalized.
+function scopeRemedies(draft, scope) {
+  const remedies = draft.reopens.filter((entry) => entry.scope === scope).map((entry) => entry.remedy);
+  for (const cycle of Object.values(draft.cycles).filter((entry) => entry.scope === scope)) {
+    remedies.push(...cycle.admittedRemedies);
+    if (cycle.diagnosis !== null) remedies.push(cycle.diagnosis.remedy, cycle.diagnosis.recommendation);
+  }
+  return new Set(remedies.filter(isText).map(normalizeText));
+}
+
+// Reopening is never automatic: a human authorizes a new cycle of a stopped scope, naming the scope in
+// their own words and a remedy new to the scope.
+function authorizeReopen(draft, record, { identity }) {
+  const { scope, cycle, predecessor, authorization, statement, remedy } = record;
+  schema(typeof scope === 'string' && SCOPE.test(scope), "scope must be 'task-<N>' or 'final'", identity);
+  schema(isPositiveInteger(cycle), 'cycle must be a positive integer', identity);
+  schema(typeof predecessor === 'string' && CYCLE_REFERENCE.test(predecessor), "predecessor must be '<scope>#<n>'",
+    identity);
+  schema(isDigestReference(authorization), 'authorization must be { path, digest } with a lowercase 64-hex digest',
+    identity);
+  schema(isText(statement), 'statement must be the non-empty verbatim words of the human authorization', identity);
+  schema(isText(remedy), 'remedy must be a non-empty string', identity);
+  const invalid = (message) => refuse(REFUSAL.REOPEN_INVALID, message, identity);
+  const task = taskOfScope(scope);
+  if (task !== null && planTask(draft, task) === null) invalid(`scope '${scope}' names no task of the plan`);
+  const open = Object.values(draft.cycles).find((entry) => entry.status === 'OPEN');
+  if (open !== undefined) invalid(`cycle ${cycleKey(open.scope, open.cycle)} is open`);
+  const latest = latestCycle(draft, scope);
+  if (latest?.status !== 'STOPPED') {
+    invalid(`only a stopped scope is reopened; '${scope}' ${latest === null ? 'never ran' : 'is approved'}`);
+  }
+  if (pendingReopens(draft).some((entry) => entry.scope === scope)) {
+    invalid(`a reopen of '${scope}' is already authorized`);
+  }
+  const previous = cycleKey(scope, latest.cycle);
+  if (cycle !== latest.cycle + 1 || predecessor !== previous) {
+    invalid(`a reopen of '${scope}' opens cycle ${latest.cycle + 1} after ${previous}`);
+  }
+  if (!namesScope(statement, scope)) invalid(`the statement must name '${scopeLiteral(scope)}' literally`);
+  if (scopeRemedies(draft, scope).has(normalizeText(remedy))) {
+    invalid(`the remedy was already admitted or recommended for '${scope}'`);
+  }
+  draft.reopens.push({ scope, cycle, predecessor, authorization: reference(authorization), statement, remedy });
+}
+
 function haltRun(draft, record, { identity }) {
   const { reason, evidence, observation } = record;
   schema(isText(reason), 'reason must be a non-empty string', identity);
@@ -1502,7 +1661,7 @@ function haltRun(draft, record, { identity }) {
 }
 
 // One entry per record kind: its closed payload keys and the handler that folds it into a mutable
-// draft of the state (or refuses). Later record kinds extend this table.
+// draft of the state (or refuses).
 const RECORDS = Object.freeze({
   RUN_OPENED: { fields: ['planDigest', 'drive', 'tasks', 'observation'], apply: openRun },
   CYCLE_OPENED: {
@@ -1541,6 +1700,11 @@ const RECORDS = Object.freeze({
     ],
     apply: recordReview,
   },
+  ISOLATION_RECORDED: { fields: ['scope', 'cycle', 'mode', 'observation'], apply: recordIsolation },
+  REOPEN_AUTHORIZED: {
+    fields: ['scope', 'cycle', 'predecessor', 'authorization', 'statement', 'remedy'],
+    apply: authorizeReopen,
+  },
 });
 
 // --- public API -----------------------------------------------------------------------------------
@@ -1554,6 +1718,7 @@ export function createCorrectionState() {
     halted: null,
     cycles: {},
     cycleOrder: [],
+    reopens: [],
   });
 }
 
@@ -1589,6 +1754,9 @@ export function applyCorrectionRecord(state, record, options) {
     const draft = structuredClone(state);
     apply(draft, record, { ref, identity });
     draft.records += 1;
+    for (const cycle of Object.values(draft.cycles)) {
+      if (cycle.status !== 'OPEN' && cycle.concluded === null) cycle.concluded = draft.records;
+    }
     draft.refs.push(ref === null ? null : { path: ref.path, digest: ref.digest });
     return { ok: true, state: produce(draft) };
   } catch (error) {
@@ -1636,15 +1804,9 @@ function iterationStep(state, cycle, entry, step) {
   return { action: 'authorize', ...step, role: verdictRole(cycle) };
 }
 
-// The step for the most recently opened cycle; null before any cycle exists.
-export function nextCorrectionStep(state) {
-  assertState(state, 'nextCorrectionStep');
-  if (state.halted !== null) return { action: 'halted', reason: state.halted.reason };
-  const key = state.cycleOrder.at(-1);
-  if (key === undefined) return null;
-  const cycle = state.cycles[key];
+// The step inside an OPEN cycle: reserve, the iteration's next step, then a retry or the diagnosis.
+function cycleStep(state, cycle) {
   const at = { scope: cycle.scope, cycle: cycle.cycle };
-  if (cycle.status !== 'OPEN') return { action: 'stopped', ...at, reason: cycle.stopReason };
   const latest = cycle.iterations.at(-1);
   if (latest === undefined) return { action: 'reserve', ...at, iteration: 1, kind: 'initial' };
   if (latest.conclusion === null) return iterationStep(state, cycle, latest, { ...at, iteration: latest.iteration });
@@ -1656,6 +1818,423 @@ export function nextCorrectionStep(state) {
     return { action: 'reserve', ...at, iteration, kind: 'diagnosis', reason: 'comparison-unavailable' };
   }
   return { action: 'retry-or-diagnosis', ...at, iteration, diagnosisAvailable: !cycle.diagnosisUsed };
+}
+
+// --- run-level scheduling -------------------------------------------------------------------------
+
+// The latest cycle of `scope`, or null. `state` is a draft or a produced state.
+function latestCycle(state, scope) {
+  const key = state.cycleOrder.findLast((entry) => state.cycles[entry].scope === scope);
+  return key === undefined ? null : state.cycles[key];
+}
+
+function byTaskNumber(left, right) {
+  return Number(left) - Number(right);
+}
+
+// Each plan task's status, in plan order: its latest cycle's (approved, stopped, or running while
+// OPEN); else blocked when a dependency is stopped or blocked, with the stopped tasks at the roots of its
+// blocking paths as causes; else pending.
+function taskStatuses(state) {
+  const statuses = new Map();
+  for (const { task, dependencies } of state.run.tasks) {
+    const latest = latestCycle(state, `task-${task}`);
+    if (latest !== null) {
+      const status = { OPEN: 'running', APPROVED: 'approved', STOPPED: 'stopped' }[latest.status];
+      statuses.set(task, { status, causes: [] });
+      continue;
+    }
+    const causes = new Set();
+    for (const dependency of dependencies) {
+      const { status, causes: inherited } = statuses.get(dependency);
+      if (status === 'stopped') causes.add(dependency);
+      for (const cause of inherited) causes.add(cause);
+    }
+    statuses.set(task, causes.size > 0
+      ? { status: 'blocked', causes: [...causes].sort(byTaskNumber) }
+      : { status: 'pending', causes: [] });
+  }
+  return statuses;
+}
+
+// Authorized reopens whose cycle has not opened yet: task scopes in plan order, then the final.
+function pendingReopens(state) {
+  const position = (scope) => (scope === 'final' ? Number.POSITIVE_INFINITY : Number(taskOfScope(scope)));
+  return state.reopens.filter((entry) => !Object.hasOwn(state.cycles, cycleKey(entry.scope, entry.cycle)))
+    .sort((left, right) => position(left.scope) - position(right.scope));
+}
+
+// After a task reopen the final reruns once, without a final-scope reopen: when the latest final cycle
+// concluded before the latest task cycle did. Returns that cycle and its predecessor, or null.
+function finalRerun(state) {
+  const final = latestCycle(state, 'final');
+  if (final === null || final.concluded === null) return null;
+  const taskConclusions = Object.values(state.cycles)
+    .filter((entry) => entry.scope !== 'final' && entry.concluded !== null).map((entry) => entry.concluded);
+  if (!taskConclusions.some((concluded) => concluded > final.concluded)) return null;
+  return { cycle: final.cycle + 1, predecessor: cycleKey('final', final.cycle) };
+}
+
+// Whether a cycle above 1 may open: an authorized reopen names it, or it is the final rerun.
+function reopenPermits(draft, scope, cycle, predecessor) {
+  const matches = (entry) => entry.cycle === cycle && entry.predecessor === predecessor;
+  if (pendingReopens(draft).some((entry) => entry.scope === scope && matches(entry))) return true;
+  const rerun = scope === 'final' ? finalRerun(draft) : null;
+  return rerun !== null && matches(rerun);
+}
+
+function openStep({ scope, cycle, predecessor }) {
+  return { action: 'open-cycle', scope, cycle, predecessor };
+}
+
+// The run's next step, without the terminal summary. `state` is a draft or a produced state.
+function scheduleStep(state) {
+  if (state.run === null) return null;
+  if (state.halted !== null) return { action: 'halted', reason: state.halted.reason };
+  const cycles = state.cycleOrder.map((key) => state.cycles[key]);
+  const open = cycles.find((entry) => entry.status === 'OPEN');
+  if (open !== undefined) return cycleStep(state, open);
+  const latestTask = cycles.findLast((entry) => entry.scope !== 'final');
+  if (latestTask?.status === 'STOPPED' && latestTask.isolation === null) {
+    return { action: 'prove-isolation', scope: latestTask.scope, cycle: latestTask.cycle };
+  }
+  const pending = pendingReopens(state);
+  const taskReopen = pending.find((entry) => entry.scope !== 'final');
+  if (taskReopen !== undefined) return openStep(taskReopen);
+  const statuses = taskStatuses(state);
+  const runnable = state.run.tasks.find((entry) => statuses.get(entry.task).status === 'pending'
+    && entry.dependencies.every((dependency) => statuses.get(dependency).status === 'approved'));
+  if (runnable !== undefined) return { action: 'open-cycle', scope: `task-${runnable.task}` };
+  const finalReopen = pending.find((entry) => entry.scope === 'final');
+  if (finalReopen !== undefined) return openStep(finalReopen);
+  if (latestCycle(state, 'final') === null) return { action: 'open-cycle', scope: 'final' };
+  const rerun = finalRerun(state);
+  if (rerun !== null) return openStep({ scope: 'final', ...rerun });
+  return { action: 'terminal' };
+}
+
+// A cycle opens only as the run's step: never beside an open cycle, never before a stopped task cycle
+// proved its isolation, and a task only when it is the first runnable one, so a dependency-blocked
+// task is never dispatched and consumes no iteration.
+function checkSchedule(draft, scope, cycle, identity) {
+  const step = scheduleStep(draft);
+  if (step.action === 'prove-isolation') {
+    refuse(REFUSAL.ISOLATION_REQUIRED, `cycle ${cycleKey(step.scope, step.cycle)} stopped; its isolation must be `
+      + 'proven before any cycle opens', identity);
+  }
+  if (step.action === 'open-cycle' && step.scope === scope && (step.cycle ?? 1) === cycle) return;
+  let reason = 'the run is terminal';
+  if (step.action === 'open-cycle') reason = `the runnable scope is '${step.scope}'`;
+  else if (step.action !== 'terminal') reason = `cycle ${cycleKey(step.scope, step.cycle)} is open`;
+  refuse(REFUSAL.SCOPE_NOT_RUNNABLE, `scope '${scope}' is not runnable: ${reason}`, identity);
+}
+
+// The run's next step, in priority order: the halt; the open cycle's step; proving the isolation of the
+// latest stopped task cycle; opening an authorized task reopen; opening the first runnable task in plan
+// order; opening an authorized final reopen; opening the final cycle once every task concluded, or
+// rerunning it once after a task reopen concluded; otherwise terminal. Null before the run is opened. A
+// step opening a cycle above 1 also names its cycle and predecessor.
+export function nextCorrectionStep(state) {
+  assertState(state, 'nextCorrectionStep');
+  const step = scheduleStep(state);
+  if (step?.action !== 'terminal') return step;
+  return deepFreeze({ action: 'terminal', summary: summarize(state) });
+}
+
+// --- terminal summary -----------------------------------------------------------------------------
+
+function latestOutcome(cycle) {
+  return cycle.iterations.findLast((entry) => entry.conclusion?.via === 'outcome')?.conclusion ?? null;
+}
+
+function diagnosisCount(cycle) {
+  return cycle.iterations.filter((entry) => entry.kind === 'diagnosis').length;
+}
+
+// The writer target of the task's latest accepted writer on an autopilot drive, or null.
+function execution(state, scope) {
+  if (state.run.drive !== 'autopilot') return null;
+  const cycles = state.cycleOrder.map((key) => state.cycles[key]).filter((entry) => entry.scope === scope).reverse();
+  for (const cycle of cycles) {
+    const entry = cycle.iterations.findLast((item) => item.writer?.accepted);
+    if (entry !== undefined) return entry.dispatches.find((dispatch) => dispatch.role === 'writer').target;
+  }
+  return null;
+}
+
+// What a later phase needs about a stopped task: why its latest cycle stopped, what it spent, the
+// defects left unresolved and how they compared, its best candidate, and the remedy to try next.
+function stoppedSummary(state, task, cycle) {
+  const outcome = latestOutcome(cycle);
+  const comparison = outcome?.comparison?.defects ?? [];
+  let nextRemedy = cycle.admittedRemedies.at(-1) ?? null;
+  if (cycle.diagnosis?.valid) nextRemedy = cycle.diagnosis.recommendation;
+  return {
+    task,
+    cycle: cycle.cycle,
+    reason: cycle.stopReason,
+    iterations: { reserved: cycle.reserved, diagnosis: diagnosisCount(cycle) },
+    unresolvedDefects: [...new Set((outcome?.defects ?? []).map((defect) => defect.id))],
+    comparison: comparison.map(({ id, previous, current, result }) => ({
+      defect: id, previous, current, verdict: result,
+    })),
+    bestCandidate: candidateSnapshot(rank(cycle)[0]),
+    execution: execution(state, `task-${task}`),
+    nextRemedy,
+  };
+}
+
+// Every criterion of the plan, by SC number. Before terminal only a stopped or a blocked carrying task
+// decides a criterion; at terminal every criterion is classified: failed by a stopped carrying task or
+// an unresolved defect of a stopped final, else blocked by a blocked carrying task, else satisfied when
+// every carrying task and the final are approved, else failed, because its integrated delivery was
+// never approved.
+function classifyCriteria(state, statuses, final, terminal) {
+  const ids = [...new Set(state.run.tasks.flatMap((entry) => entry.criterionIds))]
+    .sort((left, right) => Number(left.slice(2)) - Number(right.slice(2)));
+  const finalDefects = terminal && final?.status === 'STOPPED' ? latestOutcome(final)?.defects ?? [] : [];
+  const criteria = {};
+  for (const id of ids) {
+    const carrying = state.run.tasks.filter((entry) => entry.criterionIds.includes(id))
+      .map((entry) => statuses.get(entry.task).status);
+    if (carrying.includes('stopped') || finalDefects.some((defect) => defect.criterion === id)) {
+      criteria[id] = 'failed';
+    } else if (carrying.includes('blocked')) {
+      criteria[id] = 'blocked';
+    } else if (terminal) {
+      criteria[id] = carrying.every((status) => status === 'approved') && final?.status === 'APPROVED'
+        ? 'satisfied' : 'failed';
+    }
+  }
+  return criteria;
+}
+
+function summarize(state) {
+  const statuses = taskStatuses(state);
+  const final = latestCycle(state, 'final');
+  const tasksWith = (status) => state.run.tasks.filter((entry) => statuses.get(entry.task).status === status);
+  let outcome = 'PENDING';
+  if (state.halted !== null) outcome = 'HALTED';
+  else if (scheduleStep(state).action === 'terminal') {
+    outcome = tasksWith('approved').length === state.run.tasks.length && final?.status === 'APPROVED'
+      ? 'COMPLETE' : 'PARTIAL';
+  }
+  const terminal = outcome === 'COMPLETE' || outcome === 'PARTIAL';
+  return {
+    version: 1,
+    outcome,
+    approval: outcome === 'COMPLETE' ? 'APPROVED' : 'UNAPPROVED',
+    planDigest: state.run.planDigest,
+    completed: tasksWith('approved').map((entry) => entry.task),
+    stopped: tasksWith('stopped')
+      .map((entry) => stoppedSummary(state, entry.task, latestCycle(state, `task-${entry.task}`))),
+    blocked: tasksWith('blocked').map((entry) => ({ task: entry.task, causes: statuses.get(entry.task).causes })),
+    criteria: classifyCriteria(state, statuses, final, terminal),
+    final: final === null ? null : {
+      cycle: final.cycle,
+      status: final.status,
+      reason: final.stopReason,
+      iterations: { reserved: final.reserved, diagnosis: diagnosisCount(final) },
+      approvedObservation: final.approvedObservation,
+    },
+    cycles: state.cycleOrder.map((key) => {
+      const cycle = state.cycles[key];
+      return {
+        scope: cycle.scope, cycle: cycle.cycle, predecessor: cycle.predecessor, status: cycle.status,
+        reason: cycle.stopReason, reserved: cycle.reserved, diagnosis: diagnosisCount(cycle),
+      };
+    }),
+    halt: state.halted === null ? null : {
+      reason: state.halted.reason, evidence: state.halted.evidence.map((item) => reference(item)),
+    },
+  };
+}
+
+// --- summary block --------------------------------------------------------------------------------
+
+// Thrown inside the summary shape check and caught at the block boundary, where it becomes the
+// caller's error; it never escapes this module.
+class SummaryProblem {
+  constructor(message) {
+    this.message = message;
+  }
+}
+
+function expect(condition, message) {
+  if (!condition) throw new SummaryProblem(message);
+}
+
+function closedObject(value, keys, label) {
+  expect(isPlainObject(value), `${label} must be an object`);
+  const unknown = Object.keys(value).filter((key) => !keys.includes(key));
+  expect(unknown.length === 0, `${label} has unknown keys: ${unknown.join(', ')}`);
+  const missing = keys.filter((key) => !Object.hasOwn(value, key));
+  expect(missing.length === 0, `${label} is missing keys: ${missing.join(', ')}`);
+}
+
+const isCount = (value) => Number.isSafeInteger(value) && value >= 0;
+const isOptionalText = (value) => value === null || typeof value === 'string';
+const isOptionalMetric = (value) => value === null || (typeof value === 'number' && Number.isFinite(value));
+
+function checkCounts(value, label) {
+  closedObject(value, COUNT_KEYS, label);
+  expect(isCount(value.reserved) && isCount(value.diagnosis), `${label} must count reserved and diagnosis iterations`);
+}
+
+function checkStoppedSummary(entry, label) {
+  closedObject(entry, STOPPED_SUMMARY_KEYS, label);
+  expect(isTaskId(entry.task) && isPositiveInteger(entry.cycle) && typeof entry.reason === 'string',
+    `${label} must name its task, cycle and reason`);
+  checkCounts(entry.iterations, `${label}.iterations`);
+  expect(Array.isArray(entry.unresolvedDefects) && entry.unresolvedDefects.every((id) => typeof id === 'string'),
+    `${label}.unresolvedDefects must be defect ids`);
+  expect(Array.isArray(entry.comparison), `${label}.comparison must be an array`);
+  for (const [index, item] of entry.comparison.entries()) {
+    closedObject(item, COMPARISON_KEYS, `${label}.comparison[${index}]`);
+    expect(typeof item.defect === 'string' && isOptionalMetric(item.previous) && isOptionalMetric(item.current)
+      && COMPARISON_RESULTS.has(item.verdict), `${label}.comparison[${index}] must be a defect comparison`);
+  }
+  closedObject(entry.bestCandidate, CANDIDATE_KEYS, `${label}.bestCandidate`);
+  const { iteration, observation, snapshot } = entry.bestCandidate;
+  expect(isCount(iteration) && isHex64(observation) && (snapshot === null || isDigestReference(snapshot)),
+    `${label}.bestCandidate must be { iteration, observation, snapshot }`);
+  expect(isOptionalText(entry.execution) && isOptionalText(entry.nextRemedy),
+    `${label}.execution and nextRemedy must be strings or null`);
+}
+
+// The summary's closed shape: every key known and present at every level, with typed values.
+function checkSummary(summary) {
+  expect(isJsonPlain(summary), 'the summary must be JSON-plain');
+  closedObject(summary, SUMMARY_KEYS, 'the summary');
+  expect(summary.version === 1, 'version must be 1');
+  expect(OUTCOMES.has(summary.outcome), `outcome must be one of: ${[...OUTCOMES].join(', ')}`);
+  expect(summary.approval === (summary.outcome === 'COMPLETE' ? 'APPROVED' : 'UNAPPROVED'),
+    'approval is APPROVED exactly when the outcome is COMPLETE, and UNAPPROVED otherwise');
+  expect(isHex64(summary.planDigest), 'planDigest must be a lowercase 64-hex digest');
+  expect(isUniqueArray(summary.completed, isTaskId), 'completed must be unique task IDs');
+  expect(Array.isArray(summary.stopped), 'stopped must be an array');
+  for (const [index, entry] of summary.stopped.entries()) checkStoppedSummary(entry, `stopped[${index}]`);
+  expect(Array.isArray(summary.blocked), 'blocked must be an array');
+  for (const [index, entry] of summary.blocked.entries()) {
+    closedObject(entry, BLOCKED_KEYS, `blocked[${index}]`);
+    expect(isTaskId(entry.task) && isUniqueArray(entry.causes, isTaskId) && entry.causes.length > 0,
+      `blocked[${index}] must name its task and the stopped tasks causing it`);
+  }
+  expect(isPlainObject(summary.criteria) && Object.entries(summary.criteria).every(([id, status]) =>
+    CRITERION_STATUSES.has(status) && CRITERION_ID.test(id)),
+  `criteria must map SC<n> to one of: ${[...CRITERION_STATUSES].join(', ')}`);
+  if (summary.final !== null) {
+    closedObject(summary.final, FINAL_SUMMARY_KEYS, 'final');
+    const { cycle, status, reason, iterations, approvedObservation } = summary.final;
+    expect(isPositiveInteger(cycle) && CYCLE_STATUSES.has(status) && isOptionalText(reason)
+      && (approvedObservation === null || isHex64(approvedObservation)), 'final must describe the latest final cycle');
+    checkCounts(iterations, 'final.iterations');
+  }
+  expect(Array.isArray(summary.cycles), 'cycles must be an array');
+  for (const [index, entry] of summary.cycles.entries()) {
+    closedObject(entry, CYCLE_SUMMARY_KEYS, `cycles[${index}]`);
+    expect(typeof entry.scope === 'string' && SCOPE.test(entry.scope) && isPositiveInteger(entry.cycle)
+      && (entry.predecessor === null || CYCLE_REFERENCE.test(entry.predecessor)) && CYCLE_STATUSES.has(entry.status)
+      && isOptionalText(entry.reason) && isCount(entry.reserved) && isCount(entry.diagnosis),
+    `cycles[${index}] must describe a cycle`);
+  }
+  if (summary.halt !== null) {
+    closedObject(summary.halt, HALT_KEYS, 'halt');
+    expect(isText(summary.halt.reason) && Array.isArray(summary.halt.evidence)
+      && summary.halt.evidence.every(isDigestReference), 'halt must carry its reason and evidence references');
+  }
+}
+
+function summaryProblem(summary) {
+  try {
+    checkSummary(summary);
+    return null;
+  } catch (error) {
+    if (error instanceof SummaryProblem) return error.message;
+    throw error;
+  }
+}
+
+// The first key repeated within one object of valid JSON `text`, or null. JSON.parse keeps the last of
+// duplicate keys silently, so they are found by scanning the text.
+function duplicateKey(text) {
+  const objects = [];
+  let index = 0;
+  while (index < text.length) {
+    const character = text[index];
+    if (character === '"') {
+      let end = index + 1;
+      while (text[end] !== '"') end += text[end] === '\\' ? 2 : 1;
+      const top = objects.at(-1);
+      if (top?.expectingKey) {
+        const key = JSON.parse(text.slice(index, end + 1));
+        if (top.keys.has(key)) return key;
+        top.keys.add(key);
+        top.expectingKey = false;
+      }
+      index = end + 1;
+      continue;
+    }
+    if (character === '{') objects.push({ keys: new Set(), expectingKey: true });
+    else if (character === '[') objects.push(null);
+    else if (character === '}' || character === ']') objects.pop();
+    else if (character === ',' && objects.at(-1)) objects.at(-1).expectingKey = true;
+    index += 1;
+  }
+  return null;
+}
+
+// The handoff block for a summary: its JSON, fenced, between the v1 markers. A halted run never
+// projects a handoff, and a value that would forge a marker is refused, so the block always parses.
+export function formatCorrectionSummaryBlock(summary) {
+  const problem = summaryProblem(summary);
+  if (problem !== null) throw new TypeError(`formatCorrectionSummaryBlock: ${problem}`);
+  if (summary.outcome === 'HALTED') {
+    throw new TypeError('formatCorrectionSummaryBlock: a halted run never projects a handoff');
+  }
+  const json = JSON.stringify(summary, null, 2);
+  if (json.match(SUMMARY_OPEN_PATTERN) || json.match(SUMMARY_CLOSE_PATTERN)) {
+    throw new TypeError('formatCorrectionSummaryBlock: a summary value contains a summary marker');
+  }
+  return `${SUMMARY_OPEN}\n\`\`\`json\n${json}\n\`\`\`\n${SUMMARY_CLOSE}`;
+}
+
+// The summary in `text`'s one summary block, deep-frozen; null when `text` has no summary marker.
+// Throws Error on duplicate or unmatched markers, another version, a malformed fence, invalid JSON,
+// duplicate keys, a shape with unknown or missing keys, or a HALTED outcome.
+export function parseCorrectionSummaryBlock(text) {
+  if (typeof text !== 'string') throw new TypeError('parseCorrectionSummaryBlock: text must be a string');
+  const fail = (message) => { throw new Error(`parseCorrectionSummaryBlock: ${message}`); };
+  const opens = [...text.matchAll(SUMMARY_OPEN_PATTERN)].map((match) => match.index);
+  const closes = [...text.matchAll(SUMMARY_CLOSE_PATTERN)].map((match) => match.index);
+  if (opens.length === 0 && closes.length === 0) return null;
+  if (opens.length > 1 || closes.length > 1) fail('duplicate summary markers');
+  if (opens.length !== 1 || closes.length !== 1 || closes[0] < opens[0]) fail('unmatched summary marker');
+  if (!text.startsWith(SUMMARY_OPEN, opens[0])) fail(`unsupported summary marker; expected '${SUMMARY_OPEN}' (v1)`);
+  const frame = SUMMARY_FRAME.exec(text.slice(opens[0] + SUMMARY_OPEN.length, closes[0]));
+  if (frame === null) fail('the block must hold exactly one ```json fence');
+  let summary;
+  try {
+    summary = JSON.parse(frame[1]);
+  } catch (error) {
+    fail(`invalid JSON (${error.message})`);
+  }
+  const duplicate = duplicateKey(frame[1]);
+  if (duplicate !== null) fail(`duplicate key '${duplicate}'`);
+  const problem = summaryProblem(summary);
+  if (problem !== null) fail(problem);
+  if (summary.outcome === 'HALTED') fail('a halted run never projects a handoff');
+  return deepFreeze(summary);
+}
+
+// The run's deep-frozen summary: its outcome (PENDING before terminal, COMPLETE only when every task and
+// the latest final cycle are approved, PARTIAL at any other terminal, HALTED for a halted run), whose
+// approval is APPROVED only when COMPLETE, the completed, stopped and blocked tasks, each criterion's
+// status, the final cycle, every cycle, and the halt.
+export function summarizeCorrectionRun(state) {
+  assertState(state, 'summarizeCorrectionRun');
+  if (state.run === null) throw new TypeError('summarizeCorrectionRun: the run was never opened');
+  return deepFreeze(summarize(state));
 }
 
 // The checks, bindings and review mode a cycle of `scope` must open with. A task scope takes its plan
@@ -1766,7 +2345,10 @@ export function rankCandidates(cycleState) {
   if (!PRODUCED_CYCLES.has(cycleState)) {
     throw new TypeError('rankCandidates: cycleState must be a cycle of a state this module produced');
   }
-  const cycle = cycleState;
+  return rank(cycleState);
+}
+
+function rank(cycle) {
   const candidates = [
     { iteration: 0, observation: cycle.observation, candidate: null },
     ...cycle.iterations.filter((entry) => entry.writer?.accepted).map((entry) => ({
@@ -1782,6 +2364,27 @@ export function rankCandidates(cycleState) {
     if (verifier === undefined) return { ...candidate, ...UNVERIFIED, approved: false };
     return { ...candidate, ...verificationScore(cycle, verifier), approved: verifier.conclusion?.approved === true };
   }).sort(compareCandidates);
+}
+
+// Decides whether `observation`, the tree after the cycle `scope#cycle`, proves that cycle isolated:
+// `{ proven: true, mode: 'baseline-equal' | 'retained-best' }`, or `{ proven: false, recovery: {
+// bestCandidate, baselineObservation, changedPaths } }`. An ISOLATION_RECORDED must match a proven decision;
+// an unprovable one requires the guard to halt the run.
+export function decideIsolation(state, input) {
+  assertState(state, 'decideIsolation');
+  if (!isPlainObject(input)) throw new TypeError('decideIsolation: input must be a plain object');
+  assertOptions(input, DECIDE_KEYS, 'decideIsolation');
+  const missing = DECIDE_KEYS.filter((key) => !Object.hasOwn(input, key));
+  if (missing.length > 0) throw new TypeError(`decideIsolation: missing ${missing.join(', ')}`);
+  const { scope, cycle, observation } = input;
+  if (typeof scope !== 'string' || !SCOPE.test(scope)) {
+    throw new TypeError("decideIsolation: scope must be 'task-<N>' or 'final'");
+  }
+  if (!isPositiveInteger(cycle)) throw new TypeError('decideIsolation: cycle must be a positive integer');
+  if (!isHex64(observation)) throw new TypeError('decideIsolation: observation must be a lowercase 64-hex digest');
+  const key = cycleKey(scope, cycle);
+  if (!Object.hasOwn(state.cycles, key)) throw new TypeError(`decideIsolation: cycle ${key} was never opened`);
+  return decide(state.cycles[key], observation);
 }
 
 export function validateRetryRequest(state, request) {

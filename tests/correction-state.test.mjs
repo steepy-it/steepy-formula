@@ -7,12 +7,16 @@ import {
   applyCorrectionRecord,
   compareOutcomes,
   createCorrectionState,
+  decideIsolation,
   deriveCycleBindings,
+  formatCorrectionSummaryBlock,
   nextCorrectionStep,
   normalizeDefects,
+  parseCorrectionSummaryBlock,
   rankCandidates,
   replayCorrectionRecords,
   reviewRubricBindings,
+  summarizeCorrectionRun,
   validateRetryRequest,
   validateRubric,
 } from '../scripts/correction-state.mjs';
@@ -100,8 +104,8 @@ test('vocabulary: allowance, deep-frozen codes and frozen record kinds', () => {
   assert.ok(Object.isFrozen(CORRECTION_RECORD_KINDS));
   assert.deepEqual(Object.keys(CORRECTION_RECORD_KINDS).sort(), [
     'CHECKS_RECORDED', 'CYCLE_OPENED', 'CYCLE_STOPPED', 'DIAGNOSIS_RECORDED', 'DISPATCH_AUTHORIZED',
-    'ITERATION_INTERRUPTED', 'ITERATION_RESERVED', 'RETRY_ADMITTED', 'REVIEW_RECORDED', 'RUN_HALTED', 'RUN_OPENED',
-    'WRITER_RECORDED',
+    'ISOLATION_RECORDED', 'ITERATION_INTERRUPTED', 'ITERATION_RESERVED', 'REOPEN_AUTHORIZED', 'RETRY_ADMITTED',
+    'REVIEW_RECORDED', 'RUN_HALTED', 'RUN_OPENED', 'WRITER_RECORDED',
   ]);
   for (const [name, value] of Object.entries(CORRECTION_RECORD_KINDS)) assert.equal(value, name);
   assert.throws(() => { CORRECTION_CODES.stop.EXHAUSTED = 'X'; }, TypeError);
@@ -161,7 +165,8 @@ const rubricBinding = (criterion) => ({
 const GATE_CHECK = Object.freeze({ id: 'coherence-gate', command: 'builtin' });
 
 // The openings deriveCycleBindings yields for the plan above: task 1 (mechanical) opts in to review
-// with a rubric on SC1, and the final cycle opens before any task is delivered.
+// with a rubric on SC1, and the final cycle opens on tasks 1 and 2 delivered (task 4 stopped; see
+// `ready`).
 function opening(scope) {
   const surfaceTest = (command) => ({ id: 'surface-test', command });
   switch (scope) {
@@ -177,7 +182,14 @@ function opening(scope) {
         checks: [surfaceTest('node --test x'), { ...GATE_CHECK }], bindings: [], rubricCriteria: [], review: 'required',
       };
     case 'final':
-      return { checks: [{ ...GATE_CHECK }], bindings: [], rubricCriteria: [], review: 'required' };
+      return {
+        checks: [{ id: 'surface-test-1', command: 'npm test' }, { ...GATE_CHECK }],
+        bindings: ['SC1', 'SC2', 'SC3'].flatMap((criterion) => [
+          commandBinding(criterion, 'surface-test-1'), gateBinding(criterion), reviewBinding(criterion),
+        ]),
+        rubricCriteria: [],
+        review: 'required',
+      };
     default:
       return {
         checks: [surfaceTest('npm test'), { ...GATE_CHECK }],
@@ -195,6 +207,59 @@ function cycleOpened(scope = 'task-1', overrides = {}) {
   };
 }
 
+// Task 1 opened without review: it approves on its passed checks.
+const SKIPPED_TASK_ONE = Object.freeze({
+  bindings: [commandBinding('SC1', 'surface-test'), gateBinding('SC1'), commandBinding('SC2', 'surface-test'),
+    gateBinding('SC2')],
+  rubricCriteria: [],
+  review: 'skipped',
+});
+const FINAL_CHECK_IDS = ['surface-test-1', 'coherence-gate'];
+
+function isolationRecorded(scope = 'task-1', cycle = 1, mode = 'baseline-equal', observation = OBSERVATION) {
+  return { kind: 'ISOLATION_RECORDED', scope, cycle, mode, observation };
+}
+
+const REOPEN_REMEDY = 'split the reservation guard from the dispatch guard before retrying';
+
+// A human authorization to reopen `scope` at `cycle`, linked to its previous cycle.
+function reopenAuthorized(scope = 'task-1', cycle = 2, overrides = {}) {
+  const named = scope === 'final' ? 'the final review' : `Task ${scope.slice('task-'.length)}`;
+  return {
+    kind: 'REOPEN_AUTHORIZED', scope, cycle, predecessor: `${scope}#${cycle - 1}`,
+    authorization: { path: `.formula/work/tasks/2026-10-26-plan/correction/reopen-${scope}-${cycle}.json`, digest: hex('4') },
+    statement: `Reopen ${named}: ${REOPEN_REMEDY}.`, remedy: REOPEN_REMEDY, ...overrides,
+  };
+}
+
+// Legal paths to each scope's opening. Scopes open one at a time, in plan order, once their
+// prerequisites are approved: task 2 needs task 1, task 4 needs tasks 1 and 2, and the final needs every
+// task concluded. Task 4 stops here and its isolation is proven, so the final opens on tasks 1 and 2.
+function approvedOne() {
+  return chain(opened(), [
+    cycleOpened('task-1', SKIPPED_TASK_ONE), reserved(1, 'initial'), authorized(1, 'writer'), writerRecorded(1),
+    checksRecorded(1),
+  ]);
+}
+
+function approvedTwo() {
+  return chain(approvedOne(), [
+    cycleOpened('task-2'), reserved(1, 'initial', null, 'task-2'), authorized(1, 'writer', {}, 'task-2'),
+    writerRecorded(1, 'DONE', {}, 'task-2'), checksRecorded(1, {}, {}, 'task-2'),
+    authorized(1, 'task-reviewer', {}, 'task-2'), reviewRecorded(1, 'APPROVED', {}, 'task-reviewer', 'task-2'),
+  ]);
+}
+
+function taskFourStopped() {
+  return chain(approvedTwo(), [
+    cycleOpened('task-4'), stopped(STOP.HUMAN_INTERRUPTED, 'task-4'), isolationRecorded('task-4'),
+  ]);
+}
+
+function ready(scope = 'task-1') {
+  return { 'task-1': opened, 'task-2': approvedOne, 'task-4': approvedTwo, final: taskFourStopped }[scope]();
+}
+
 test('RUN_OPENED opens the run once, as the first record, and keeps the plan', () => {
   const state = opened();
   assert.ok(isDeepFrozen(state));
@@ -202,7 +267,8 @@ test('RUN_OPENED opens the run once, as the first record, and keeps the plan', (
   assert.equal(state.run.planDigest, PLAN_DIGEST);
   assert.equal(state.run.drive, 'manual');
   assert.deepEqual(state.run.tasks, plan());
-  assert.equal(nextCorrectionStep(state), null);
+  // The run's first step opens the first runnable task.
+  assert.deepEqual(nextCorrectionStep(state), { action: 'open-cycle', scope: 'task-1' });
   const autopilot = apply(createCorrectionState(), runOpened({ drive: 'autopilot' }));
   assert.equal(autopilot.run.drive, 'autopilot');
 
@@ -293,11 +359,13 @@ test('CYCLE_OPENED opens cycle 1 of a runnable scope and the next step reserves 
   assert.deepEqual(nextCorrectionStep(state),
     { action: 'reserve', scope: 'task-1', cycle: 1, iteration: 1, kind: 'initial' });
 
-  const both = apply(state, cycleOpened('final'));
-  assert.deepEqual(both.cycleOrder, ['task-1#1', 'final#1']);
-  assert.deepEqual(nextCorrectionStep(both),
+  // One cycle is open at a time, and a task opens only once its prerequisites are approved.
+  refused(applyCorrectionRecord(state, cycleOpened('final')), REFUSAL.SCOPE_NOT_RUNNABLE);
+  refused(applyCorrectionRecord(opened(), cycleOpened('task-4')), REFUSAL.SCOPE_NOT_RUNNABLE);
+  const final = cycleState('final');
+  assert.deepEqual(final.cycleOrder, ['task-1#1', 'task-2#1', 'task-4#1', 'final#1']);
+  assert.deepEqual(nextCorrectionStep(final),
     { action: 'reserve', scope: 'final', cycle: 1, iteration: 1, kind: 'initial' });
-  apply(opened(), cycleOpened('task-4'));
 });
 
 test('CYCLE_OPENED refuses unrunnable scopes, reopening and malformed payloads', () => {
@@ -308,8 +376,7 @@ test('CYCLE_OPENED refuses unrunnable scopes, reopening and malformed payloads',
     assert.equal(result.identity.cycle, 1);
   }
   refused(applyCorrectionRecord(state, cycleOpened()), REFUSAL.SCOPE_NOT_RUNNABLE);
-  const withFinal = apply(state, cycleOpened('final'));
-  refused(applyCorrectionRecord(withFinal, cycleOpened('final')), REFUSAL.REOPEN_INVALID);
+  refused(applyCorrectionRecord(cycleState('final'), cycleOpened('final')), REFUSAL.REOPEN_INVALID);
   refused(applyCorrectionRecord(opened(), cycleOpened('task-2', { cycle: 2 })), REFUSAL.REOPEN_INVALID);
   refused(applyCorrectionRecord(opened(), cycleOpened('task-2', { predecessor: 'task-2#1' })), REFUSAL.REOPEN_INVALID);
   refused(applyCorrectionRecord(opened(), cycleOpened('final', { cycle: 2, predecessor: 'final#1' })),
@@ -360,7 +427,7 @@ function chain(state, steps) {
 }
 
 function cycleState(scope = 'task-1') {
-  return apply(opened(), cycleOpened(scope));
+  return apply(ready(scope), cycleOpened(scope));
 }
 
 test('reservation is monotonic: iteration 1 must be initial, and initial is allowed only at iteration 1', () => {
@@ -531,7 +598,7 @@ function retryRequest(overrides = {}) {
   };
 }
 
-// The final cycle opens before any task is delivered, so it binds no criterion: its retries name the gate.
+// A final retry names the coherence gate, which every final cycle checks.
 function finalRetryRequest(overrides = {}) {
   return retryRequest({ scope: 'final', target: 'coherence-gate', confirmingCheck: 'coherence-gate', ...overrides });
 }
@@ -698,7 +765,8 @@ test('the third iteration concluding without approval stops EXHAUSTED; a fourth 
   const cycle = exhausted.cycles['task-1#1'];
   assert.equal(cycle.status, 'STOPPED');
   assert.equal(cycle.stopReason, STOP.EXHAUSTED);
-  assert.deepEqual(nextCorrectionStep(exhausted), { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.EXHAUSTED });
+  // A stopped task cycle must prove isolation before the run continues.
+  assert.deepEqual(nextCorrectionStep(exhausted), { action: 'prove-isolation', scope: 'task-1', cycle: 1 });
   refused(applyCorrectionRecord(exhausted, reserved(4, 'correction')), REFUSAL.CYCLE_TERMINAL);
   refused(validateRetryRequest(exhausted, retryRequest({ iteration: 4, evidence: ref(6) })), REFUSAL.CYCLE_TERMINAL);
   refused(applyCorrectionRecord(exhausted, authorized(3, 'task-reviewer')), REFUSAL.CYCLE_TERMINAL);
@@ -819,7 +887,7 @@ test('a valid diagnosis at slot 3 stops EXHAUSTED and keeps its recommendation a
   assert.equal(cycle.nextRemedy, diagnosed(3).recommendation);
   assert.equal(cycle.diagnosis.recommendation, diagnosed(3).recommendation);
   assert.equal(cycle.reserved, 3);
-  assert.deepEqual(nextCorrectionStep(state), { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.EXHAUSTED });
+  assert.deepEqual(nextCorrectionStep(state), { action: 'prove-isolation', scope: 'task-1', cycle: 1 });
   refused(applyCorrectionRecord(state, reserved(4, 'correction')), REFUSAL.CYCLE_TERMINAL);
 });
 
@@ -827,8 +895,7 @@ test('an invalid diagnosis stops the cycle DIAGNOSIS_INCONCLUSIVE, at any slot',
   const atTwo = apply(diagnosingAtTwo(), diagnosed(2, false, { hypothesis: '', remedy: '', recommendation: '' }));
   assert.equal(atTwo.cycles['task-1#1'].status, 'STOPPED');
   assert.equal(atTwo.cycles['task-1#1'].stopReason, STOP.DIAGNOSIS_INCONCLUSIVE);
-  assert.deepEqual(nextCorrectionStep(atTwo),
-    { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.DIAGNOSIS_INCONCLUSIVE });
+  assert.deepEqual(nextCorrectionStep(atTwo), { action: 'prove-isolation', scope: 'task-1', cycle: 1 });
   refused(validateRetryRequest(atTwo, retryRequest({ iteration: 3, evidence: { ...DIAGNOSIS_ARTIFACT } })),
     REFUSAL.CYCLE_TERMINAL);
   const atThree = chain(awaitingRetry(), [
@@ -877,12 +944,13 @@ test('CYCLE_STOPPED stops an open cycle explicitly; an unconcluded reserved iter
   assert.equal(cycle.stopNote, 'stopped by the operator');
   assert.equal(cycle.reserved, 1);
   assert.equal(cycle.iterations[0].conclusion, null);
-  assert.deepEqual(nextCorrectionStep(state),
-    { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.HUMAN_INTERRUPTED });
+  assert.deepEqual(nextCorrectionStep(state), { action: 'prove-isolation', scope: 'task-1', cycle: 1 });
   refused(applyCorrectionRecord(state, interrupted(1)), REFUSAL.CYCLE_TERMINAL);
   refused(applyCorrectionRecord(state, stopped(STOP.HUMAN_INTERRUPTED)), REFUSAL.CYCLE_TERMINAL);
   refused(applyCorrectionRecord(state, cycleOpened()), REFUSAL.REOPEN_INVALID);
-  apply(state, cycleOpened('task-2'));
+  // Nothing opens before isolation is proven; then task 2, which depends on the stopped task 1, is blocked.
+  refused(applyCorrectionRecord(state, cycleOpened('task-2')), REFUSAL.ISOLATION_REQUIRED);
+  refused(applyCorrectionRecord(apply(state, isolationRecorded()), cycleOpened('task-2')), REFUSAL.SCOPE_NOT_RUNNABLE);
 
   const missing = apply(awaitingRetry(), stopped(STOP.RETRY_EVIDENCE_MISSING));
   assert.equal(missing.cycles['task-1#1'].stopReason, STOP.RETRY_EVIDENCE_MISSING);
@@ -916,7 +984,12 @@ test('a halted run refuses every later record and reports the halt as its next s
   }
 });
 
-// A valid run touching every record kind but RUN_HALTED, with the guard's refs for every record.
+// The final opening when no task is delivered: the coherence gate alone, binding no criterion.
+const NOTHING_DELIVERED = Object.freeze(deriveCycleBindings({ scope: 'final', deliveredTasks: [] }));
+
+// A valid run touching every record kind but RUN_HALTED and the outcome records, with the guard's refs
+// for every record. Task 1 stops EXHAUSTED and proves isolation; tasks 2 and 4 depend on it, so the
+// final opens on nothing delivered. A human then reopens task 1.
 function validSequence() {
   const second = retryRequest();
   const records = [
@@ -933,11 +1006,13 @@ function validSequence() {
     reserved(3, 'diagnosis', 'comparison-unavailable'),
     authorized(3, 'diagnostic'),
     diagnosed(3),
-    cycleOpened('final'),
+    isolationRecorded(),
+    cycleOpened('final', NOTHING_DELIVERED),
     reserved(1, 'initial', null, 'final'),
     authorized(1, 'final-reviewer', {}, 'final'),
     stopped(STOP.HUMAN_INTERRUPTED, 'final'),
-    cycleOpened('task-2'),
+    reopenAuthorized(),
+    cycleOpened('task-1', { cycle: 2, predecessor: 'task-1#1' }),
   ];
   const refs = records.map((_record, index) => ref(index + 1, 'abcdef0123456789'[index % 16]));
   refs[5] = ref(5);
@@ -958,8 +1033,8 @@ test('replay of a valid sequence equals incremental application', () => {
   assert.equal(replayed.cycles['final#1'].stopReason, STOP.HUMAN_INTERRUPTED);
   assert.deepEqual(nextCorrectionStep(replayed), nextCorrectionStep(incremental));
   assert.deepEqual(nextCorrectionStep(replayed),
-    { action: 'reserve', scope: 'task-2', cycle: 1, iteration: 1, kind: 'initial' });
-  apply(replayed, reserved(1, 'initial', null, 'task-2'));
+    { action: 'reserve', scope: 'task-1', cycle: 2, iteration: 1, kind: 'initial' });
+  apply(replayed, reserved(1, 'initial', null, 'task-1', 2));
 
   const prefix = records.slice(0, 6);
   const unreferenced = ok(replayCorrectionRecords(prefix));
@@ -998,6 +1073,8 @@ test('every record kind has a closed payload: a missing or an unknown key is ref
     WRITER_RECORDED: writerRecorded(1),
     CHECKS_RECORDED: checksRecorded(1),
     REVIEW_RECORDED: reviewRecorded(1),
+    ISOLATION_RECORDED: isolationRecorded(),
+    REOPEN_AUTHORIZED: reopenAuthorized(),
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(CORRECTION_RECORD_KINDS).sort());
   for (const [kind, record] of Object.entries(samples)) {
@@ -1160,7 +1237,7 @@ test('CYCLE_OPENED is refused with RECORD_SCHEMA unless checks, bindings and rev
     threshold, direction, metric, kind, check, criterion,
   }));
   apply(opened(), cycleOpened('task-1', { bindings: reordered }));
-  for (const scope of ['task-2', 'task-4', 'final']) apply(opened(), cycleOpened(scope));
+  for (const scope of ['task-2', 'task-4', 'final']) apply(ready(scope), cycleOpened(scope));
 
   const { bindings, checks } = cycleOpened();
   const weakened = bindings.map((entry, index) => (index === 0 ? { ...entry, threshold: 1 } : entry));
@@ -1179,13 +1256,15 @@ test('CYCLE_OPENED is refused with RECORD_SCHEMA unless checks, bindings and rev
     ['task-2', { review: 'skipped', bindings: [commandBinding('SC3', 'surface-test'), gateBinding('SC3')] }],
     ['task-4', { checks: [{ id: 'surface-test', command: 'npm test' }, GATE_CHECK] }],
     ['final', { bindings: [commandBinding('SC1', 'surface-test-1')] }],
-    ['final', { checks: [{ id: 'surface-test-1', command: 'npm test' }, GATE_CHECK] }],
+    // The final derivation covers exactly the delivered tasks, here tasks 1 and 2.
+    ['final', NOTHING_DELIVERED],
+    ['final', { checks: [{ id: 'surface-test-1', command: 'node --test x' }, GATE_CHECK] }],
     ['final', { review: 'skipped' }],
     ['final', { rubricCriteria: ['SC1'] }],
   ];
   for (const [scope, overrides] of mismatches) {
     let result;
-    assert.doesNotThrow(() => { result = applyCorrectionRecord(opened(), cycleOpened(scope, overrides)); });
+    assert.doesNotThrow(() => { result = applyCorrectionRecord(ready(scope), cycleOpened(scope, overrides)); });
     const refusal = refused(result, REFUSAL.RECORD_SCHEMA);
     assert.deepEqual(refusal.identity, { kind: 'CYCLE_OPENED', scope, cycle: 1 }, JSON.stringify(overrides));
   }
@@ -1900,7 +1979,8 @@ test('approval requires the accepted writer, every check, the approved review an
   assert.equal(cycle.approvedObservation, CANDIDATE(1));
   assert.deepEqual([cycle.iterations[0].conclusion.approved, cycle.iterations[0].conclusion.observation],
     [true, CANDIDATE(1)]);
-  assert.deepEqual(nextCorrectionStep(state), { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.APPROVED });
+  // Task 2 depends on the approved task 1: it is the next runnable task.
+  assert.deepEqual(nextCorrectionStep(state), { action: 'open-cycle', scope: 'task-2' });
   refused(applyCorrectionRecord(state, reviewRecorded(1)), REFUSAL.CYCLE_TERMINAL);
   refused(applyCorrectionRecord(state, cycleOpened()), REFUSAL.SCOPE_NOT_RUNNABLE);
   // Passed checks alone do not approve a cycle whose review is required.
@@ -1948,9 +2028,11 @@ test('a mechanical task without review approves on its passed checks and authori
 
 test('the final cycle opens on the delivered tasks and approves only on the final review', () => {
   const tasks = plan();
-  const delivered = deriveCycleBindings({ scope: 'final', deliveredTasks: [tasks[0]] });
-  const state = approvedTaskOne();
-  refused(applyCorrectionRecord(state, cycleOpened('final')), REFUSAL.RECORD_SCHEMA);
+  // Tasks 1 and 2 are approved and task 4 stopped: the final binds only the delivered tasks, so the
+  // stopped task's `node --test x` is not among its checks.
+  const delivered = deriveCycleBindings({ scope: 'final', deliveredTasks: [tasks[0], tasks[1]] });
+  const state = taskFourStopped();
+  refused(applyCorrectionRecord(state, cycleOpened('final', NOTHING_DELIVERED)), REFUSAL.RECORD_SCHEMA);
   const finalOpened = apply(state, cycleOpened('final', delivered));
   assert.deepEqual(finalOpened.cycles['final#1'].checks,
     [{ id: 'surface-test-1', command: 'npm test' }, { id: 'coherence-gate', command: 'builtin' }]);
@@ -1969,7 +2051,7 @@ test('the final cycle opens on the delivered tasks and approves only on the fina
     checksRecorded(1, { 'surface-test-1': FAILED(4) }, { observation: OBSERVATION }, 'final', 1, ids),
   ]);
   assert.deepEqual(failing.cycles['final#1'].iterations[0].conclusion.defects.map((defect) => defect.id),
-    ['SC1/surface-test-1/command-failed', 'SC2/surface-test-1/command-failed']);
+    ['SC1/surface-test-1/command-failed', 'SC2/surface-test-1/command-failed', 'SC3/surface-test-1/command-failed']);
   // In a final correction, an approved task review leaves the iteration open for the final review.
   const correcting = chain(failing, [
     admitted(finalRetryRequest({ target: 'SC1', confirmingCheck: 'surface-test-1',
@@ -2022,7 +2104,7 @@ test('a repeated command defect improving 3 to 1 awaits a retry; staying at 3 st
   assert.equal(cycleOf(stagnant).status, 'STOPPED');
   assert.equal(cycleOf(stagnant).stopReason, STOP.STAGNATED);
   assert.equal(cycleOf(stagnant).iterations[1].conclusion.comparison.verdict, 'stagnant');
-  assert.deepEqual(nextCorrectionStep(stagnant), { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.STAGNATED });
+  assert.deepEqual(nextCorrectionStep(stagnant), { action: 'prove-isolation', scope: 'task-1', cycle: 1 });
   // Stagnation on the last slot is reported as STAGNATED, not EXHAUSTED.
   const third = apply(rewritten(improved, 3, checkEvidence(2)), checksRecorded(3, { 'surface-test': FAILED(1) }));
   assert.equal(cycleOf(third).stopReason, STOP.STAGNATED);
@@ -2305,7 +2387,7 @@ test('REVIEW_RECORDED: an unsatisfied constraint is refused unbacked, inconsiste
     bindings: [commandBinding('SC3', 'surface-test'), gateBinding('SC3'), reviewBinding('SC3'), rubricBinding('SC3')],
     rubricCriteria: ['SC3'],
   });
-  const state = chain(opened(), [opening, reserved(1, 'initial', null, 'task-2'), authorized(1, 'writer', {}, 'task-2'),
+  const state = chain(approvedOne(), [opening, reserved(1, 'initial', null, 'task-2'), authorized(1, 'writer', {}, 'task-2'),
     writerRecorded(1, 'DONE', {}, 'task-2'), checksRecorded(1, {}, {}, 'task-2'),
     authorized(1, 'task-reviewer', {}, 'task-2')]);
   const review = (status, defects) => reviewRecorded(1, status, { defects, rubric: violatedRubric('SC3', 'k') },
@@ -2338,27 +2420,13 @@ test('a repeated unsatisfied constraint stagnates instead of reading as progress
 
 // --- fix 1: final-correction steps ----------------------------------------------------------------
 
-const SKIPPED_TASK_ONE = Object.freeze({
-  bindings: [commandBinding('SC1', 'surface-test'), gateBinding('SC1'), commandBinding('SC2', 'surface-test'),
-    gateBinding('SC2')],
-  rubricCriteria: [],
-  review: 'skipped',
-});
-const FINAL_CHECK_IDS = ['surface-test-1', 'coherence-gate'];
-
-// Task 1 (mechanical, review skipped) and task 2 (design) approved, then the final cycle opened on both.
+// Task 1 (mechanical, review skipped) and task 2 (design) approved and task 4 stopped with its isolation
+// proven, then the final cycle opened on tasks 1 and 2.
 function deliveredFinal(rubricCriteria = []) {
   const [mechanical, design] = plan();
-  return chain(opened(), [
-    cycleOpened('task-1', SKIPPED_TASK_ONE), reserved(1, 'initial'), authorized(1, 'writer'), writerRecorded(1),
-    checksRecorded(1),
-    cycleOpened('task-2'), reserved(1, 'initial', null, 'task-2'), authorized(1, 'writer', {}, 'task-2'),
-    writerRecorded(1, 'DONE', {}, 'task-2'), checksRecorded(1, {}, {}, 'task-2'),
-    authorized(1, 'task-reviewer', {}, 'task-2'), reviewRecorded(1, 'APPROVED', {}, 'task-reviewer', 'task-2'),
-    cycleOpened('final', {
-      ...deriveCycleBindings({ scope: 'final', deliveredTasks: [mechanical, design], rubricCriteria }), rubricCriteria,
-    }),
-  ]);
+  return apply(taskFourStopped(), cycleOpened('final', {
+    ...deriveCycleBindings({ scope: 'final', deliveredTasks: [mechanical, design], rubricCriteria }), rubricCriteria,
+  }));
 }
 
 // The final review of iteration 1 finds an SC3 issue; iteration 2's writer changes `ownerTask` and passes the checks.
@@ -2476,4 +2544,758 @@ test('REVIEW_RECORDED scores a final-scope task review on its owner task\'s rubr
   const reviewed = apply(state, taskReview([rubricEntry('SC3')]));
   assert.deepEqual(reviewed.cycles['final#1'].iterations[1].reviews[0].rubric.criteria.map((item) => item.criterion),
     ['SC3']);
+});
+
+// --- run-level scheduling -------------------------------------------------------------------------
+
+// Task 2 depends on task 1, task 3 on task 2, and task 4 on nothing. Every task is mechanical, so it
+// skips review and approves on its passed checks.
+function closurePlan() {
+  return ['1', '2', '3', '4'].map((task) => ({
+    task, dependencies: { 2: ['1'], 3: ['2'] }[task] ?? [], complexity: 'mechanical', criterionIds: [`SC${task}`],
+    testCommand: 'npm test',
+  }));
+}
+
+function closureRun(overrides = {}) {
+  return apply(createCorrectionState(), runOpened({ tasks: closurePlan(), ...overrides }));
+}
+
+function taskOpened(task, overrides = {}) {
+  const scope = `task-${task}`;
+  const planned = closurePlan().find((entry) => entry.task === task);
+  return {
+    kind: 'CYCLE_OPENED', scope, cycle: 1, predecessor: null, ...deriveCycleBindings({ scope, task: planned }),
+    rubricCriteria: [], observation: OBSERVATION, ...overrides,
+  };
+}
+
+// The records that open, write and check `task` (of the closure plan) to approval in `cycle`.
+function approvalRecords(task, cycle = 1) {
+  const scope = `task-${task}`;
+  return [
+    taskOpened(task, { cycle, predecessor: cycle === 1 ? null : `${scope}#${cycle - 1}` }),
+    reserved(1, 'initial', null, scope, cycle), authorized(1, 'writer', {}, scope, cycle),
+    writerRecorded(1, 'DONE', {}, scope, cycle), checksRecorded(1, {}, {}, scope, cycle),
+  ];
+}
+
+function approvedTask(state, task, cycle = 1) {
+  return chain(state, approvalRecords(task, cycle));
+}
+
+// The final opening on the closure-plan tasks `delivered`.
+function closureFinal(delivered, overrides = {}) {
+  return {
+    kind: 'CYCLE_OPENED', scope: 'final', cycle: 1, predecessor: null,
+    ...deriveCycleBindings({
+      scope: 'final', deliveredTasks: closurePlan().filter((entry) => delivered.includes(entry.task)),
+    }),
+    rubricCriteria: [], observation: OBSERVATION, ...overrides,
+  };
+}
+
+// The records that reserve the initial final iteration and approve it: checks, then the final review.
+function finalApprovalRecords(cycle = 1) {
+  return [
+    reserved(1, 'initial', null, 'final', cycle), authorized(1, 'final-reviewer', {}, 'final', cycle),
+    checksRecorded(1, {}, { observation: OBSERVATION }, 'final', cycle, FINAL_CHECK_IDS),
+    reviewRecorded(1, 'APPROVED', { before: OBSERVATION, after: OBSERVATION, rubric: [] }, 'final-reviewer', 'final',
+      cycle),
+  ];
+}
+
+function approvedFinal(state, cycle = 1) {
+  return chain(state, finalApprovalRecords(cycle));
+}
+
+test('prerequisite closure: a stopped task blocks its transitive dependents, and an independent task still runs', () => {
+  const run = closureRun();
+  assert.deepEqual(nextCorrectionStep(run), { action: 'open-cycle', scope: 'task-1' });
+  for (const task of ['2', '3', '4']) {
+    const result = refused(applyCorrectionRecord(run, taskOpened(task)), REFUSAL.SCOPE_NOT_RUNNABLE);
+    assert.deepEqual(result.identity, { kind: 'CYCLE_OPENED', scope: `task-${task}`, cycle: 1 });
+  }
+  refused(applyCorrectionRecord(run, closureFinal([])), REFUSAL.SCOPE_NOT_RUNNABLE);
+  const stoppedOne = chain(run, [taskOpened('1'), stopped(STOP.HUMAN_INTERRUPTED)]);
+  assert.deepEqual(nextCorrectionStep(stoppedOne), { action: 'prove-isolation', scope: 'task-1', cycle: 1 });
+  refused(applyCorrectionRecord(stoppedOne, taskOpened('4')), REFUSAL.ISOLATION_REQUIRED);
+  refused(applyCorrectionRecord(stoppedOne, closureFinal([])), REFUSAL.ISOLATION_REQUIRED);
+  const isolated = apply(stoppedOne, isolationRecorded());
+  // Tasks 2 and 3 are blocked by task 1; task 4 is independent and runs.
+  assert.deepEqual(summarizeCorrectionRun(isolated).blocked, [{ task: '2', causes: ['1'] }, { task: '3', causes: ['1'] }]);
+  assert.deepEqual(nextCorrectionStep(isolated), { action: 'open-cycle', scope: 'task-4' });
+  for (const task of ['2', '3']) refused(applyCorrectionRecord(isolated, taskOpened(task)), REFUSAL.SCOPE_NOT_RUNNABLE);
+  refused(applyCorrectionRecord(isolated, closureFinal([])), REFUSAL.SCOPE_NOT_RUNNABLE);
+  const four = approvedTask(isolated, '4');
+  assert.equal(four.cycles['task-4#1'].status, 'APPROVED');
+  assert.deepEqual(nextCorrectionStep(four), { action: 'open-cycle', scope: 'final' });
+  for (const task of ['2', '3', '4']) refused(applyCorrectionRecord(four, taskOpened(task)), REFUSAL.SCOPE_NOT_RUNNABLE);
+  refused(applyCorrectionRecord(four, taskOpened('1')), REFUSAL.REOPEN_INVALID);
+});
+
+test('blocked tasks never get a cycle and consume no iteration, through to the end of the run', () => {
+  const four = approvedTask(chain(closureRun(), [taskOpened('1'), stopped(STOP.HUMAN_INTERRUPTED), isolationRecorded()]),
+    '4');
+  const finished = approvedFinal(apply(four, closureFinal(['4'])));
+  assert.equal(finished.cycles['final#1'].status, 'APPROVED');
+  assert.deepEqual(finished.cycleOrder, ['task-1#1', 'task-4#1', 'final#1']);
+  assert.equal(nextCorrectionStep(finished).action, 'terminal');
+  for (const task of ['2', '3']) {
+    assert.ok(!Object.keys(finished.cycles).some((key) => key.startsWith(`task-${task}#`)));
+    refused(applyCorrectionRecord(finished, taskOpened(task)), REFUSAL.SCOPE_NOT_RUNNABLE);
+  }
+});
+
+// --- isolation ------------------------------------------------------------------------------------
+
+// Task 1 (review required) reaches a verified candidate whose checks all pass, but its review finds an
+// issue; the cycle then stops.
+function stoppedWithPassingCandidate() {
+  return chain(reviewing(), [reviewRecorded(1, 'ISSUES_FOUND', { defects: [defectEntry()] }),
+    stopped(STOP.RETRY_EVIDENCE_MISSING)]);
+}
+
+test('decideIsolation: baseline-equal for the opening tree, retained-best for a verified passing best candidate', () => {
+  const state = stoppedWithPassingCandidate();
+  const decide = (observation) => decideIsolation(state, { scope: 'task-1', cycle: 1, observation });
+  assert.deepEqual(decide(OBSERVATION), { proven: true, mode: 'baseline-equal' });
+  assert.deepEqual(decide(CANDIDATE(1)), { proven: true, mode: 'retained-best' });
+  assert.deepEqual(decide(hex('5')), {
+    proven: false,
+    recovery: {
+      bestCandidate: { iteration: 1, observation: CANDIDATE(1), snapshot: writerRecorded(1).candidate },
+      baselineObservation: OBSERVATION,
+      changedPaths: writerRecorded(1).changedPaths,
+    },
+  });
+  // A best candidate whose checks failed is not retained.
+  const failed = chain(written(), [checksRecorded(1, { 'surface-test': FAILED(3) }), stopped(STOP.RETRY_EVIDENCE_MISSING)]);
+  assert.equal(decideIsolation(failed, { scope: 'task-1', cycle: 1, observation: CANDIDATE(1) }).proven, false);
+  // An unverified candidate ranks after the baseline, which is then the best candidate.
+  const unverified = apply(written(), stopped(STOP.HUMAN_INTERRUPTED));
+  assert.deepEqual(decideIsolation(unverified, { scope: 'task-1', cycle: 1, observation: CANDIDATE(1) }), {
+    proven: false,
+    recovery: {
+      bestCandidate: { iteration: 0, observation: OBSERVATION, snapshot: null },
+      baselineObservation: OBSERVATION,
+      changedPaths: writerRecorded(1).changedPaths,
+    },
+  });
+});
+
+test('decideIsolation: the recovery names the sorted union of every writer\'s changed paths', () => {
+  const first = chain(written(), [checksRecorded(1, { 'surface-test': FAILED(3) })]);
+  const state = chain(first, [
+    admitted(retryRequest({ evidence: checkEvidence(1) })), reserved(2, 'correction'), authorized(2, 'writer'),
+    writerRecorded(2, 'BLOCKED', { changedPaths: ['docs/a.md', 'scripts/correction-state.mjs'] }),
+    stopped(STOP.HUMAN_INTERRUPTED),
+  ]);
+  const decision = decideIsolation(state, { scope: 'task-1', cycle: 1, observation: hex('5') });
+  assert.deepEqual(decision.recovery.changedPaths,
+    ['docs/a.md', 'scripts/correction-state.mjs', 'tests/correction-state.test.mjs']);
+});
+
+test('decideIsolation throws TypeError on a malformed call', () => {
+  const state = stoppedWithPassingCandidate();
+  const input = { scope: 'task-1', cycle: 1, observation: OBSERVATION };
+  for (const foreign of [null, {}, structuredClone(state)]) {
+    assert.throws(() => decideIsolation(foreign, input), { name: 'TypeError', message: /^decideIsolation: /u });
+  }
+  for (const call of [undefined, 'task-1', { ...input, extra: 1 }, { scope: 'task-1', cycle: 1 },
+    { ...input, scope: 'task' }, { ...input, cycle: 0 }, { ...input, observation: 'b' }, { ...input, scope: 'task-2' },
+    { ...input, cycle: 2 }]) {
+    assert.throws(() => decideIsolation(state, call), { name: 'TypeError', message: /^decideIsolation: /u });
+  }
+});
+
+test('ISOLATION_RECORDED must match a proven decision for the latest stopped task cycle', () => {
+  const state = stoppedWithPassingCandidate();
+  assert.deepEqual(nextCorrectionStep(state), { action: 'prove-isolation', scope: 'task-1', cycle: 1 });
+  const retained = apply(state, isolationRecorded('task-1', 1, 'retained-best', CANDIDATE(1)));
+  assert.deepEqual(retained.cycles['task-1#1'].isolation, { mode: 'retained-best', observation: CANDIDATE(1) });
+  // Tasks 2 and 4 depend on the stopped task 1, so the final opens on nothing delivered.
+  assert.deepEqual(nextCorrectionStep(retained), { action: 'open-cycle', scope: 'final' });
+  apply(retained, cycleOpened('final', NOTHING_DELIVERED));
+  const baseline = apply(state, isolationRecorded());
+  assert.deepEqual(baseline.cycles['task-1#1'].isolation, { mode: 'baseline-equal', observation: OBSERVATION });
+
+  // The mode must be the proven one.
+  refused(applyCorrectionRecord(state, isolationRecorded('task-1', 1, 'baseline-equal', CANDIDATE(1))),
+    REFUSAL.RECORD_SCHEMA);
+  refused(applyCorrectionRecord(state, isolationRecorded('task-1', 1, 'retained-best', OBSERVATION)),
+    REFUSAL.RECORD_SCHEMA);
+  for (const record of [isolationRecorded('task-1', 1, 'restored'), isolationRecorded('final'),
+    isolationRecorded('task-1', 0), isolationRecorded('task-1', 1, 'baseline-equal', 'b')]) {
+    const result = refused(applyCorrectionRecord(state, record), REFUSAL.RECORD_SCHEMA);
+    assert.doesNotMatch(result.message, /unknown record kind/u);
+  }
+  // Only the latest stopped task cycle, once, with no cycle open.
+  refused(applyCorrectionRecord(baseline, isolationRecorded()), REFUSAL.RECORD_ORDER);
+  refused(applyCorrectionRecord(opened(), isolationRecorded()), REFUSAL.RECORD_ORDER);
+  refused(applyCorrectionRecord(cycleState(), isolationRecorded()), REFUSAL.RECORD_ORDER);
+  refused(applyCorrectionRecord(approvedOne(), isolationRecorded()), REFUSAL.RECORD_ORDER);
+  refused(applyCorrectionRecord(state, isolationRecorded('task-2')), REFUSAL.RECORD_ORDER);
+  refused(applyCorrectionRecord(state, isolationRecorded('task-1', 2)), REFUSAL.RECORD_ORDER);
+});
+
+test('an unprovable isolation refuses ISOLATION_RECORDED with INTEGRITY, and the run must halt', () => {
+  const state = stoppedWithPassingCandidate();
+  for (const mode of ['baseline-equal', 'retained-best']) {
+    const result = refused(applyCorrectionRecord(state, isolationRecorded('task-1', 1, mode, hex('5'))), HALT.INTEGRITY);
+    assert.deepEqual(result.identity, { kind: 'ISOLATION_RECORDED', scope: 'task-1', cycle: 1 });
+  }
+  // The guard answers with RUN_HALTED: never a task-local result, and nothing continues.
+  const haltedRun = apply(state, halted({ reason: 'isolation could not be proven', observation: hex('5') }));
+  assert.deepEqual(nextCorrectionStep(haltedRun), { action: 'halted', reason: 'isolation could not be proven' });
+  assert.equal(haltedRun.cycles['task-1#1'].isolation, null);
+  refused(applyCorrectionRecord(haltedRun, isolationRecorded()), REFUSAL.RUN_HALTED);
+  refused(applyCorrectionRecord(haltedRun, cycleOpened('final', NOTHING_DELIVERED)), REFUSAL.RUN_HALTED);
+});
+
+// --- final review ---------------------------------------------------------------------------------
+
+// Closure plan: task 1 stopped with its isolation proven (blocking tasks 2 and 3), task 4 approved,
+// then the final cycle opened on the partial delivery: task 4 alone.
+function partialFinal() {
+  const four = approvedTask(chain(closureRun(), [taskOpened('1'), stopped(STOP.HUMAN_INTERRUPTED), isolationRecorded()]),
+    '4');
+  return apply(four, closureFinal(['4']));
+}
+
+const FINAL_REVIEW_EVIDENCE = Object.freeze({ path: OUTCOME_PATH('final', 1, 'final-reviewer'), digest: hex('6') });
+
+// The partial final's initial iteration finds an SC4 issue; the correction at iteration 2 is reserved.
+function partialFinalCorrection() {
+  return chain(partialFinal(), [
+    reserved(1, 'initial', null, 'final'), authorized(1, 'final-reviewer', {}, 'final'),
+    checksRecorded(1, {}, { observation: OBSERVATION }, 'final', 1, FINAL_CHECK_IDS),
+    reviewRecorded(1, 'ISSUES_FOUND', {
+      before: OBSERVATION, after: OBSERVATION, rubric: [],
+      defects: [defectEntry({ criterion: 'SC4', cause: 'missing-note' })],
+    }, 'final-reviewer', 'final'),
+    admitted(finalRetryRequest({ target: 'SC4', confirmingCheck: 'review', evidence: { ...FINAL_REVIEW_EVIDENCE } })),
+    reserved(2, 'correction', null, 'final'),
+  ]);
+}
+
+test('the final cycle opens only once every task concluded, and runs on a partial delivery', () => {
+  const state = partialFinal();
+  assert.deepEqual(state.cycles['final#1'].checks,
+    [{ id: 'surface-test-1', command: 'npm test' }, { id: 'coherence-gate', command: 'builtin' }]);
+  assert.deepEqual([...new Set(state.cycles['final#1'].bindings.map((entry) => entry.criterion))], ['SC4']);
+  // The derivation must name exactly the delivered tasks: never a stopped or blocked one.
+  const four = approvedTask(chain(closureRun(), [taskOpened('1'), stopped(STOP.HUMAN_INTERRUPTED), isolationRecorded()]),
+    '4');
+  for (const delivered of [[], ['1', '4'], ['2', '4']]) {
+    refused(applyCorrectionRecord(four, closureFinal(delivered)), REFUSAL.RECORD_SCHEMA);
+  }
+  // The initial final iteration has no writer: the checks, then the final review.
+  const initial = apply(state, reserved(1, 'initial', null, 'final'));
+  refused(applyCorrectionRecord(initial, authorized(1, 'writer', { ownerTask: '4', affectedCriteria: ['SC4'] }, 'final')),
+    REFUSAL.ROLE_NOT_ALLOWED);
+  const reviewer = apply(initial, authorized(1, 'final-reviewer', {}, 'final'));
+  const finalReview = reviewRecorded(1, 'APPROVED', { before: OBSERVATION, after: OBSERVATION, rubric: [] },
+    'final-reviewer', 'final');
+  refused(applyCorrectionRecord(reviewer, finalReview), REFUSAL.OUTCOME_ORDER);
+  const approved = chain(reviewer, [checksRecorded(1, {}, { observation: OBSERVATION }, 'final', 1, FINAL_CHECK_IDS),
+    finalReview]);
+  assert.equal(approved.cycles['final#1'].status, 'APPROVED');
+  assert.equal(approved.cycles['final#1'].approvedObservation, OBSERVATION);
+  assert.equal(nextCorrectionStep(approved).action, 'terminal');
+});
+
+test('a final correction writer must own an approved task: a stopped or blocked owner is a FINAL_BYPASS', () => {
+  const state = partialFinalCorrection();
+  const writer = (ownerTask) => authorized(2, 'writer', { ownerTask, affectedCriteria: [`SC${ownerTask}`] }, 'final');
+  for (const ownerTask of ['1', '2', '3']) {
+    const result = refused(applyCorrectionRecord(state, writer(ownerTask)), REFUSAL.FINAL_BYPASS);
+    assert.deepEqual(result.identity, { kind: 'DISPATCH_AUTHORIZED', scope: 'final', cycle: 1, iteration: 2 });
+    assert.match(result.message, ownerTask === '1' ? /stopped/u : /blocked/u);
+  }
+  const accepted = apply(state, writer('4'));
+  assert.deepEqual(accepted.cycles['final#1'].iterations[1].dispatches.map(({ role, ownerTask }) => [role, ownerTask]),
+    [['writer', '4']]);
+  // An owner outside the plan is still refused as an unknown owner.
+  refused(applyCorrectionRecord(state, writer('9')), REFUSAL.ROLE_NOT_ALLOWED);
+});
+
+test('final records never change task cycle counters or statuses, and final approval binds its observation', () => {
+  const before = partialFinal();
+  const after = chain(partialFinalCorrection(), [
+    authorized(2, 'writer', { ownerTask: '4', affectedCriteria: ['SC4'] }, 'final'), writerRecorded(2, 'DONE', {}, 'final'),
+    checksRecorded(2, {}, {}, 'final', 1, FINAL_CHECK_IDS), authorized(2, 'final-reviewer', {}, 'final'),
+    reviewRecorded(2, 'APPROVED', { rubric: [] }, 'final-reviewer', 'final'),
+  ]);
+  for (const key of ['task-1#1', 'task-4#1']) assert.deepEqual(after.cycles[key], before.cycles[key], key);
+  assert.deepEqual(after.cycleOrder, ['task-1#1', 'task-4#1', 'final#1']);
+  const final = after.cycles['final#1'];
+  assert.equal(final.status, 'APPROVED');
+  assert.equal(final.approvedObservation, CANDIDATE(2));
+  assert.equal(final.reserved, 2);
+  assert.equal(nextCorrectionStep(after).action, 'terminal');
+});
+
+// --- reopening ------------------------------------------------------------------------------------
+
+// Closure plan: task 1 admits one remedy, stagnates and proves isolation; tasks 2 and 3 are blocked,
+// task 4 approves and the final approves the partial delivery. The run is terminal.
+function partialRunRecords() {
+  return [
+    runOpened({ tasks: closurePlan() }),
+    taskOpened('1'), reserved(1, 'initial'), authorized(1, 'writer'), writerRecorded(1),
+    checksRecorded(1, { 'surface-test': FAILED(3) }),
+    admitted(retryRequest({ evidence: checkEvidence(1) })), reserved(2, 'correction'), authorized(2, 'writer'),
+    writerRecorded(2), checksRecorded(2, { 'surface-test': FAILED(3) }),
+    isolationRecorded(),
+    ...approvalRecords('4'),
+    closureFinal(['4']), ...finalApprovalRecords(),
+  ];
+}
+
+function partialTerminal() {
+  return chain(createCorrectionState(), partialRunRecords());
+}
+
+// After the partial run, task 1 is reopened and approved in cycle 2, tasks 2 and 3 then run, and the
+// final reruns once on the full delivery, linked to the first final cycle.
+function completedRunRecords() {
+  return [
+    ...partialRunRecords(),
+    reopenAuthorized(), ...approvalRecords('1', 2), ...approvalRecords('2'), ...approvalRecords('3'),
+    closureFinal(['1', '2', '3', '4'], { cycle: 2, predecessor: 'final#1' }), ...finalApprovalRecords(2),
+  ];
+}
+
+test('REOPEN_AUTHORIZED needs a stopped scope, no open cycle and a running run', () => {
+  const state = partialTerminal();
+  assert.equal(state.cycles['task-1#1'].stopReason, STOP.STAGNATED);
+  assert.equal(nextCorrectionStep(state).action, 'terminal');
+  // An approved scope, a scope that never ran, a scope outside the plan and an approved final.
+  for (const scope of ['task-4', 'task-2', 'task-9', 'final']) {
+    const result = refused(applyCorrectionRecord(state, reopenAuthorized(scope)), REFUSAL.REOPEN_INVALID);
+    assert.deepEqual(result.identity, { kind: 'REOPEN_AUTHORIZED', scope, cycle: 2 });
+  }
+  // No cycle may be open.
+  const isolated = chain(createCorrectionState(), partialRunRecords().slice(0, 12));
+  refused(applyCorrectionRecord(apply(isolated, taskOpened('4')), reopenAuthorized()), REFUSAL.REOPEN_INVALID);
+  apply(isolated, reopenAuthorized());
+  // A halted run accepts no reopen.
+  refused(applyCorrectionRecord(apply(state, halted()), reopenAuthorized()), REFUSAL.RUN_HALTED);
+  // The cycle is the scope's latest plus one, linked to it.
+  refused(applyCorrectionRecord(state, reopenAuthorized('task-1', 3)), REFUSAL.REOPEN_INVALID);
+  refused(applyCorrectionRecord(state, reopenAuthorized('task-1', 2, { predecessor: 'task-4#1' })), REFUSAL.REOPEN_INVALID);
+  const reopened = apply(state, reopenAuthorized());
+  assert.deepEqual(reopened.reopens.map(({ scope, cycle, predecessor }) => [scope, cycle, predecessor]),
+    [['task-1', 2, 'task-1#1']]);
+  assert.deepEqual(reopened.cycles, state.cycles);
+  // One authorization per reopen.
+  refused(applyCorrectionRecord(reopened, reopenAuthorized('task-1', 2, { remedy: 'yet another remedy' })),
+    REFUSAL.REOPEN_INVALID);
+  for (const overrides of [{ statement: '' }, { statement: '   ' }, { statement: 4 }, { remedy: '' }, { remedy: null },
+    { authorization: 'reopen.json' }, { authorization: { path: 'reopen.json' } }, { predecessor: 'task-1' },
+    { predecessor: null }, { cycle: 0 }, { scope: 'task' }]) {
+    const result = refused(applyCorrectionRecord(state, reopenAuthorized('task-1', 2, overrides)), REFUSAL.RECORD_SCHEMA);
+    assert.doesNotMatch(result.message, /unknown record kind/u, JSON.stringify(overrides));
+  }
+});
+
+test('REOPEN_AUTHORIZED: the statement names the scope literally and the remedy is new to the scope', () => {
+  const state = partialTerminal();
+  for (const statement of ['Reopen task 1 with a new remedy.', 'Reopen Task 10 with a new remedy.',
+    'Reopen Task 4 with a new remedy.', 'Reopen the final review.', 'Reopen Task1.']) {
+    refused(applyCorrectionRecord(state, reopenAuthorized('task-1', 2, { statement })), REFUSAL.REOPEN_INVALID);
+  }
+  apply(state, reopenAuthorized('task-1', 2, { statement: 'Task 1, again: please.' }));
+  // The remedy task 1#1 admitted, in any spacing or case.
+  const admittedRemedy = retryRequest().remedy;
+  for (const remedy of [admittedRemedy, `  ${admittedRemedy.toUpperCase().replaceAll(' ', '\t ')} `]) {
+    refused(applyCorrectionRecord(state, reopenAuthorized('task-1', 2, { remedy })), REFUSAL.REOPEN_INVALID);
+  }
+  // A diagnosis's remedy and recommendation count as recommended.
+  const diagnosedStop = chain(diagnosingAtTwo(), [diagnosed(2), stopped(STOP.RETRY_EVIDENCE_MISSING), isolationRecorded()]);
+  for (const remedy of [diagnosed(2).remedy, diagnosed(2).recommendation]) {
+    refused(applyCorrectionRecord(diagnosedStop, reopenAuthorized('task-1', 2, { remedy })), REFUSAL.REOPEN_INVALID);
+  }
+  apply(diagnosedStop, reopenAuthorized());
+  // An earlier reopen's remedy, and the remedies of the reopened cycle, count for the next reopen.
+  const stoppedAgain = chain(state, [reopenAuthorized(), taskOpened('1', { cycle: 2, predecessor: 'task-1#1' }),
+    stopped(STOP.HUMAN_INTERRUPTED, 'task-1', 2), isolationRecorded('task-1', 2)]);
+  refused(applyCorrectionRecord(stoppedAgain, reopenAuthorized('task-1', 3)), REFUSAL.REOPEN_INVALID);
+  refused(applyCorrectionRecord(stoppedAgain, reopenAuthorized('task-1', 3, { remedy: admittedRemedy })),
+    REFUSAL.REOPEN_INVALID);
+  apply(stoppedAgain, reopenAuthorized('task-1', 3, { remedy: 'guard the reservation with the cycle number' }));
+});
+
+test('a reopen opens a linked cycle with a fresh allowance; the old cycle stays; dependents wait for approval', () => {
+  const state = partialTerminal();
+  const authorizedState = apply(state, reopenAuthorized());
+  assert.deepEqual(nextCorrectionStep(authorizedState),
+    { action: 'open-cycle', scope: 'task-1', cycle: 2, predecessor: 'task-1#1' });
+  // The authorization alone unblocks nothing.
+  for (const task of ['2', '3']) {
+    refused(applyCorrectionRecord(authorizedState, taskOpened(task)), REFUSAL.SCOPE_NOT_RUNNABLE);
+  }
+  // The new cycle must be the authorized one.
+  refused(applyCorrectionRecord(authorizedState, taskOpened('1')), REFUSAL.REOPEN_INVALID);
+  refused(applyCorrectionRecord(authorizedState, taskOpened('1', { cycle: 2 })), REFUSAL.REOPEN_INVALID);
+  refused(applyCorrectionRecord(authorizedState, taskOpened('1', { cycle: 3, predecessor: 'task-1#2' })),
+    REFUSAL.REOPEN_INVALID);
+  refused(applyCorrectionRecord(state, taskOpened('1', { cycle: 2, predecessor: 'task-1#1' })), REFUSAL.REOPEN_INVALID);
+  const reopened = apply(authorizedState, taskOpened('1', { cycle: 2, predecessor: 'task-1#1' }));
+  const cycle = reopened.cycles['task-1#2'];
+  assert.deepEqual([cycle.status, cycle.predecessor, cycle.reserved, cycle.diagnosisUsed, cycle.iterations.length],
+    ['OPEN', 'task-1#1', 0, false, 0]);
+  assert.deepEqual(reopened.cycles['task-1#1'], state.cycles['task-1#1']);
+  assert.deepEqual(nextCorrectionStep(reopened),
+    { action: 'reserve', scope: 'task-1', cycle: 2, iteration: 1, kind: 'initial' });
+  refused(applyCorrectionRecord(reopened, taskOpened('2')), REFUSAL.SCOPE_NOT_RUNNABLE);
+  // A fresh allowance of three, with a fresh diagnosis slot.
+  const third = chain(reopened, [reserved(1, 'initial', null, 'task-1', 2), interrupted(1, 'task-1', 2),
+    reserved(2, 'diagnosis', 'missing-retry-evidence', 'task-1', 2)]);
+  assert.deepEqual([third.cycles['task-1#2'].reserved, third.cycles['task-1#2'].diagnosisUsed], [2, true]);
+
+  // Approval, not the authorization, unblocks task 2; then task 3 follows, and the final reruns once.
+  const approvedAgain = chain(reopened, approvalRecords('1', 2).slice(1));
+  assert.equal(approvedAgain.cycles['task-1#2'].status, 'APPROVED');
+  assert.deepEqual(nextCorrectionStep(approvedAgain), { action: 'open-cycle', scope: 'task-2' });
+  const delivered = approvedTask(approvedTask(approvedAgain, '2'), '3');
+  assert.deepEqual(nextCorrectionStep(delivered),
+    { action: 'open-cycle', scope: 'final', cycle: 2, predecessor: 'final#1' });
+  const all = ['1', '2', '3', '4'];
+  refused(applyCorrectionRecord(delivered, closureFinal(all)), REFUSAL.REOPEN_INVALID);
+  refused(applyCorrectionRecord(delivered, closureFinal(all, { cycle: 2 })), REFUSAL.REOPEN_INVALID);
+  refused(applyCorrectionRecord(delivered, closureFinal(all, { cycle: 3, predecessor: 'final#2' })),
+    REFUSAL.REOPEN_INVALID);
+  const rerun = apply(delivered, closureFinal(all, { cycle: 2, predecessor: 'final#1' }));
+  assert.deepEqual([rerun.cycles['final#2'].reserved, rerun.cycles['final#2'].predecessor], [0, 'final#1']);
+  const complete = approvedFinal(rerun, 2);
+  assert.equal(complete.cycles['final#2'].status, 'APPROVED');
+  assert.equal(nextCorrectionStep(complete).action, 'terminal');
+  // Only one final cycle per task reopen.
+  refused(applyCorrectionRecord(complete, closureFinal(all, { cycle: 3, predecessor: 'final#2' })),
+    REFUSAL.REOPEN_INVALID);
+});
+
+test('the final review reopens only on its own authorization naming it literally', () => {
+  const stoppedFinal = chain(partialFinal(), [reserved(1, 'initial', null, 'final'),
+    authorized(1, 'final-reviewer', {}, 'final'), stopped(STOP.HUMAN_INTERRUPTED, 'final')]);
+  assert.equal(nextCorrectionStep(stoppedFinal).action, 'terminal');
+  const rerun = closureFinal(['4'], { cycle: 2, predecessor: 'final#1' });
+  refused(applyCorrectionRecord(stoppedFinal, rerun), REFUSAL.REOPEN_INVALID);
+  for (const statement of ['Reopen the Final Review.', 'Reopen Task 4.', 'Reopen the final.']) {
+    refused(applyCorrectionRecord(stoppedFinal, reopenAuthorized('final', 2, { statement })), REFUSAL.REOPEN_INVALID);
+  }
+  const reopened = apply(stoppedFinal, reopenAuthorized('final'));
+  assert.deepEqual(nextCorrectionStep(reopened), { action: 'open-cycle', scope: 'final', cycle: 2, predecessor: 'final#1' });
+  const second = apply(reopened, rerun);
+  assert.deepEqual([second.cycles['final#2'].status, second.cycles['final#2'].reserved], ['OPEN', 0]);
+  assert.deepEqual(second.cycles['final#1'], stoppedFinal.cycles['final#1']);
+});
+
+test('a reopened cycle refuses a retry repeating a predecessor cycle\'s remedy or (target, hypothesis, remedy)', () => {
+  const failedOnce = chain(partialTerminal(), [
+    reopenAuthorized(), taskOpened('1', { cycle: 2, predecessor: 'task-1#1' }),
+    reserved(1, 'initial', null, 'task-1', 2), authorized(1, 'writer', {}, 'task-1', 2),
+    writerRecorded(1, 'DONE', {}, 'task-1', 2), checksRecorded(1, { 'surface-test': FAILED(2) }, {}, 'task-1', 2),
+  ]);
+  const request = (overrides = {}) => retryRequest({ cycle: 2, evidence: checkEvidence(1), ...overrides });
+  // task-1#1 admitted retryRequest(): the same triple repeats.
+  refused(validateRetryRequest(failedOnce, request()), REFUSAL.RETRY_REPEATED);
+  refused(applyCorrectionRecord(failedOnce, admitted(request())), REFUSAL.RETRY_REPEATED);
+  // The normalized remedy alone repeats, whatever the target and hypothesis.
+  const remedy = ` ${retryRequest().remedy.toUpperCase().replaceAll(' ', '\t ')} `;
+  refused(validateRetryRequest(failedOnce, request({
+    target: 'surface-test', hypothesis: 'the counter is read before it is written', remedy,
+  })), REFUSAL.RETRY_REPEATED);
+  assert.deepEqual(validateRetryRequest(failedOnce, request({ remedy: 'bound the reservation to the cycle number' })),
+    { ok: true });
+});
+
+test('replay after a resume yields identical counters, states and steps', () => {
+  const records = completedRunRecords();
+  const refs = records.map((_record, index) => ref(index + 1, 'abcdef0123456789'[index % 16]));
+  const replayed = ok(replayCorrectionRecords(records, { refs }));
+  const incremental = records.reduce((state, record, index) => apply(state, record, { ref: refs[index] }),
+    createCorrectionState());
+  assert.deepEqual(replayed, incremental);
+  // A resume replays the persisted prefix and continues with the remaining records.
+  for (const cut of [12, 20, records.length - 3]) {
+    const resumed = records.slice(cut).reduce((state, record, index) => apply(state, record, { ref: refs[cut + index] }),
+      ok(replayCorrectionRecords(records.slice(0, cut), { refs: refs.slice(0, cut) })));
+    assert.deepEqual(resumed, replayed, `cut ${cut}`);
+  }
+  const counters = (state) => state.cycleOrder.map((key) => {
+    const { reserved: count, diagnosisUsed, status, concluded } = state.cycles[key];
+    return [key, count, diagnosisUsed, status, concluded];
+  });
+  assert.deepEqual(counters(replayed), counters(incremental));
+  assert.deepEqual(replayed.cycleOrder,
+    ['task-1#1', 'task-4#1', 'final#1', 'task-1#2', 'task-2#1', 'task-3#1', 'final#2']);
+  assert.deepEqual(nextCorrectionStep(replayed), nextCorrectionStep(incremental));
+  assert.equal(nextCorrectionStep(replayed).action, 'terminal');
+});
+
+// --- terminal summary -----------------------------------------------------------------------------
+
+test('blocking causes are the stopped roots of every blocking path, sorted by task number', () => {
+  const tasks = [['2', []], ['10', []], ['11', ['2', '10']], ['12', ['11']]].map(([task, dependencies]) => ({
+    task, dependencies, complexity: 'mechanical', criterionIds: [`SC${task}`], testCommand: 'npm test',
+  }));
+  const open = (task) => ({
+    kind: 'CYCLE_OPENED', scope: `task-${task}`, cycle: 1, predecessor: null,
+    ...deriveCycleBindings({ scope: `task-${task}`, task: tasks.find((entry) => entry.task === task) }),
+    rubricCriteria: [], observation: OBSERVATION,
+  });
+  const state = chain(createCorrectionState(), [
+    runOpened({ tasks }),
+    open('2'), stopped(STOP.HUMAN_INTERRUPTED, 'task-2'), isolationRecorded('task-2'),
+    open('10'), stopped(STOP.HUMAN_INTERRUPTED, 'task-10'), isolationRecorded('task-10'),
+  ]);
+  const summary = summarizeCorrectionRun(state);
+  assert.deepEqual(summary.blocked, [{ task: '11', causes: ['2', '10'] }, { task: '12', causes: ['2', '10'] }]);
+  assert.deepEqual(summary.stopped.map((entry) => entry.task), ['2', '10']);
+  // The step is the final, so the run is not yet terminal: only decided criteria are reported.
+  assert.equal(summary.outcome, 'PENDING');
+  assert.deepEqual(summary.criteria, { SC2: 'failed', SC10: 'failed', SC11: 'blocked', SC12: 'blocked' });
+  assert.deepEqual(Object.keys(summary.criteria), ['SC2', 'SC10', 'SC11', 'SC12']);
+});
+
+test('summary of a PARTIAL run: the stopped task, its blocked dependents, and every criterion classified', () => {
+  const state = partialTerminal();
+  const summary = summarizeCorrectionRun(state);
+  assert.ok(isDeepFrozen(summary));
+  assert.deepEqual(summary, {
+    version: 1,
+    outcome: 'PARTIAL',
+    approval: 'UNAPPROVED',
+    planDigest: PLAN_DIGEST,
+    completed: ['4'],
+    stopped: [{
+      task: '1', cycle: 1, reason: STOP.STAGNATED, iterations: { reserved: 2, diagnosis: 0 },
+      unresolvedDefects: ['SC1/surface-test/command-failed'],
+      comparison: [{ defect: 'SC1/surface-test/command-failed', previous: 3, current: 3, verdict: 'stagnant' }],
+      bestCandidate: { iteration: 1, observation: CANDIDATE(1), snapshot: writerRecorded(1).candidate },
+      execution: null,
+      nextRemedy: retryRequest().remedy,
+    }],
+    blocked: [{ task: '2', causes: ['1'] }, { task: '3', causes: ['1'] }],
+    criteria: { SC1: 'failed', SC2: 'blocked', SC3: 'blocked', SC4: 'satisfied' },
+    final: {
+      cycle: 1, status: 'APPROVED', reason: STOP.APPROVED, iterations: { reserved: 1, diagnosis: 0 },
+      approvedObservation: OBSERVATION,
+    },
+    cycles: [
+      { scope: 'task-1', cycle: 1, predecessor: null, status: 'STOPPED', reason: STOP.STAGNATED, reserved: 2, diagnosis: 0 },
+      { scope: 'task-4', cycle: 1, predecessor: null, status: 'APPROVED', reason: STOP.APPROVED, reserved: 1, diagnosis: 0 },
+      { scope: 'final', cycle: 1, predecessor: null, status: 'APPROVED', reason: STOP.APPROVED, reserved: 1, diagnosis: 0 },
+    ],
+    halt: null,
+  });
+  assert.deepEqual(nextCorrectionStep(state), { action: 'terminal', summary });
+  assert.ok(isDeepFrozen(nextCorrectionStep(state)));
+});
+
+test('summary of a COMPLETE run: every task and the rerun final approved', () => {
+  const state = chain(createCorrectionState(), completedRunRecords());
+  const summary = summarizeCorrectionRun(state);
+  assert.deepEqual([summary.outcome, summary.approval], ['COMPLETE', 'APPROVED']);
+  assert.deepEqual(summary.completed, ['1', '2', '3', '4']);
+  assert.deepEqual([summary.stopped, summary.blocked, summary.halt], [[], [], null]);
+  assert.deepEqual(summary.criteria, { SC1: 'satisfied', SC2: 'satisfied', SC3: 'satisfied', SC4: 'satisfied' });
+  assert.deepEqual(summary.final, {
+    cycle: 2, status: 'APPROVED', reason: STOP.APPROVED, iterations: { reserved: 1, diagnosis: 0 },
+    approvedObservation: OBSERVATION,
+  });
+  assert.deepEqual(summary.cycles.map(({ scope, cycle, predecessor, status }) => [scope, cycle, predecessor, status]), [
+    ['task-1', 1, null, 'STOPPED'], ['task-4', 1, null, 'APPROVED'], ['final', 1, null, 'APPROVED'],
+    ['task-1', 2, 'task-1#1', 'APPROVED'], ['task-2', 1, null, 'APPROVED'], ['task-3', 1, null, 'APPROVED'],
+    ['final', 2, 'final#1', 'APPROVED'],
+  ]);
+  // Before the rerun final concluded, the same run was PENDING: approval is never partial.
+  const pending = chain(createCorrectionState(), completedRunRecords().slice(0, -1));
+  assert.deepEqual([summarizeCorrectionRun(pending).outcome, summarizeCorrectionRun(pending).approval],
+    ['PENDING', 'UNAPPROVED']);
+  assert.deepEqual(summarizeCorrectionRun(pending).criteria, {});
+});
+
+test('summary criteria: a final stopped at terminal fails every criterion it did not approve', () => {
+  const finalOpened = partialFinal();
+  const withDefect = chain(finalOpened, [
+    reserved(1, 'initial', null, 'final'), authorized(1, 'final-reviewer', {}, 'final'),
+    checksRecorded(1, {}, { observation: OBSERVATION }, 'final', 1, FINAL_CHECK_IDS),
+    reviewRecorded(1, 'ISSUES_FOUND', {
+      before: OBSERVATION, after: OBSERVATION, rubric: [], defects: [defectEntry({ criterion: 'SC4', cause: 'missing-note' })],
+    }, 'final-reviewer', 'final'),
+    stopped(STOP.RETRY_EVIDENCE_MISSING, 'final'),
+  ]);
+  const interruptedFinal = chain(finalOpened, [reserved(1, 'initial', null, 'final'), stopped(STOP.HUMAN_INTERRUPTED, 'final')]);
+  for (const state of [withDefect, interruptedFinal]) {
+    const summary = summarizeCorrectionRun(state);
+    assert.deepEqual([summary.outcome, summary.approval], ['PARTIAL', 'UNAPPROVED']);
+    assert.deepEqual(summary.criteria, { SC1: 'failed', SC2: 'blocked', SC3: 'blocked', SC4: 'failed' });
+    assert.equal(summary.final.status, 'STOPPED');
+    assert.equal(summary.final.approvedObservation, null);
+  }
+  assert.equal(summarizeCorrectionRun(interruptedFinal).final.reason, STOP.HUMAN_INTERRUPTED);
+  // An open final is not terminal: its criteria stay undecided.
+  const open = summarizeCorrectionRun(finalOpened);
+  assert.equal(open.outcome, 'PENDING');
+  assert.deepEqual(open.criteria, { SC1: 'failed', SC2: 'blocked', SC3: 'blocked' });
+  assert.deepEqual(open.final, {
+    cycle: 1, status: 'OPEN', reason: null, iterations: { reserved: 0, diagnosis: 0 }, approvedObservation: null,
+  });
+});
+
+test('summary of a stopped task: the next remedy, the autopilot execution and the diagnosis count', () => {
+  // A valid diagnosis recommendation outranks the admitted remedies.
+  const diagnosedStop = chain(diagnosingAtTwo(), [diagnosed(2), stopped(STOP.RETRY_EVIDENCE_MISSING), isolationRecorded()]);
+  const [entry] = summarizeCorrectionRun(diagnosedStop).stopped;
+  assert.deepEqual(entry, {
+    task: '1', cycle: 1, reason: STOP.RETRY_EVIDENCE_MISSING, iterations: { reserved: 2, diagnosis: 1 },
+    unresolvedDefects: [], comparison: [], bestCandidate: { iteration: 0, observation: OBSERVATION, snapshot: null },
+    execution: null, nextRemedy: diagnosed(2).recommendation,
+  });
+  const inconclusive = chain(diagnosingAtTwo(), [diagnosed(2, false)]);
+  assert.equal(summarizeCorrectionRun(inconclusive).stopped[0].nextRemedy, null);
+  // Without anything admitted or recommended there is no next remedy.
+  const bare = chain(closureRun(), [taskOpened('1'), stopped(STOP.HUMAN_INTERRUPTED)]);
+  assert.equal(summarizeCorrectionRun(bare).stopped[0].nextRemedy, null);
+  // An autopilot run reports the latest accepted writer target of the task.
+  const autopilot = partialRunRecords().map((record) => {
+    if (record.kind === 'RUN_OPENED') return { ...record, drive: 'autopilot' };
+    if (record.kind === 'DISPATCH_AUTHORIZED' && record.role === 'writer') {
+      return { ...record, target: `receipt:${record.scope}/iteration-${record.iteration}/` };
+    }
+    return record;
+  });
+  const autopilotState = chain(createCorrectionState(), autopilot);
+  assert.equal(summarizeCorrectionRun(autopilotState).stopped[0].execution, 'receipt:task-1/iteration-2/');
+});
+
+test('summary of a halted run is HALTED and carries the halt', () => {
+  const state = apply(stoppedWithPassingCandidate(), halted({ reason: 'isolation could not be proven' }));
+  const summary = summarizeCorrectionRun(state);
+  assert.deepEqual([summary.outcome, summary.approval], ['HALTED', 'UNAPPROVED']);
+  assert.deepEqual(summary.halt, { reason: 'isolation could not be proven', evidence: [{ ...DIAGNOSIS_ARTIFACT }] });
+  assert.deepEqual(summary.criteria, { SC1: 'failed', SC2: 'failed', SC3: 'blocked' });
+  assert.deepEqual(summary.blocked, [{ task: '2', causes: ['1'] }, { task: '4', causes: ['1'] }]);
+});
+
+test('summarizeCorrectionRun throws TypeError for a state it did not produce or a run never opened', () => {
+  for (const foreign of [undefined, null, {}, structuredClone(opened())]) {
+    assert.throws(() => summarizeCorrectionRun(foreign), { name: 'TypeError', message: /^summarizeCorrectionRun: /u });
+  }
+  assert.throws(() => summarizeCorrectionRun(createCorrectionState()),
+    { name: 'TypeError', message: /^summarizeCorrectionRun: /u });
+});
+
+// --- summary block --------------------------------------------------------------------------------
+
+const BLOCK_OPEN = '<!-- steepy-correction-summary: v1 -->';
+const BLOCK_CLOSE = '<!-- /steepy-correction-summary -->';
+
+function block(json) {
+  return `${BLOCK_OPEN}\n\`\`\`json\n${json}\n\`\`\`\n${BLOCK_CLOSE}`;
+}
+
+test('the summary block is the exact fenced JSON between its markers, and round-trips', () => {
+  for (const state of [partialTerminal(), chain(createCorrectionState(), completedRunRecords()), opened()]) {
+    const summary = summarizeCorrectionRun(state);
+    const text = formatCorrectionSummaryBlock(summary);
+    assert.equal(text, block(JSON.stringify(summary, null, 2)));
+    const parsed = parseCorrectionSummaryBlock(`# Handoff\n\nprose before\n\n${text}\n\nprose after\n`);
+    assert.deepEqual(parsed, summary);
+    assert.ok(isDeepFrozen(parsed));
+  }
+  for (const text of ['', 'no summary here', '```json\n{}\n```', '<!-- steepy-other: v1 -->']) {
+    assert.equal(parseCorrectionSummaryBlock(text), null);
+  }
+});
+
+test('parseCorrectionSummaryBlock throws Error on bad markers, bad JSON, duplicate or unknown keys and HALTED', () => {
+  const summary = summarizeCorrectionRun(partialTerminal());
+  const json = JSON.stringify(summary, null, 2);
+  const good = block(json);
+  const withKey = (target, key) => JSON.stringify(target(structuredClone(summary), key), null, 2);
+  const cases = [
+    [`${good}\n${good}`, /duplicate/u],
+    [`${BLOCK_OPEN}\n${good}`, /duplicate/u],
+    [`${good}\n${BLOCK_CLOSE}`, /duplicate/u],
+    [good.slice(0, good.indexOf(BLOCK_CLOSE)), /unmatched/u],
+    [good.slice(good.indexOf('```json')), /unmatched/u],
+    [`${BLOCK_CLOSE}\n${BLOCK_OPEN}`, /unmatched/u],
+    [good.replace(': v1 -->', ': v2 -->'), /v1/u],
+    [good.replace('```json\n', '```\n'), /fence/u],
+    [block(`${json},`), /JSON/u],
+    [block('{ "version": 1, '), /JSON/u],
+    [block(json.replace('"version": 1,', '"version": 1,\n  "version": 1,')), /duplicate key/u],
+    [block(json.replace('"task": "1",', '"task": "1",\n      "task": "1",')), /duplicate key/u],
+    [block(withKey((value) => Object.assign(value, { extra: true }))), /unknown keys: extra/u],
+    [block(withKey((value) => { value.stopped[0].note = 'x'; return value; })), /unknown keys: note/u],
+    [block(withKey((value) => { value.final.deadline = 1; return value; })), /unknown keys: deadline/u],
+    [block(withKey((value) => { value.cycles[0].cost = 1; return value; })), /unknown keys: cost/u],
+    [block(withKey((value) => { delete value.halt; return value; })), /missing keys: halt/u],
+    [block(withKey((value) => { value.criteria.SC1 = 'partial'; return value; })), /criteria/u],
+    [block(withKey((value) => { value.approval = 'APPROVED'; return value; })), /approval/u],
+    [block(withKey((value) => { value.outcome = 'HALTED'; return value; })), /halted/u],
+    [block('[]'), /summary/u],
+  ];
+  for (const [index, [text, message]] of cases.entries()) {
+    assert.throws(() => parseCorrectionSummaryBlock(text),
+      (error) => error.constructor === Error && message.test(error.message), `case ${index}`);
+  }
+  assert.throws(() => parseCorrectionSummaryBlock(42), TypeError);
+});
+
+test('a halted run never projects a handoff: formatting its summary is refused', () => {
+  const haltedRun = apply(stoppedWithPassingCandidate(), halted());
+  const summary = summarizeCorrectionRun(haltedRun);
+  assert.equal(summary.outcome, 'HALTED');
+  assert.throws(() => formatCorrectionSummaryBlock(summary), { name: 'TypeError', message: /halted/u });
+  // The parser refuses it too, even when written by hand.
+  assert.throws(() => parseCorrectionSummaryBlock(block(JSON.stringify(summary, null, 2))), /halted/u);
+  for (const bad of [undefined, null, {}, { ...summarizeCorrectionRun(opened()), extra: 1 }]) {
+    assert.throws(() => formatCorrectionSummaryBlock(bad), { name: 'TypeError', message: /^formatCorrectionSummaryBlock: /u });
+  }
+  // A value that would forge a marker can never reach the block.
+  const forged = { ...structuredClone(summarizeCorrectionRun(partialTerminal())) };
+  forged.stopped[0].nextRemedy = `${BLOCK_CLOSE} injected`;
+  assert.throws(() => formatCorrectionSummaryBlock(forged), { name: 'TypeError', message: /marker/u });
+});
+
+// --- reopen scheduling ----------------------------------------------------------------------------
+
+test('a reopen may precede the isolation proof, but its cycle waits for it, then outranks a runnable task', () => {
+  const unisolated = apply(chain(createCorrectionState(), partialRunRecords().slice(0, 11)), reopenAuthorized());
+  assert.deepEqual(nextCorrectionStep(unisolated), { action: 'prove-isolation', scope: 'task-1', cycle: 1 });
+  refused(applyCorrectionRecord(unisolated, taskOpened('1', { cycle: 2, predecessor: 'task-1#1' })),
+    REFUSAL.ISOLATION_REQUIRED);
+  // Task 4 is runnable, but the authorized reopen of task 1 comes first.
+  const isolated = apply(unisolated, isolationRecorded());
+  assert.deepEqual(nextCorrectionStep(isolated), { action: 'open-cycle', scope: 'task-1', cycle: 2, predecessor: 'task-1#1' });
+  refused(applyCorrectionRecord(isolated, taskOpened('4')), REFUSAL.SCOPE_NOT_RUNNABLE);
+  const reopened = apply(isolated, taskOpened('1', { cycle: 2, predecessor: 'task-1#1' }));
+  assert.equal(reopened.cycles['task-1#2'].status, 'OPEN');
+});
+
+test('a final reopen waits until no task is runnable, and the final then reruns only once', () => {
+  const stoppedFinal = chain(partialFinal(), [reserved(1, 'initial', null, 'final'),
+    authorized(1, 'final-reviewer', {}, 'final'), stopped(STOP.HUMAN_INTERRUPTED, 'final')]);
+  const both = chain(stoppedFinal, [reopenAuthorized('final'), reopenAuthorized()]);
+  // The task reopen opens first, whatever the authorization order.
+  assert.deepEqual(nextCorrectionStep(both), { action: 'open-cycle', scope: 'task-1', cycle: 2, predecessor: 'task-1#1' });
+  const all = ['1', '2', '3', '4'];
+  const rerun = closureFinal(all, { cycle: 2, predecessor: 'final#1' });
+  refused(applyCorrectionRecord(both, rerun), REFUSAL.SCOPE_NOT_RUNNABLE);
+  const taskOne = chain(both, approvalRecords('1', 2));
+  // Task 2 became runnable: the final may not open while a task is runnable.
+  assert.deepEqual(nextCorrectionStep(taskOne), { action: 'open-cycle', scope: 'task-2' });
+  refused(applyCorrectionRecord(taskOne, rerun), REFUSAL.SCOPE_NOT_RUNNABLE);
+  const delivered = approvedTask(approvedTask(taskOne, '2'), '3');
+  assert.deepEqual(nextCorrectionStep(delivered), { action: 'open-cycle', scope: 'final', cycle: 2, predecessor: 'final#1' });
+  const complete = approvedFinal(apply(delivered, rerun), 2);
+  assert.equal(summarizeCorrectionRun(complete).outcome, 'COMPLETE');
+  refused(applyCorrectionRecord(complete, closureFinal(all, { cycle: 3, predecessor: 'final#2' })),
+    REFUSAL.REOPEN_INVALID);
 });
