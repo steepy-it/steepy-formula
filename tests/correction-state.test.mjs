@@ -518,6 +518,17 @@ test('a correction requires an admitted retry, which permits exactly that correc
   refused(applyCorrectionRecord(state, admitted(retryRequest(), { request: 'retry' })), REFUSAL.RETRY_INVALID);
 });
 
+test('an admitted retry must be executed as the correction for its iteration: no other kind is reserved', () => {
+  const state = apply(awaitingRetry(), admitted(retryRequest()));
+  for (const reason of ['missing-retry-evidence', 'comparison-unavailable']) {
+    const result = refused(applyCorrectionRecord(state, reserved(2, 'diagnosis', reason)), REFUSAL.RECORD_ORDER);
+    assert.deepEqual(result.identity, { kind: 'ITERATION_RESERVED', scope: 'task-1', cycle: 1, iteration: 2 });
+    assert.match(result.message, /admitted retry/u);
+  }
+  const correction = apply(state, reserved(2, 'correction'));
+  assert.equal(correction.cycles['task-1#1'].iterations[1].kind, 'correction');
+});
+
 test('retry requests are closed, name an open cycle whose previous iteration concluded, and the next slot', () => {
   const state = awaitingRetry();
   const { evidence: _evidence, ...missing } = retryRequest();
@@ -591,6 +602,16 @@ test('a remedy admitted earlier in the cycle cannot be admitted again', () => {
   retryRefusal(state, { iteration: 3, evidence, remedy: ` ${first.remedy.toUpperCase().replaceAll(' ', '\t ')} ` },
     REFUSAL.RETRY_REPEATED);
   retryRefusal(state, { iteration: 3, evidence }, REFUSAL.RETRY_REPEATED);
+  // The normalized remedy alone decides: a new target and hypothesis do not make an old remedy new.
+  for (const target of ['check-1', 'SC2']) {
+    retryRefusal(state, {
+      iteration: 3,
+      evidence,
+      target,
+      hypothesis: 'the reservation counter is read before the write',
+      remedy: ` ${first.remedy.toUpperCase().replaceAll(' ', '\t ')} `,
+    }, REFUSAL.RETRY_REPEATED);
+  }
   assert.deepEqual(validateRetryRequest(state, retryRequest({
     iteration: 3, evidence, remedy: 'reserve the slot before dispatching the writer',
   })), { ok: true });
@@ -613,7 +634,7 @@ test('the third iteration concluding without approval stops EXHAUSTED; a fourth 
   const cycle = exhausted.cycles['task-1#1'];
   assert.equal(cycle.status, 'STOPPED');
   assert.equal(cycle.stopReason, STOP.EXHAUSTED);
-  assert.deepEqual(nextCorrectionStep(exhausted), { action: 'stopped', scope: 'task-1', cycle: 1, reason: 'EXHAUSTED' });
+  assert.deepEqual(nextCorrectionStep(exhausted), { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.EXHAUSTED });
   refused(applyCorrectionRecord(exhausted, reserved(4, 'correction')), REFUSAL.CYCLE_TERMINAL);
   refused(validateRetryRequest(exhausted, retryRequest({ iteration: 4, evidence: ref(6) })), REFUSAL.CYCLE_TERMINAL);
   refused(applyCorrectionRecord(exhausted, authorized(3, 'task-reviewer')), REFUSAL.CYCLE_TERMINAL);
@@ -659,6 +680,24 @@ test('a final-scope correction writer names its owner task and a subset of that 
   refused(applyCorrectionRecord(reviewersOnly, writer({ ownerTask: '1', affectedCriteria: ['SC1'] })),
     REFUSAL.ROLE_NOT_ALLOWED);
   apply(reviewersOnly, taskReviewer({ ownerTask: '2' }));
+});
+
+test('a final-scope task-reviewer carries no affected criteria and reviews the writer\'s owner task', () => {
+  const state = chain(awaitingRetry('final', 'final-reviewer'), [
+    admitted(retryRequest({ scope: 'final' })), reserved(2, 'correction', null, 'final'),
+  ]);
+  const taskReviewer = (overrides) => authorized(2, 'task-reviewer', overrides, 'final');
+  const written = apply(state, authorized(2, 'writer', { ownerTask: '1', affectedCriteria: ['SC1'] }, 'final'));
+  const criteria = refused(applyCorrectionRecord(written, taskReviewer({ ownerTask: '1', affectedCriteria: ['SC1'] })),
+    REFUSAL.ROLE_NOT_ALLOWED);
+  assert.deepEqual(criteria.identity, { kind: 'DISPATCH_AUTHORIZED', scope: 'final', cycle: 1, iteration: 2 });
+  refused(applyCorrectionRecord(written, taskReviewer({ ownerTask: '2' })), REFUSAL.ROLE_NOT_ALLOWED);
+  const reviewed = apply(written, taskReviewer({ ownerTask: '1' }));
+  assert.deepEqual(reviewed.cycles['final#1'].iterations[1].dispatches.map(({ role, ownerTask }) => [role, ownerTask]),
+    [['writer', '1'], ['task-reviewer', '1']]);
+  refused(applyCorrectionRecord(state, taskReviewer({ ownerTask: '2', affectedCriteria: ['SC3'] })),
+    REFUSAL.ROLE_NOT_ALLOWED);
+  apply(state, taskReviewer({ ownerTask: '2' }));
 });
 
 const DIAGNOSIS_ARTIFACT = Object.freeze({
@@ -716,7 +755,7 @@ test('a valid diagnosis at slot 3 stops EXHAUSTED and keeps its recommendation a
   assert.equal(cycle.nextRemedy, diagnosed(3).recommendation);
   assert.equal(cycle.diagnosis.recommendation, diagnosed(3).recommendation);
   assert.equal(cycle.reserved, 3);
-  assert.deepEqual(nextCorrectionStep(state), { action: 'stopped', scope: 'task-1', cycle: 1, reason: 'EXHAUSTED' });
+  assert.deepEqual(nextCorrectionStep(state), { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.EXHAUSTED });
   refused(applyCorrectionRecord(state, reserved(4, 'correction')), REFUSAL.CYCLE_TERMINAL);
 });
 
@@ -725,7 +764,7 @@ test('an invalid diagnosis stops the cycle DIAGNOSIS_INCONCLUSIVE, at any slot',
   assert.equal(atTwo.cycles['task-1#1'].status, 'STOPPED');
   assert.equal(atTwo.cycles['task-1#1'].stopReason, STOP.DIAGNOSIS_INCONCLUSIVE);
   assert.deepEqual(nextCorrectionStep(atTwo),
-    { action: 'stopped', scope: 'task-1', cycle: 1, reason: 'DIAGNOSIS_INCONCLUSIVE' });
+    { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.DIAGNOSIS_INCONCLUSIVE });
   refused(validateRetryRequest(atTwo, retryRequest({ iteration: 3, evidence: { ...DIAGNOSIS_ARTIFACT } })),
     REFUSAL.CYCLE_TERMINAL);
   const atThree = chain(awaitingRetry(), [
@@ -767,7 +806,7 @@ function halted(overrides = {}) {
 
 test('CYCLE_STOPPED stops an open cycle explicitly; an unconcluded reserved iteration stays spent', () => {
   const pending = chain(cycleState(), [reserved(1, 'initial'), authorized(1, 'writer')]);
-  const state = apply(pending, stopped('HUMAN_INTERRUPTED'));
+  const state = apply(pending, stopped(STOP.HUMAN_INTERRUPTED));
   const cycle = state.cycles['task-1#1'];
   assert.equal(cycle.status, 'STOPPED');
   assert.equal(cycle.stopReason, STOP.HUMAN_INTERRUPTED);
@@ -775,17 +814,17 @@ test('CYCLE_STOPPED stops an open cycle explicitly; an unconcluded reserved iter
   assert.equal(cycle.reserved, 1);
   assert.equal(cycle.iterations[0].conclusion, null);
   assert.deepEqual(nextCorrectionStep(state),
-    { action: 'stopped', scope: 'task-1', cycle: 1, reason: 'HUMAN_INTERRUPTED' });
+    { action: 'stopped', scope: 'task-1', cycle: 1, reason: STOP.HUMAN_INTERRUPTED });
   refused(applyCorrectionRecord(state, interrupted(1)), REFUSAL.CYCLE_TERMINAL);
-  refused(applyCorrectionRecord(state, stopped('HUMAN_INTERRUPTED')), REFUSAL.CYCLE_TERMINAL);
+  refused(applyCorrectionRecord(state, stopped(STOP.HUMAN_INTERRUPTED)), REFUSAL.CYCLE_TERMINAL);
   refused(applyCorrectionRecord(state, cycleOpened()), REFUSAL.REOPEN_INVALID);
   apply(state, cycleOpened('task-2'));
 
-  const missing = apply(awaitingRetry(), stopped('RETRY_EVIDENCE_MISSING'));
+  const missing = apply(awaitingRetry(), stopped(STOP.RETRY_EVIDENCE_MISSING));
   assert.equal(missing.cycles['task-1#1'].stopReason, STOP.RETRY_EVIDENCE_MISSING);
-  refused(applyCorrectionRecord(pending, stopped('HUMAN_INTERRUPTED', 'final')), REFUSAL.CYCLE_NOT_OPEN);
-  for (const overrides of [{ reason: 'EXHAUSTED' }, { reason: 'APPROVED' }, { note: '' }, { note: 4 }]) {
-    const result = refused(applyCorrectionRecord(pending, stopped('HUMAN_INTERRUPTED', 'task-1', 1, overrides)),
+  refused(applyCorrectionRecord(pending, stopped(STOP.HUMAN_INTERRUPTED, 'final')), REFUSAL.CYCLE_NOT_OPEN);
+  for (const overrides of [{ reason: STOP.EXHAUSTED }, { reason: STOP.APPROVED }, { note: '' }, { note: 4 }]) {
+    const result = refused(applyCorrectionRecord(pending, stopped(STOP.HUMAN_INTERRUPTED, 'task-1', 1, overrides)),
       REFUSAL.RECORD_SCHEMA);
     assert.doesNotMatch(result.message, /unknown record kind/u);
   }
@@ -833,7 +872,7 @@ function validSequence() {
     cycleOpened('final'),
     reserved(1, 'initial', null, 'final'),
     authorized(1, 'final-reviewer', {}, 'final'),
-    stopped('HUMAN_INTERRUPTED', 'final'),
+    stopped(STOP.HUMAN_INTERRUPTED, 'final'),
     cycleOpened('task-2'),
   ];
   const refs = records.map((_record, index) => ref(index + 1, 'abcdef0123456789'[index % 16]));
@@ -890,7 +929,7 @@ test('every record kind has a closed payload: a missing or an unknown key is ref
     ITERATION_INTERRUPTED: interrupted(1),
     RETRY_ADMITTED: admitted(retryRequest()),
     DIAGNOSIS_RECORDED: diagnosed(2),
-    CYCLE_STOPPED: stopped('HUMAN_INTERRUPTED'),
+    CYCLE_STOPPED: stopped(STOP.HUMAN_INTERRUPTED),
     RUN_HALTED: halted(),
   };
   assert.deepEqual(Object.keys(samples).sort(), Object.keys(CORRECTION_RECORD_KINDS).sort());
@@ -905,4 +944,51 @@ test('every record kind has a closed payload: a missing or an unknown key is ref
       assert.match(extra.message, /unknown: note2/u, kind);
     }
   }
+});
+
+test('stored values must be JSON-plain: anything else is refused with RECORD_SCHEMA, never thrown or kept live', () => {
+  const binding = (extra) => cycleOpened('task-1', { bindings: [{ criterion: 'SC1', ...extra }] });
+  const cyclic = { criterion: 'SC1' };
+  cyclic.self = cyclic;
+  const accessor = { criterion: 'SC1' };
+  Object.defineProperty(accessor, 'live', { get: () => 1, enumerable: true });
+  const hidden = { criterion: 'SC1' };
+  Object.defineProperty(hidden, 'hidden', { value: 1, enumerable: false });
+  class Ids extends Array {}
+  const lazyTask = { ...plan()[0] };
+  Object.defineProperty(lazyTask, 'testCommand', { get: () => 'npm test', enumerable: true });
+  const lazyRef = { digest: hex('c') };
+  Object.defineProperty(lazyRef, 'path', { get: () => REF_PATH(1), enumerable: true });
+  const cases = [
+    [opened(), binding({ f: () => 1 })],
+    [opened(), binding({ bytes: new Uint8Array(2) })],
+    [opened(), binding({ map: new Map([[1, 2]]) })],
+    [opened(), binding({ when: new Date(0) })],
+    [opened(), binding({ [Symbol('s')]: 1 })],
+    [opened(), binding({ n: Number.NaN })],
+    [opened(), binding({ n: Number.POSITIVE_INFINITY })],
+    [opened(), binding({ u: undefined })],
+    [opened(), binding({ nested: { deep: [1, () => 2] } })],
+    [opened(), binding({ sparse: [1, , 3] })], // eslint-disable-line no-sparse-arrays
+    [opened(), cycleOpened('task-1', { bindings: [cyclic] })],
+    [opened(), cycleOpened('task-1', { bindings: [accessor] })],
+    [opened(), cycleOpened('task-1', { bindings: [hidden] })],
+    [opened(), { ...cycleOpened(), [Symbol('extra')]: 1 }],
+    [createCorrectionState(), runOpened({ tasks: [{ ...plan()[0], criterionIds: Ids.from(['SC1']) }] })],
+    [createCorrectionState(), runOpened({ tasks: [lazyTask] })],
+  ];
+  for (const [index, [state, record]] of cases.entries()) {
+    let result;
+    assert.doesNotThrow(() => { result = applyCorrectionRecord(state, record); }, `case ${index}`);
+    const refusal = refused(result, REFUSAL.RECORD_SCHEMA);
+    assert.match(refusal.message, /JSON-plain/u, `case ${index}`);
+  }
+  let lazy;
+  assert.doesNotThrow(() => { lazy = applyCorrectionRecord(createCorrectionState(), runOpened(), { ref: lazyRef }); });
+  refused(lazy, REFUSAL.RECORD_SCHEMA);
+
+  const rich = { criterion: 'SC1', check: 'check-1', threshold: 0.5, direction: null, meta: { tags: ['a', true, 2] } };
+  const state = apply(opened(), cycleOpened('task-1', { bindings: [rich] }));
+  assert.deepEqual(state.cycles['task-1#1'].bindings, [rich]);
+  assert.ok(isDeepFrozen(state));
 });

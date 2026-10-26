@@ -179,6 +179,27 @@ function isUniqueArray(values, predicate) {
   return Array.isArray(values) && values.every(predicate) && new Set(values).size === values.length;
 }
 
+// JSON-plain: a string, finite number, boolean, null, or a plain array or object of the same, built
+// only from enumerable own data properties with string keys and no cycles. Only such values are stored,
+// so nothing escapes the failure envelope, the structured clone or the deep freeze.
+function isJsonPlain(value, ancestors = new Set()) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (typeof value !== 'object' || ancestors.has(value)) return false;
+  const array = Array.isArray(value);
+  if (array ? Object.getPrototypeOf(value) !== Array.prototype : !isPlainObject(value)) return false;
+  const keys = Reflect.ownKeys(value).filter((key) => !(array && key === 'length'));
+  if (array && keys.length !== value.length) return false;
+  ancestors.add(value);
+  const plain = keys.every((key, index) => {
+    if (typeof key !== 'string' || (array && key !== String(index))) return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor.enumerable && Object.hasOwn(descriptor, 'value') && isJsonPlain(descriptor.value, ancestors);
+  });
+  ancestors.delete(value);
+  return plain;
+}
+
 // --- programmer-error guards ----------------------------------------------------------------------
 
 function isPlainObject(value) {
@@ -383,13 +404,18 @@ function reserveIteration(draft, record, { identity }) {
   if ((iteration === 1) !== (iterationKind === 'initial')) {
     refuse(REFUSAL.RECORD_ORDER, 'iteration 1 must be initial, and initial is allowed only at iteration 1', identity);
   }
+  const retryAdmitted = cycle.retries.some((retry) => retry.iteration === iteration);
+  if (retryAdmitted && iterationKind !== 'correction') {
+    refuse(REFUSAL.RECORD_ORDER,
+      `an admitted retry must be executed as the correction for iteration ${iteration}`, identity);
+  }
   if (iterationKind === 'diagnosis') {
     if (reason === null) refuse(REFUSAL.DIAGNOSIS_REASON, 'a diagnosis iteration requires a reason', identity);
     if (cycle.diagnosisUsed) refuse(REFUSAL.DIAGNOSIS_USED, 'this cycle already reserved its diagnosis', identity);
   } else if (reason !== null) {
     refuse(REFUSAL.DIAGNOSIS_REASON, `a ${iterationKind} iteration carries no diagnosis reason`, identity);
   }
-  if (iterationKind === 'correction' && !cycle.retries.some((retry) => retry.iteration === iteration)) {
+  if (iterationKind === 'correction' && !retryAdmitted) {
     refuse(REFUSAL.RETRY_REQUIRED, `a correction at iteration ${iteration} requires an admitted retry`, identity);
   }
   cycle.iterations.push({ iteration, kind: iterationKind, reason, dispatches: [], conclusion: null });
@@ -542,8 +568,9 @@ function planTask(draft, task) {
 }
 
 // Owner rules: a final-scope writer names the plan task it changes and the criteria that change
-// affects; a final-scope task-reviewer names the task it reviews; every other dispatch names none.
-function checkOwnership(draft, cycle, record, identity) {
+// affects; a final-scope task-reviewer names the task it reviews (the writer's task when this iteration
+// authorized a writer) and no criteria; every other dispatch names none.
+function checkOwnership(draft, cycle, entry, record, identity) {
   const { role, ownerTask, affectedCriteria } = record;
   const final = cycle.scope === 'final';
   if (final && (role === 'writer' || role === 'task-reviewer')) {
@@ -553,6 +580,15 @@ function checkOwnership(draft, cycle, record, identity) {
     }
     if (role === 'writer' && affectedCriteria.length === 0) {
       refuse(REFUSAL.ROLE_NOT_ALLOWED, 'a final-scope writer requires non-empty affectedCriteria', identity);
+    }
+    if (role === 'task-reviewer' && affectedCriteria.length > 0) {
+      refuse(REFUSAL.ROLE_NOT_ALLOWED,
+        'a final-scope task-reviewer carries affectedCriteria: []; affected criteria belong to the writer', identity);
+    }
+    const writer = entry.dispatches.find((dispatch) => dispatch.role === 'writer');
+    if (role === 'task-reviewer' && writer !== undefined && writer.ownerTask !== ownerTask) {
+      refuse(REFUSAL.ROLE_NOT_ALLOWED,
+        `a final-scope task-reviewer reviews the writer's task ${writer.ownerTask}, not ${ownerTask}`, identity);
     }
     const outside = affectedCriteria.filter((id) => !owner.criterionIds.includes(id));
     if (outside.length > 0) {
@@ -591,7 +627,7 @@ function authorizeDispatch(draft, record, { identity }) {
     && !dispatched.includes('writer')) {
     refuse(REFUSAL.ROLE_NOT_ALLOWED, `an initial iteration authorizes the writer before the ${role}`, identity);
   }
-  checkOwnership(draft, cycle, record, identity);
+  checkOwnership(draft, cycle, entry, record, identity);
   entry.dispatches.push({ role, target, ownerTask, affectedCriteria: [...affectedCriteria], observation });
 }
 
@@ -699,8 +735,8 @@ export function applyCorrectionRecord(state, record, options) {
     if (typeof kind !== 'string' || !Object.hasOwn(RECORDS, kind)) {
       refuse(REFUSAL.RECORD_SCHEMA, `unknown record kind ${JSON.stringify(kind)}`, identity);
     }
-    schema(ref === null || isDigestReference(ref),
-      'ref must be { path, digest } with a single-line path and a lowercase 64-hex digest', identity);
+    schema(ref === null || (isJsonPlain(ref) && isDigestReference(ref)),
+      'ref must be a JSON-plain { path, digest } with a single-line path and a lowercase 64-hex digest', identity);
     const { fields, apply } = RECORDS[kind];
     const payload = Object.keys(record).filter((key) => key !== 'kind');
     const missing = fields.filter((key) => !Object.hasOwn(record, key));
@@ -710,6 +746,8 @@ export function applyCorrectionRecord(state, record, options) {
       extra.length ? `unknown: ${extra.join(', ')}` : '',
     ].filter(Boolean).join('; ');
     schema(detail === '', `${kind} payload must have exactly the keys: ${fields.join(', ')}; ${detail}`, identity);
+    schema(isJsonPlain(record), `${kind} must be JSON-plain: strings, finite numbers, booleans, null, `
+      + 'and plain arrays or objects of the same', identity);
     if (kind === CORRECTION_RECORD_KINDS.RUN_OPENED) {
       if (state.records !== 0) refuse(REFUSAL.RECORD_ORDER, 'RUN_OPENED is allowed only as the first record', identity);
     } else if (state.run === null) {
