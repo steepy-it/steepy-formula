@@ -3093,6 +3093,38 @@ test('reviewer prompts lock the defects artifact, the rubric table and the feedb
   }
 });
 
+test('reviewer prompts pin the guard-facing verdict, binding, shape and pairing sentences', () => {
+  for (const file of ['task-reviewer-prompt.md', 'final-review-prompt.md']) {
+    const text = readFileSync(join(skillsDir, 'implement', file), 'utf8').replace(/\s+/g, ' ');
+    const pins = [
+      [/ISSUES_FOUND exactly when at least one defect is `critical` or `important`/, 'verdict is ISSUES_FOUND exactly when a blocking defect exists'],
+      [/otherwise `APPROVED`/, 'otherwise the verdict is APPROVED'],
+      [/holds only `minor` defects when approved/, 'an approved defects array holds only minor defects'],
+      [/below 2[^.]*must be `critical` or `important`/, 'a sub-2 rubric defect is blocking'],
+      [/unsatisfied constraint[^.]*`critical` or `important` `review` defect/, 'an unsatisfied constraint needs a blocking review defect'],
+      [/`criterion` must be one of the criteria the brief or manifest binds for the dispatched scope/, 'criterion comes from the dispatch bindings'],
+      [/`check: rubric` only for a rubric-bound criterion/, 'rubric check only for rubric-bound criteria'],
+      [/nearest (?:bound )?criterion[^.]*as a `review` defect/, 'an unbound finding attaches to the nearest bound criterion as a review defect'],
+      [/never invent a criterion/i, 'never invent a criterion'],
+      [/exactly one entry per rubric-bound criterion of the reviewed scope and none other/, 'rubric has one entry per rubric-bound criterion'],
+      [/`satisfied` is `true` or `false`/, 'constraint satisfied is boolean'],
+      [/`id` is a unique single-line string/, 'constraint id is unique single-line'],
+      [/`evidence` is non-empty/, 'constraint evidence is non-empty'],
+      [/`<criterion>\/<check>\[:<dimension>\]\/<cause>`/, 'supersedes id form'],
+      [/`supersedes` and `justification` are both null/, 'supersedes and justification pair as null'],
+      [/`dimension` \(null for `review`/, 'dimension is null for review'],
+      [/at most 64 characters/, 'cause cap is 64 characters'],
+      [/\{ "score": 0 \| 1 \| 2, "evidence": "<concrete evidence>" \}/, 'rubric dimension shape'],
+      [/`constraints` \(an array of \{ "id", "satisfied", "evidence" \}/, 'constraints shape'],
+    ];
+    for (const [re, message] of pins) assert.match(text, re, `${file}: ${message}`);
+  }
+  const diagnosis = readFileSync(join(skillsDir, 'implement', 'diagnosis-prompt.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(diagnosis, /\{ "path", "digest" \}/, 'diagnosis evidence reference shape');
+  assert.match(diagnosis, /lowercase 64-hex/, 'diagnosis digest is 64-hex');
+  assert.match(diagnosis, /`confirmingCheck`[^.]*`review` or `rubric`/, 'diagnosis confirmingCheck set');
+});
+
 test('implementer prompt names the applied remedy and forbids editing criteria or tests to hide a failure', () => {
   const text = readFileSync(join(skillsDir, 'implement', 'implementer-prompt.md'), 'utf8');
   assert.match(text, /correction dispatch[^]*admitted remedy[^]*confirming check/i, 'correction report names remedy and confirming check');
