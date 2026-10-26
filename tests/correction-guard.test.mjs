@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync,
+  cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -18,16 +18,22 @@ import {
   openCorrectionCycle,
   openCorrectionRun,
   projectCorrectionSummary,
+  proveCorrectionIsolation,
   readCorrectionHead,
+  recordCorrectionChecks,
+  recordCorrectionDiagnosis,
   recordCorrectionInterruption,
+  recordCorrectionReview,
+  recordCorrectionWriter,
   reopenCorrectionScope,
   reserveCorrectionIteration,
   stopCorrectionCycle,
   verifyCorrectionRun,
 } from '../scripts/correction-guard.mjs';
 import { CORRECTION_CODES, deriveCycleBindings, parseCorrectionSummaryBlock } from '../scripts/correction-state.mjs';
+import { beginReview, checkReview } from '../scripts/reviewer-response.mjs';
 import { observeSource } from '../scripts/source-observation.mjs';
-import { parseTaskResultProjection } from '../scripts/task-results.mjs';
+import { beginTask, parseTaskResultProjection, recordTaskResult } from '../scripts/task-results.mjs';
 
 const PLAN = '.formula/work/plans/run.md';
 const RUN = '.formula/work/tasks/run';
@@ -53,31 +59,66 @@ function planTask(number, {
 const planText = (...tasks) => `# Plan\n\n${tasks.join('\n')}`;
 const PLAN_TWO = planText(planTask(1), planTask(2, { complexity: 'mechanical', dependencies: '1' }));
 
-// A real temporary Git repository with one committed source file and the plan under the ignored work area.
-function withRepo(plan, fn) {
-  const root = mkdtempSync(join(tmpdir(), 'steepy-correction-guard-'));
-  const git = (...args) => execFileSync('git', args, { cwd: root });
+// The file helpers of a repository at `root`.
+function repoAt(root) {
   const put = (path, text) => {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), text);
   };
   const bytes = (path) => readFileSync(join(root, path));
-  const json = (path) => JSON.parse(bytes(path).toString('utf8'));
-  const exists = (path) => existsSync(join(root, path));
+  return {
+    root,
+    git: (...args) => execFileSync('git', args, { cwd: root }),
+    put,
+    bytes,
+    json: (path) => JSON.parse(bytes(path).toString('utf8')),
+    exists: (path) => existsSync(join(root, path)),
+  };
+}
+
+// A real temporary Git repository with one committed source file and the plan under the ignored work area.
+// An async `fn` keeps the repository until it settles.
+function withRepo(plan, fn) {
+  const root = mkdtempSync(join(tmpdir(), 'steepy-correction-guard-'));
+  const remove = () => rmSync(root, { recursive: true, force: true });
+  const repo = repoAt(root);
+  let pending = false;
   try {
-    git('init', '-q');
-    git('config', 'user.name', 'Test');
-    git('config', 'user.email', 'test@example.test');
-    git('config', 'commit.gpgsign', 'false');
-    put('.gitignore', '.formula/work/\n');
-    put('source.txt', 'baseline\n');
-    git('add', '.');
-    git('commit', '-qm', 'baseline');
-    if (plan !== null) put(PLAN, plan);
-    return fn({ root, git, put, bytes, json, exists });
+    repo.git('init', '-q');
+    repo.git('config', 'user.name', 'Test');
+    repo.git('config', 'user.email', 'test@example.test');
+    repo.git('config', 'commit.gpgsign', 'false');
+    repo.put('.gitignore', '.formula/work/\n');
+    repo.put('source.txt', 'baseline\n');
+    repo.git('add', '.');
+    repo.git('commit', '-qm', 'baseline');
+    if (plan !== null) repo.put(PLAN, plan);
+    const result = fn(repo);
+    if (result instanceof Promise) {
+      pending = true;
+      return result.finally(remove);
+    }
+    return result;
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    if (!pending) remove();
   }
+}
+
+// Builds a repository state once with `setup`, then runs each case on its own byte copy of it, so every
+// case starts from the same records and source without replaying the setup.
+function withCopies(plan, setup, cases, run) {
+  return withRepo(plan, async (template) => {
+    await setup(template);
+    for (const testCase of cases) {
+      const root = mkdtempSync(join(tmpdir(), 'steepy-correction-guard-'));
+      try {
+        cpSync(template.root, root, { recursive: true, verbatimSymlinks: true });
+        await run(repoAt(root), testCase);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+  });
 }
 
 // --- codes and input contract ---------------------------------------------------------------------
@@ -762,6 +803,926 @@ test('project refuses a summary whose recorded text would forge a summary marker
   assert.equal(bytes(INDEX).toString('utf8'), '# Index\n');
 }));
 
+// --- writer ---------------------------------------------------------------------------------------
+
+const TASK_REPORT = `${RUN}/task-1-report.md`;
+const EXECUTION = `${RUN}/task-1-execution-1`;
+const MIB64 = 64 * 1024 * 1024;
+const candidatePath = (iteration, scope = 'task-1', cycle = 1) => `${CORRECTION}/${scope}-cycle-${cycle}-iteration-${iteration}-candidate.json`;
+const envelopeText = (fields) => `${Object.entries(fields).map(([key, value]) => `${key}: ${value}`).join('\n')}\n`;
+const writerResponse = (overrides = {}) => envelopeText({
+  status: 'DONE', artifact: TASK_REPORT, 'changed-paths': 'source.txt', signals: 'tdd:red-green', ...overrides,
+});
+const workOf = (observation, path) => observation.files.find((file) => file.path === path).work;
+
+// A manual run whose task-1 iteration-1 writer is authorized to write the task report.
+function manualWriterAuthorized(root) {
+  openCorrectionRun(root, manual({ drive: 'manual' }));
+  openCorrectionCycle(root, manual({ scope: 'task-1' }));
+  reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 1, kind: 'initial' }));
+  authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 1, role: 'writer', target: TASK_REPORT }));
+}
+
+const recordWriter = (root, input = {}) => recordCorrectionWriter(root, manual({
+  scope: 'task-1', iteration: 1, response: writerResponse(), ...input,
+}));
+
+test('the manual writer records its four-field envelope, the report digest and a candidate snapshot', () => withRepo(PLAN_TWO, ({ root, put, bytes, json }) => {
+  manualWriterAuthorized(root);
+  put('source.txt', 'changed by the writer\n');
+  put('added.txt', 'added by the writer\n');
+  put(TASK_REPORT, 'Implementation report.\n');
+  const response = writerResponse({ 'changed-paths': 'added.txt, source.txt' });
+  const result = recordWriter(root, { response });
+  assert.equal(result.ok, true, result.message);
+  const current = observeSource(root);
+  const snapshot = bytes(candidatePath(1));
+  assert.deepEqual(json(recordPath(5)).record, {
+    kind: 'WRITER_RECORDED', scope: 'task-1', cycle: 1, iteration: 1, status: 'DONE',
+    evidence: [{ path: TASK_REPORT, digest: sha256(bytes(TASK_REPORT)) }], responseDigest: sha256(Buffer.from(response)),
+    observation: current.digest, candidate: { path: candidatePath(1), digest: sha256(snapshot) },
+    changedPaths: ['added.txt', 'source.txt'],
+  });
+  const file = (path, text) => ({ path, work: { kind: 'file', mode: workOf(current, path).mode, base64: Buffer.from(text).toString('base64') } });
+  assert.equal(snapshot.toString('utf8'), `${JSON.stringify({
+    version: 1, observation: current,
+    files: [file('added.txt', 'added by the writer\n'), file('source.txt', 'changed by the writer\n')],
+  })}\n`);
+  assert.deepEqual(result.candidate, { path: candidatePath(1), digest: sha256(snapshot) });
+  assert.deepEqual(result.next, { action: 'checks', scope: 'task-1', cycle: 1, iteration: 1 });
+  assert.deepEqual(checkCorrectionDrift(root, manual()), { ok: true, observation: current.digest, window: false },
+    'the writer observation is the new drift reference');
+}));
+
+test('a candidate snapshot keeps a deleted path as null work and a symlink as its target bytes', () => withRepo(PLAN_TWO, ({ root, put, git, json }) => {
+  put('doomed.txt', 'to be deleted\n');
+  git('add', '.');
+  git('commit', '-qm', 'doomed');
+  manualWriterAuthorized(root);
+  unlinkSync(join(root, 'doomed.txt'));
+  symlinkSync('source.txt', join(root, 'link'));
+  put(TASK_REPORT, 'report\n');
+  const result = recordWriter(root);
+  assert.equal(result.ok, true, result.message);
+  const { files } = json(candidatePath(1));
+  assert.deepEqual(files.map((entry) => [entry.path, entry.work?.kind ?? null]), [['doomed.txt', null], ['link', 'symlink']]);
+  assert.equal(Buffer.from(files[1].work.base64, 'base64').toString('utf8'), 'source.txt');
+  assert.deepEqual(json(recordPath(5)).record.changedPaths, ['doomed.txt', 'link']);
+}));
+
+test('a malformed manual writer response is recorded INVALID with its response digest', () => {
+  const cases = Object.entries({
+    'a missing field': envelopeText({ status: 'DONE', artifact: TASK_REPORT, signals: 'none' }),
+    'fields out of order': envelopeText({ artifact: TASK_REPORT, status: 'DONE', 'changed-paths': 'none', signals: 'none' }),
+    'an unknown status': writerResponse({ status: 'FINISHED' }),
+    'another artifact than the authorized report': writerResponse({ artifact: `${RUN}/task-2-report.md` }),
+    'a heading': `# Result\n${writerResponse()}`,
+    'an invalid signal': writerResponse({ signals: 'not a signal' }),
+    'an unsafe changed path': writerResponse({ 'changed-paths': '../escape' }),
+    'invalid UTF-8': Buffer.concat([Buffer.from(writerResponse()), Buffer.from([0xff])]),
+    'a semantic BLOCKED': writerResponse({ status: 'BLOCKED', 'changed-paths': 'none' }),
+  });
+  const setup = ({ root, put }) => {
+    manualWriterAuthorized(root);
+    put(TASK_REPORT, 'report\n');
+  };
+  return withCopies(PLAN_TWO, setup, cases, ({ root, json }, [label, response]) => {
+    const result = recordWriter(root, { response });
+    assert.equal(result.ok, true, `${label}: ${result.message}`);
+    const { record } = json(recordPath(5));
+    assert.equal(record.status, label === 'a semantic BLOCKED' ? 'BLOCKED' : 'INVALID', label);
+    assert.equal(record.responseDigest, sha256(Buffer.from(response)), label);
+    assert.equal(result.next.action, 'retry-or-diagnosis', label);
+  });
+});
+
+test('the manual writer refuses a missing or empty report, a wrong drive input or a writer that is not next', () => withRepo(PLAN_TWO, ({ root, put, exists }) => {
+  manualWriterAuthorized(root);
+  put('source.txt', 'changed\n');
+  assert.equal(recordWriter(root).code, CORRECTION_GUARD_CODES.INPUT_INVALID, 'a missing report');
+  put(TASK_REPORT, ' \n');
+  assert.equal(recordWriter(root).code, CORRECTION_GUARD_CODES.INPUT_INVALID, 'an empty report');
+  put(TASK_REPORT, 'report\n');
+  assert.equal(recordWriter(root, { execution: EXECUTION }).code, CORRECTION_GUARD_CODES.INPUT_INVALID, 'an execution on a manual drive');
+  assert.equal(recordWriter(root, { response: undefined }).code, CORRECTION_GUARD_CODES.INPUT_INVALID, 'no response');
+  assert.equal(recordWriter(root, { iteration: 2 }).code, CORRECTION_GUARD_CODES.STEP_INVALID, 'another iteration');
+  assert.equal(recordWriter(root, { scope: 'task-2' }).code, CORRECTION_GUARD_CODES.STEP_INVALID, 'another scope');
+  assert.equal(exists(recordPath(5)), false);
+  assert.equal(exists(candidatePath(1)), false);
+  assert.equal(recordWriter(root).ok, true);
+  assert.equal(recordWriter(root).code, CORRECTION_GUARD_CODES.STEP_INVALID, 'a writer already recorded');
+  assert.throws(() => recordCorrectionWriter(root, manual({ scope: 'task-1', iteration: 1, extra: true })), TypeError);
+}));
+
+test('two writer attempts keep two snapshots: the earlier one is unchanged and its base64 round-trips', () => withRepo(PLAN_TWO, ({ root, put, bytes, json }) => {
+  manualWriterAuthorized(root);
+  put('source.txt', 'first attempt\n');
+  put(TASK_REPORT, 'report 1\n');
+  assert.equal(recordWriter(root, { response: writerResponse({ status: 'BLOCKED' }) }).ok, true);
+  const first = bytes(candidatePath(1));
+  put(retryPath(1), `${JSON.stringify(retryRequest({ path: TASK_REPORT, digest: sha256(bytes(TASK_REPORT)) }))}\n`);
+  assert.equal(admitCorrectionRetry(root, manual({ request: retryPath(1) })).ok, true);
+  assert.equal(reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 2, kind: 'correction' })).ok, true);
+  assert.equal(authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 2, role: 'writer', target: TASK_REPORT })).ok, true);
+  put('source.txt', 'second attempt\n');
+  put(TASK_REPORT, 'report 2\n');
+  const second = recordWriter(root, { iteration: 2 });
+  assert.equal(second.ok, true, second.message);
+  assert.deepEqual(bytes(candidatePath(1)), first);
+  const decode = (snapshot) => Buffer.from(snapshot.files[0].work.base64, 'base64').toString('utf8');
+  assert.equal(decode(JSON.parse(first.toString('utf8'))), 'first attempt\n');
+  assert.equal(decode(json(candidatePath(2))), 'second attempt\n');
+  assert.notEqual(json(candidatePath(1)).observation.digest, json(candidatePath(2)).observation.digest);
+}));
+
+test('a candidate above 64 MiB of raw bytes appends RUN_HALTED and writes no snapshot', () => withRepo(PLAN_TWO, ({ root, put, json, exists }) => {
+  manualWriterAuthorized(root);
+  writeFileSync(join(root, 'large.bin'), Buffer.alloc(0));
+  truncateSync(join(root, 'large.bin'), MIB64 + 1);
+  put(TASK_REPORT, 'report\n');
+  const result = recordWriter(root);
+  assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY);
+  assert.equal(result.message, 'candidate snapshot exceeds 64 MiB');
+  const { record } = json(recordPath(5));
+  assert.equal(record.kind, 'RUN_HALTED');
+  assert.equal(record.reason, 'candidate snapshot exceeds 64 MiB');
+  assert.equal(record.observation, observeSource(root).digest);
+  assert.equal(exists(candidatePath(1)), false);
+}));
+
+// An autopilot run whose task-1 iteration-1 writer is authorized for the execution receipt EXECUTION,
+// begun with task-results.
+function autopilotWriterAuthorized({ root, put }) {
+  put(manifestPath(1), manifest('run-1', 1));
+  const actor = { runId: 'run-1', attempt: 1 };
+  openCorrectionRun(root, manual({ drive: 'autopilot', ...actor }));
+  openCorrectionCycle(root, manual({ scope: 'task-1', ...actor }));
+  reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 1, kind: 'initial', ...actor }));
+  authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 1, role: 'writer', target: EXECUTION, ...actor }));
+  beginTask(root, EXECUTION, {
+    runId: 'run-1', attempt: 1, task: '1', execution: 1, role: 'implementer', report: TASK_REPORT, planPath: PLAN,
+  });
+  return actor;
+}
+
+function autopilotWriterReported(repo, response = `status: DONE\nartifact: ${TASK_REPORT}\nsignals: none\n`) {
+  const actor = autopilotWriterAuthorized(repo);
+  repo.put('source.txt', 'autopilot change\n');
+  repo.put(TASK_REPORT, 'Implementation report.\n');
+  recordTaskResult(repo.root, EXECUTION, response);
+  return actor;
+}
+
+test('the autopilot writer binds a real task-results receipt and its frozen report', () => withRepo(PLAN_TWO, (repo) => {
+  const { root, bytes, json } = repo;
+  const actor = autopilotWriterReported(repo, `status: DONE_WITH_CONCERNS\nartifact: ${TASK_REPORT}\nsignals: none\n`);
+  const result = recordCorrectionWriter(root, manual({ scope: 'task-1', iteration: 1, execution: EXECUTION, ...actor }));
+  assert.equal(result.ok, true, result.message);
+  const { record, actor: recorded } = json(recordPath(5));
+  assert.deepEqual(recorded, { drive: 'autopilot', runId: 'run-1', attempt: 1 });
+  assert.equal(record.status, 'DONE_WITH_CONCERNS');
+  assert.deepEqual(record.evidence, [
+    { path: `${EXECUTION}-result.json`, digest: sha256(bytes(`${EXECUTION}-result.json`)) },
+    { path: `${EXECUTION}-report.md`, digest: sha256(bytes(`${EXECUTION}-report.md`)) },
+  ]);
+  assert.equal(record.responseDigest, null);
+  assert.deepEqual(record.changedPaths, ['source.txt']);
+  assert.equal(record.observation, observeSource(root).digest);
+  assert.equal(record.candidate.path, candidatePath(1));
+}));
+
+test('the autopilot writer records a semantic non-success as reported and a malformed one as INVALID', () => {
+  for (const [response, status] of [
+    [`status: BLOCKED\nartifact: ${TASK_REPORT}\nsignals: none\n`, 'BLOCKED'],
+    ['garbage\n', 'INVALID'],
+  ]) {
+    withRepo(PLAN_TWO, (repo) => {
+      const actor = autopilotWriterReported(repo, response);
+      const result = recordCorrectionWriter(repo.root, manual({ scope: 'task-1', iteration: 1, execution: EXECUTION, ...actor }));
+      assert.equal(result.ok, true, result.message);
+      assert.equal(repo.json(recordPath(5)).record.status, status);
+    });
+  }
+});
+
+test('the autopilot writer refuses a pending receipt, another execution or a response, writing nothing', () => withRepo(PLAN_TWO, (repo) => {
+  const { root, put, exists } = repo;
+  const actor = autopilotWriterAuthorized(repo);
+  put('source.txt', 'autopilot change\n');
+  const writer = (input) => recordCorrectionWriter(root, manual({ scope: 'task-1', iteration: 1, ...actor, ...input }));
+  assert.equal(writer({ execution: EXECUTION }).code, CORRECTION_GUARD_CODES.RECEIPT_PENDING);
+  assert.equal(writer({ execution: `${RUN}/task-1-execution-2` }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  assert.equal(writer({}).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  assert.equal(writer({ execution: EXECUTION, response: writerResponse() }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  assert.equal(exists(recordPath(5)), false);
+  assert.equal(exists(candidatePath(1)), false);
+}));
+
+test('receipt or report drift after the writer reported is an integrity failure (exit 3)', () => {
+  const drifts = {
+    'a source edit after the receipt': (put) => put('source.txt', 'edited after the receipt\n'),
+    'a report edit after the receipt': (put) => put(TASK_REPORT, 'edited report\n'),
+  };
+  for (const [label, drift] of Object.entries(drifts)) {
+    withRepo(PLAN_TWO, (repo) => {
+      autopilotWriterReported(repo);
+      drift(repo.put);
+      const result = cli(repo.root, ['--action', 'record-writer', '--scope', 'task-1', '--iteration', '1',
+        '--execution', EXECUTION, '--run-id', 'run-1', '--attempt', '1']);
+      assert.equal(result.status, 3, label);
+      assert.equal(result.json.code, CORRECTION_GUARD_CODES.INTEGRITY, label);
+      assert.equal(repo.exists(candidatePath(1)), false, label);
+    });
+  }
+});
+
+test('the record-writer CLI reads the manual response from stdin', () => withRepo(PLAN_TWO, ({ root, put, json }) => {
+  manualWriterAuthorized(root);
+  put('source.txt', 'changed\n');
+  put(TASK_REPORT, 'report\n');
+  const response = writerResponse();
+  const result = cli(root, ['--action', 'record-writer', '--scope', 'task-1', '--iteration', '1'], { input: response });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(json(recordPath(5)).record.responseDigest, sha256(Buffer.from(response)));
+}));
+
+// --- checks ---------------------------------------------------------------------------------------
+
+const checkEvidencePath = (k, iteration = 1, scope = 'task-1', cycle = 1) => `${CORRECTION}/${scope}-cycle-${cycle}-iteration-${iteration}-check-${k}-evidence.md`;
+const CHECKS_HALT = 'source changed during the checks';
+
+// The manual task-1 iteration-1 writer recorded DONE with one source change.
+function manualWriterRecorded(repo) {
+  manualWriterAuthorized(repo.root);
+  repo.put('source.txt', 'changed by the writer\n');
+  repo.put(TASK_REPORT, 'Implementation report.\n');
+  const result = recordWriter(repo.root);
+  assert.equal(result.ok, true, result.message);
+}
+
+// An injected collector standing in for collectReviewEvidence: it writes the evidence file and reports a
+// surface test and the coherence gate, running `during` while the commands would run.
+function collector({ surface = {}, gate = {}, during = () => {} } = {}) {
+  const calls = [];
+  const collectEvidence = async (options) => {
+    calls.push(options);
+    writeFileSync(join(options.repoRoot, options.evidencePath), `# Review evidence\n\n${options.testCommand}\n`);
+    during(options);
+    const command = (label, excerpt, overrides) => ({ label, exitCode: 0, passed: true, excerpt, ...overrides });
+    const commands = [command('surface-test', '# fail 0\n', surface), command('coherence-gate', '  violations: 0\n', gate)];
+    return { schemaVersion: 1, artifact: options.evidencePath, allPassed: commands.every((entry) => entry.passed), commands };
+  };
+  return { collectEvidence, calls };
+}
+
+const verifyCheck = (root, seams, input = {}) => recordCorrectionChecks(root, manual({ scope: 'task-1', iteration: 1, ...input }), seams);
+
+test('verify-check records passing checks from the injected collector with their evidence digests', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, bytes, json } = repo;
+  manualWriterRecorded(repo);
+  const { collectEvidence, calls } = collector({
+    surface: { excerpt: '# tests 4\n# pass 4\n# fail 0\n' }, gate: { excerpt: 'graph validate\n  violations: 0\n' },
+  });
+  const result = await verifyCheck(root, { collectEvidence, graphGateArgs: ['--port', 'memory'] });
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(calls, [{
+    repoRoot: root, evidencePath: checkEvidencePath(1), testCommand: 'npm test', graphGateArgs: ['--port', 'memory'],
+  }]);
+  const evidence = { path: checkEvidencePath(1), digest: sha256(bytes(checkEvidencePath(1))) };
+  assert.deepEqual(json(recordPath(6)).record, {
+    kind: 'CHECKS_RECORDED', scope: 'task-1', cycle: 1, iteration: 1, observation: observeSource(root).digest,
+    checks: [
+      { id: 'surface-test', exitCode: 0, passed: true, metric: 0, evidence },
+      { id: 'coherence-gate', exitCode: 0, passed: true, metric: 0, evidence },
+    ],
+  });
+  assert.deepEqual(result.next, { action: 'authorize', scope: 'task-1', cycle: 1, iteration: 1, role: 'task-reviewer' });
+}));
+
+test('verify-check parses the last failure count and violation count, else a null metric', async () => {
+  const cases = [
+    ['a failure with # fail 3', { exitCode: 1, passed: false, excerpt: '# fail 1\n# subtest\n# fail 3\n' }, {}, [3, 0]],
+    ['a missing summary', { exitCode: 1, passed: false, excerpt: 'Error: cannot find module\n' }, {}, [null, 0]],
+    ['coherence-gate violations', {}, { exitCode: 1, passed: false, excerpt: '  violations: 5\n...\n  violations: 2\n' }, [0, 2]],
+    ['a gate without a count', {}, { exitCode: 1, passed: false, excerpt: 'engine unreachable\n' }, [0, null]],
+  ];
+  for (const [label, surface, gate, metrics] of cases) {
+    await withRepo(PLAN_TWO, async (repo) => {
+      manualWriterRecorded(repo);
+      const result = await verifyCheck(repo.root, { collectEvidence: collector({ surface, gate }).collectEvidence });
+      assert.equal(result.ok, true, `${label}: ${result.message}`);
+      const { checks } = repo.json(recordPath(6)).record;
+      assert.deepEqual(checks.map((check) => check.metric), metrics, label);
+      assert.deepEqual(checks.map((check) => check.passed), [surface.passed ?? true, gate.passed ?? true], label);
+      assert.deepEqual(checks.map((check) => check.exitCode), [surface.exitCode ?? 0, gate.exitCode ?? 0], label);
+      assert.equal(result.next.action, 'retry-or-diagnosis', label);
+    });
+  }
+});
+
+test('a source change during the checks appends RUN_HALTED and records no checks', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, json } = repo;
+  manualWriterRecorded(repo);
+  const expected = observeSource(root).digest;
+  const { collectEvidence } = collector({ during: () => put('source.txt', 'mutated by the test command\n') });
+  const result = await verifyCheck(root, { collectEvidence });
+  assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY);
+  assert.equal(result.message, CHECKS_HALT);
+  const { record } = json(recordPath(6));
+  assert.equal(record.kind, 'RUN_HALTED');
+  assert.equal(record.reason, CHECKS_HALT);
+  assert.equal(record.observation, observeSource(root).digest);
+  assert.notEqual(record.observation, expected);
+  assert.deepEqual(record.evidence.map((item) => item.path), [checkEvidencePath(1)]);
+  put('source.txt', 'changed by the writer\n');
+  assert.equal(nextCorrectionAction(root, manual()).code, CORRECTION_GUARD_CODES.RUN_HALTED);
+}));
+
+test('verify-check runs nothing unless the checks are the next step', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, bytes, exists } = repo;
+  manualWriterAuthorized(root);
+  const { collectEvidence, calls } = collector();
+  assert.equal((await verifyCheck(root, { collectEvidence })).code, CORRECTION_GUARD_CODES.STEP_INVALID, 'before the writer');
+  put('source.txt', 'changed by the writer\n');
+  put(TASK_REPORT, 'report\n');
+  assert.equal(recordWriter(root).ok, true);
+  assert.equal((await verifyCheck(root, { collectEvidence }, { iteration: 2 })).code, CORRECTION_GUARD_CODES.STEP_INVALID);
+  assert.equal(calls.length, 0);
+  assert.equal(exists(checkEvidencePath(1)), false);
+  assert.equal((await verifyCheck(root, { collectEvidence })).ok, true);
+  const recorded = bytes(checkEvidencePath(1));
+  assert.equal((await verifyCheck(root, { collectEvidence })).code, CORRECTION_GUARD_CODES.STEP_INVALID, 'checks already recorded');
+  assert.equal(calls.length, 1);
+  assert.deepEqual(bytes(checkEvidencePath(1)), recorded, 'recorded evidence is never overwritten');
+}));
+
+test('a reducer integrity refusal of the checks appends RUN_HALTED before any command runs', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  manualWriterAuthorized(root);
+  put('source.txt', 'changed by a writer that then blocked\n');
+  put(TASK_REPORT, 'report 1\n');
+  assert.equal(recordWriter(root, { response: writerResponse({ status: 'BLOCKED' }) }).ok, true);
+  put(retryPath(1), `${JSON.stringify(retryRequest({ path: TASK_REPORT, digest: sha256(bytes(TASK_REPORT)) }))}\n`);
+  assert.equal(admitCorrectionRetry(root, manual({ request: retryPath(1) })).ok, true);
+  assert.equal(reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 2, kind: 'correction' })).ok, true);
+  // No writer: the checks would verify the opening tree, which the blocked writer changed.
+  assert.equal(authorizeCorrectionDispatch(root, manual({
+    scope: 'task-1', iteration: 2, role: 'task-reviewer', target: `${RUN}/task-1-review.md`,
+  })).ok, true);
+  const { collectEvidence, calls } = collector();
+  const result = await verifyCheck(root, { collectEvidence }, { iteration: 2 });
+  assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY, result.message);
+  assert.equal(calls.length, 0);
+  const { record } = json(recordPath(9));
+  assert.equal(record.kind, 'RUN_HALTED');
+  assert.match(record.reason, /iteration candidate/u);
+  assert.equal(record.observation, observeSource(root).digest);
+}));
+
+test('a collector failure refuses the checks without recording them', () => withRepo(PLAN_TWO, async (repo) => {
+  manualWriterRecorded(repo);
+  const collectEvidence = async () => { throw new Error('process-group convergence timed out'); };
+  const result = await verifyCheck(repo.root, { collectEvidence });
+  assert.equal(result.code, CORRECTION_GUARD_CODES.CAPTURE_FAILED);
+  assert.match(result.message, /convergence/u);
+  assert.equal(repo.exists(recordPath(6)), false);
+}));
+
+test('only verify-check takes the collector seams, and they are checked', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root } = repo;
+  manualWriterRecorded(repo);
+  const { collectEvidence } = collector();
+  await assert.rejects(verifyCheck(root, { collectEvidence, clock: () => 0 }), TypeError);
+  await assert.rejects(verifyCheck(root, { collectEvidence: 'collect' }), TypeError);
+  await assert.rejects(verifyCheck(root, { collectEvidence, graphGateArgs: '--port memory' }), TypeError);
+  assert.throws(() => recordCorrectionWriter(root, manual({ scope: 'task-1', iteration: 1, response: writerResponse() }), { collectEvidence }), TypeError);
+  assert.equal(repo.exists(recordPath(6)), false);
+}));
+
+// Two mechanical tasks with different test commands: each approves on its checks alone.
+const PLAN_MECHANICAL = planText(
+  planTask(1, { complexity: 'mechanical', testCommand: 'npm test' }),
+  planTask(2, { complexity: 'mechanical', testCommand: 'node --test tests/two.test.mjs' }),
+);
+
+test('a final cycle captures every surface test, each with its own evidence, and the last coherence gate', () => withRepo(PLAN_MECHANICAL, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  assert.equal(openCorrectionRun(root, manual({ drive: 'manual' })).ok, true);
+  for (const task of ['1', '2']) {
+    const scope = `task-${task}`;
+    const report = `${RUN}/task-${task}-report.md`;
+    assert.equal(openCorrectionCycle(root, manual({ scope })).ok, true);
+    reserveCorrectionIteration(root, manual({ scope, iteration: 1, kind: 'initial' }));
+    authorizeCorrectionDispatch(root, manual({ scope, iteration: 1, role: 'writer', target: report }));
+    put(`${scope}.txt`, `${scope} delivered\n`);
+    put(report, 'report\n');
+    assert.equal(recordCorrectionWriter(root, manual({ scope, iteration: 1, response: writerResponse({ artifact: report }) })).ok, true);
+    const checked = await recordCorrectionChecks(root, manual({ scope, iteration: 1 }), { collectEvidence: collector().collectEvidence });
+    assert.equal(checked.ok, true, checked.message);
+  }
+  assert.equal(openCorrectionCycle(root, manual({ scope: 'final' })).ok, true);
+  reserveCorrectionIteration(root, manual({ scope: 'final', iteration: 1, kind: 'initial' }));
+  authorizeCorrectionDispatch(root, manual({ scope: 'final', iteration: 1, role: 'final-reviewer', target: `${RUN}/final-review.md` }));
+  const { collectEvidence, calls } = collector();
+  const result = await recordCorrectionChecks(root, manual({ scope: 'final', iteration: 1 }), { collectEvidence });
+  assert.equal(result.ok, true, result.message);
+  assert.deepEqual(calls.map((call) => [call.evidencePath, call.testCommand]), [
+    [checkEvidencePath(1, 1, 'final'), 'node --test tests/two.test.mjs'],
+    [checkEvidencePath(2, 1, 'final'), 'npm test'],
+  ]);
+  const digest = (k) => ({ path: checkEvidencePath(k, 1, 'final'), digest: sha256(bytes(checkEvidencePath(k, 1, 'final'))) });
+  const { record } = json(recordPath(readCorrectionHead(root, manual()).seq));
+  assert.equal(record.kind, 'CHECKS_RECORDED');
+  assert.deepEqual(record.checks.map((check) => [check.id, check.evidence]), [
+    ['surface-test-1', digest(1)], ['surface-test-2', digest(2)], ['coherence-gate', digest(2)],
+  ]);
+}));
+
+// --- review ---------------------------------------------------------------------------------------
+
+const REVIEW = `${RUN}/task-1-review.md`;
+const ISSUES = `${RUN}/task-1-issues.md`;
+const DEFECTS = `${CORRECTION}/task-1-cycle-1-iteration-1-defects.json`;
+const REVIEW_STATE = `${RUN}/task-1-review-guard-attempt-1-iteration-1`;
+const REVIEW_HALT = 'unauthorized repository change during review';
+
+const defectsBody = (overrides = {}) => `${JSON.stringify({
+  version: 1, scope: 'task-1', cycle: 1, iteration: 1, verdict: 'APPROVED', defects: [], rubric: [], ...overrides,
+})}\n`;
+const reviewResponse = (overrides = {}) => envelopeText({
+  status: 'APPROVED', artifact: REVIEW, 'changed-paths': 'none', signals: 'none', ...overrides,
+});
+const defectEntry = (overrides = {}) => ({
+  criterion: 'SC1', check: 'review', dimension: null, cause: 'missing-test', severity: 'critical',
+  expected: 'a regression test', observed: 'no test covers it', proof: 'tests/x.test.mjs', correction: 'add the test',
+  nextCheck: 'review', supersedes: null, justification: null, ...overrides,
+});
+const rubricDefect = (dimension, overrides = {}) => defectEntry({
+  check: 'rubric', dimension, cause: 'vague-names', severity: 'important', nextCheck: 'rubric', ...overrides,
+});
+const score = (value) => ({ score: value, evidence: 'scored against the diff' });
+const rubricEntry = (criterion, scores = {}, constraints = []) => ({
+  criterion, coverage: score(scores.coverage ?? 2), correctness: score(scores.correctness ?? 2),
+  clarity: score(scores.clarity ?? 2), usability: score(scores.usability ?? 2), constraints,
+});
+
+// A manual task-1 iteration whose writer and passing checks are recorded and whose task reviewer is
+// authorized to write REVIEW.
+async function manualReviewAuthorized(repo, { rubricCriteria = [] } = {}) {
+  const { root, put } = repo;
+  openCorrectionRun(root, manual({ drive: 'manual' }));
+  openCorrectionCycle(root, manual({ scope: 'task-1', rubricCriteria }));
+  reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 1, kind: 'initial' }));
+  authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 1, role: 'writer', target: TASK_REPORT }));
+  put('source.txt', 'changed by the writer\n');
+  put(TASK_REPORT, 'Implementation report.\n');
+  assert.equal(recordWriter(root).ok, true);
+  assert.equal((await verifyCheck(root, { collectEvidence: collector().collectEvidence })).ok, true);
+  const authorized = authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 1, role: 'task-reviewer', target: REVIEW }));
+  assert.equal(authorized.ok, true, authorized.message);
+}
+
+const recordReview = (root, input = {}) => recordCorrectionReview(root, manual({
+  scope: 'task-1', iteration: 1, role: 'task-reviewer', defects: DEFECTS, response: reviewResponse(), ...input,
+}));
+
+test('a manual APPROVED review is recorded with its artifact and defects digests on the authorized tree', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  await manualReviewAuthorized(repo);
+  put(REVIEW, 'Status: Approved\n');
+  put(DEFECTS, defectsBody());
+  const result = recordReview(root);
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.status, 'APPROVED');
+  const observation = observeSource(root).digest;
+  assert.deepEqual(json(recordPath(8)).record, {
+    kind: 'REVIEW_RECORDED', scope: 'task-1', cycle: 1, iteration: 1, role: 'task-reviewer', ownerTask: null,
+    status: 'APPROVED', defects: [], rubric: [],
+    evidence: [{ path: REVIEW, digest: sha256(bytes(REVIEW)) }, { path: DEFECTS, digest: sha256(bytes(DEFECTS)) }],
+    before: observation, after: observation,
+  });
+  assert.deepEqual(result.next, { action: 'open-cycle', scope: 'task-2' });
+}));
+
+test('a manual ISSUES_FOUND review names its issues artifact and records the reviewer defects', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  await manualReviewAuthorized(repo);
+  put(REVIEW, 'Status: Issues Found\n');
+  put(ISSUES, '- add the regression test\n');
+  put(DEFECTS, defectsBody({ verdict: 'ISSUES_FOUND', defects: [defectEntry()] }));
+  const result = recordReview(root, { response: reviewResponse({ status: 'ISSUES_FOUND', artifact: ISSUES }) });
+  assert.equal(result.ok, true, result.message);
+  const { record } = json(recordPath(8));
+  assert.equal(record.status, 'ISSUES_FOUND');
+  assert.deepEqual(record.defects, [defectEntry()]);
+  assert.deepEqual(record.evidence.map((item) => item.path), [REVIEW, ISSUES, DEFECTS]);
+  assert.equal(record.evidence[1].digest, sha256(bytes(ISSUES)));
+  assert.equal(result.next.action, 'retry-or-diagnosis');
+}));
+
+test('an invalid defects artifact or reviewer response records the review INVALID', async () => {
+  const cases = [
+    ['a duplicate key', defectsBody().replace('{"version":1,', '{"version":1,"version":1,'), reviewResponse()],
+    ['another version', defectsBody({ version: 2 }), reviewResponse()],
+    ['an open key', defectsBody({ note: 'extra' }), reviewResponse()],
+    ['another scope', defectsBody({ scope: 'task-2' }), reviewResponse()],
+    ['another cycle', defectsBody({ cycle: 2 }), reviewResponse()],
+    ['another iteration', defectsBody({ iteration: 2 }), reviewResponse()],
+    ['a verdict that is not the status', defectsBody({ verdict: 'ISSUES_FOUND', defects: [defectEntry()] }), reviewResponse()],
+    ['APPROVED with a blocking defect', defectsBody({ defects: [defectEntry()] }), reviewResponse()],
+    ['ISSUES_FOUND without a blocking defect', defectsBody({ verdict: 'ISSUES_FOUND', defects: [defectEntry({ severity: 'minor' })] }),
+      reviewResponse({ status: 'ISSUES_FOUND', artifact: ISSUES })],
+    ['a defect schema error', defectsBody({ verdict: 'ISSUES_FOUND', defects: [{ ...defectEntry(), extra: 1 }] }),
+      reviewResponse({ status: 'ISSUES_FOUND', artifact: ISSUES })],
+    ['an unbound defect', defectsBody({ verdict: 'ISSUES_FOUND', defects: [defectEntry({ criterion: 'SC3' })] }),
+      reviewResponse({ status: 'ISSUES_FOUND', artifact: ISSUES })],
+    ['a missing defects artifact', null, reviewResponse()],
+    ['changed paths reported by a reviewer', defectsBody(), reviewResponse({ 'changed-paths': 'source.txt' })],
+    ['another artifact', defectsBody(), reviewResponse({ artifact: ISSUES })],
+    ['a missing issues artifact', defectsBody({ verdict: 'ISSUES_FOUND', defects: [defectEntry()] }),
+      reviewResponse({ status: 'ISSUES_FOUND', artifact: ISSUES })],
+  ];
+  const setup = async (repo) => {
+    await manualReviewAuthorized(repo);
+    repo.put(REVIEW, 'Status: Approved\n');
+  };
+  await withCopies(PLAN_TWO, setup, cases, ({ root, put, bytes, json }, [label, body, response]) => {
+    if (body !== null) put(DEFECTS, body);
+    const result = recordReview(root, { response });
+    assert.equal(result.ok, true, `${label}: ${result.message}`);
+    assert.equal(result.status, 'INVALID', label);
+    const { record } = json(recordPath(8));
+    assert.deepEqual([record.status, record.defects, record.rubric], ['INVALID', [], []], label);
+    const evidence = [{ path: REVIEW, digest: sha256(bytes(REVIEW)) }];
+    if (body !== null) evidence.push({ path: DEFECTS, digest: sha256(bytes(DEFECTS)) });
+    assert.deepEqual(record.evidence, evidence, label);
+    assert.equal(result.next.action, 'retry-or-diagnosis', label);
+  });
+});
+
+test('the rubric rules are enforced: an unsupported score or unsatisfied constraint is INVALID', async () => {
+  const unsatisfied = [{ id: 'no-network', satisfied: false, evidence: 'the test opens a socket' }];
+  const cases = [
+    ['a full rubric', 'APPROVED', { rubric: [rubricEntry('SC1')] }, 'APPROVED'],
+    ['a missing rubric entry', 'APPROVED', { rubric: [] }, 'INVALID'],
+    ['a score below 2 without a rubric defect', 'APPROVED', { rubric: [rubricEntry('SC1', { clarity: 1 })] }, 'INVALID'],
+    ['a score below 2 with its rubric defect', 'ISSUES_FOUND',
+      { verdict: 'ISSUES_FOUND', rubric: [rubricEntry('SC1', { clarity: 1 })], defects: [rubricDefect('clarity')] }, 'ISSUES_FOUND'],
+    ['an unsatisfied constraint without a blocking review defect', 'ISSUES_FOUND',
+      { verdict: 'ISSUES_FOUND', rubric: [rubricEntry('SC1', { clarity: 1 }, unsatisfied)], defects: [rubricDefect('clarity')] }, 'INVALID'],
+    ['an unsatisfied constraint with a blocking review defect', 'ISSUES_FOUND',
+      { verdict: 'ISSUES_FOUND', rubric: [rubricEntry('SC1', {}, unsatisfied)], defects: [defectEntry({ cause: 'opens-socket' })] }, 'ISSUES_FOUND'],
+  ];
+  const setup = async (repo) => {
+    await manualReviewAuthorized(repo, { rubricCriteria: ['SC1'] });
+    repo.put(REVIEW, 'review\n');
+    repo.put(ISSUES, 'issues\n');
+  };
+  await withCopies(PLAN_TWO, setup, cases, ({ root, put, json }, [label, status, body, recorded]) => {
+    put(DEFECTS, defectsBody(body));
+    const result = recordReview(root, { response: reviewResponse({ status, artifact: status === 'APPROVED' ? REVIEW : ISSUES }) });
+    assert.equal(result.ok, true, `${label}: ${result.message}`);
+    assert.equal(json(recordPath(8)).record.status, recorded, label);
+  });
+});
+
+test('a reviewer that reports BLOCKED or NEEDS_CONTEXT is recorded with that status and its artifact', async () => {
+  for (const status of ['BLOCKED', 'NEEDS_CONTEXT']) {
+    await withRepo(PLAN_TWO, async (repo) => {
+      const { root, put, bytes, json } = repo;
+      await manualReviewAuthorized(repo);
+      put(REVIEW, 'Status: Blocked — the diff is missing\n');
+      const result = recordReview(root, { response: reviewResponse({ status }) });
+      assert.equal(result.ok, true, result.message);
+      const { record } = json(recordPath(8));
+      assert.deepEqual([record.status, record.defects, record.rubric], [status, [], []]);
+      assert.deepEqual(record.evidence, [{ path: REVIEW, digest: sha256(bytes(REVIEW)) }]);
+    });
+  }
+});
+
+test('record-review refuses another role, owner task, defects path or a review that is not next', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, exists } = repo;
+  await manualReviewAuthorized(repo);
+  put(REVIEW, 'Status: Approved\n');
+  put(DEFECTS, defectsBody());
+  assert.equal(recordReview(root, { role: 'writer' }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  assert.equal(recordReview(root, { role: 'final-reviewer' }).code, CORRECTION_GUARD_CODES.STEP_INVALID);
+  assert.equal(recordReview(root, { iteration: 2 }).code, CORRECTION_GUARD_CODES.STEP_INVALID);
+  assert.equal(recordReview(root, { ownerTask: '1' }).code, CORRECTION_CODES.refusal.ROLE_NOT_ALLOWED);
+  assert.equal(recordReview(root, { defects: `${RUN}/defects.json` }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  assert.equal(recordReview(root, { defects: '.formula/work/tasks/other/correction/task-1-cycle-1-iteration-1-defects.json' }).code,
+    CORRECTION_GUARD_CODES.INPUT_INVALID);
+  assert.equal(recordReview(root, { reviewState: REVIEW_STATE }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  assert.equal(recordReview(root, { response: undefined }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  const owned = cli(root, ['--action', 'record-review', '--scope', 'task-1', '--iteration', '1', '--role', 'task-reviewer',
+    '--defects', DEFECTS, '--owner-task', '1'], { input: reviewResponse() });
+  assert.equal(owned.status, 1);
+  assert.equal(owned.json.code, CORRECTION_CODES.refusal.ROLE_NOT_ALLOWED, '--owner-task is the ownerTask input');
+  assert.equal(exists(recordPath(8)), false);
+}));
+
+test('a source change during the review appends RUN_HALTED naming the unauthorized change', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, json, exists } = repo;
+  await manualReviewAuthorized(repo);
+  put(REVIEW, 'Status: Approved\n');
+  put(DEFECTS, defectsBody());
+  put('source.txt', 'the reviewer edited the source\n');
+  const result = cli(root, ['--action', 'record-review', '--scope', 'task-1', '--iteration', '1', '--role', 'task-reviewer',
+    '--defects', DEFECTS], { input: reviewResponse() });
+  assert.equal(result.status, 3);
+  assert.equal(result.json.message, REVIEW_HALT);
+  const { record } = json(recordPath(8));
+  assert.deepEqual([record.kind, record.reason, record.observation], ['RUN_HALTED', REVIEW_HALT, observeSource(root).digest]);
+  put('source.txt', 'changed by the writer\n');
+  assert.equal(recordReview(root).code, CORRECTION_GUARD_CODES.RUN_HALTED, 'an unauthorized mutation stops the whole run');
+  assert.equal(exists(recordPath(9)), false);
+}));
+
+test('a reducer integrity refusal of the review appends RUN_HALTED: the reviewer was authorized before the checked tree', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, json } = repo;
+  openCorrectionRun(root, manual({ drive: 'manual' }));
+  openCorrectionCycle(root, manual({ scope: 'task-1' }));
+  reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 1, kind: 'initial' }));
+  authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 1, role: 'writer', target: TASK_REPORT }));
+  assert.equal(authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 1, role: 'task-reviewer', target: REVIEW })).ok, true);
+  put('source.txt', 'changed by the writer\n');
+  put(TASK_REPORT, 'report\n');
+  assert.equal(recordWriter(root).ok, true);
+  assert.equal((await verifyCheck(root, { collectEvidence: collector().collectEvidence })).ok, true);
+  put(REVIEW, 'Status: Approved\n');
+  put(DEFECTS, defectsBody());
+  const result = recordReview(root);
+  assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY);
+  assert.equal(result.message, REVIEW_HALT);
+  const { record } = json(recordPath(8));
+  assert.deepEqual([record.kind, record.reason], ['RUN_HALTED', REVIEW_HALT]);
+}));
+
+// An autopilot task-1 iteration whose receipt-bound writer and checks are recorded and whose task reviewer
+// is authorized for the review guard REVIEW_STATE, begun with reviewer-response.
+async function autopilotReviewAuthorized(repo) {
+  const { root } = repo;
+  const actor = autopilotWriterReported(repo);
+  assert.equal(recordCorrectionWriter(root, manual({ scope: 'task-1', iteration: 1, execution: EXECUTION, ...actor })).ok, true);
+  const checked = await recordCorrectionChecks(root, manual({ scope: 'task-1', iteration: 1, ...actor }), { collectEvidence: collector().collectEvidence });
+  assert.equal(checked.ok, true, checked.message);
+  assert.equal(authorizeCorrectionDispatch(root, manual({
+    scope: 'task-1', iteration: 1, role: 'task-reviewer', target: REVIEW_STATE, ...actor,
+  })).ok, true);
+  beginReview(root, REVIEW_STATE, {
+    runId: 'run-1', attempt: 1, iteration: 1, task: '1', report: REVIEW, issues: ISSUES, execution: EXECUTION,
+  });
+  return actor;
+}
+
+test('the autopilot review binds the reviewer-response receipt, its artifacts and the defects digest', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, bytes, json } = repo;
+  const actor = await autopilotReviewAuthorized(repo);
+  put(REVIEW, 'Status: Approved\n');
+  assert.equal(checkReview(root, REVIEW_STATE, `status: APPROVED\nartifact: ${REVIEW}\nsignals: none\n`).accepted, true);
+  put(DEFECTS, defectsBody());
+  const review = (input) => recordCorrectionReview(root, manual({
+    scope: 'task-1', iteration: 1, role: 'task-reviewer', defects: DEFECTS, ...actor, ...input,
+  }));
+  assert.equal(review({ reviewState: `${RUN}/task-1-review-guard-attempt-1-iteration-2` }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  assert.equal(review({ reviewState: REVIEW_STATE, response: reviewResponse() }).code, CORRECTION_GUARD_CODES.INPUT_INVALID);
+  const result = review({ reviewState: REVIEW_STATE });
+  assert.equal(result.ok, true, result.message);
+  const digest = (path) => ({ path, digest: sha256(bytes(path)) });
+  const { record } = json(recordPath(8));
+  assert.equal(record.status, 'APPROVED');
+  assert.deepEqual(record.evidence, [
+    digest(`${REVIEW_STATE}-baseline.json`), digest(`${REVIEW_STATE}-original.json`), digest(REVIEW), digest(DEFECTS),
+  ]);
+}));
+
+test('an autopilot review receipt that no longer verifies on resume is an integrity failure', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, exists } = repo;
+  const actor = await autopilotReviewAuthorized(repo);
+  put(REVIEW, 'Status: Approved\n');
+  put('source.txt', 'edited by the reviewer\n');
+  assert.equal(checkReview(root, REVIEW_STATE, `status: APPROVED\nartifact: ${REVIEW}\nsignals: none\n`).status, 'BLOCKED');
+  put('source.txt', 'autopilot change\n');
+  put(DEFECTS, defectsBody());
+  const result = recordCorrectionReview(root, manual({
+    scope: 'task-1', iteration: 1, role: 'task-reviewer', defects: DEFECTS, reviewState: REVIEW_STATE, ...actor,
+  }));
+  assert.equal(result.code, CORRECTION_GUARD_CODES.INTEGRITY);
+  assert.match(result.message, /does not verify/u);
+  assert.equal(exists(recordPath(8)), false);
+}));
+
+// --- diagnosis ------------------------------------------------------------------------------------
+
+const DIAGNOSIS = `${CORRECTION}/task-1-cycle-1-iteration-2-diagnosis.json`;
+const DIAGNOSIS_HALT = 'unauthorized repository change during diagnosis';
+const diagnosisBody = (overrides = {}) => `${JSON.stringify({
+  version: 1, scope: 'task-1', cycle: 1, iteration: 2,
+  hypothesis: 'the harness exhausted its memory on the large fixture', remedy: 'dispatch the writer with the fixture trimmed',
+  confirmingCheck: 'surface-test', recommendation: 'split the fixture before the next writer',
+  evidence: [{ path: 'source.txt', digest: sha256(Buffer.from('baseline\n')) }], ...overrides,
+})}\n`;
+const diagnosisResponse = (overrides = {}) => envelopeText({
+  status: 'DIAGNOSED', artifact: DIAGNOSIS, 'changed-paths': 'none', signals: 'none', ...overrides,
+});
+
+// Task-1 iteration 1 was interrupted; iteration 2 is the diagnosis, whose diagnostic is authorized to
+// write DIAGNOSIS.
+function diagnosisAuthorized(root, actor = {}, target = DIAGNOSIS) {
+  if (Object.keys(actor).length === 0) openCorrectionRun(root, manual({ drive: 'manual' }));
+  openCorrectionCycle(root, manual({ scope: 'task-1', ...actor }));
+  reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 1, kind: 'initial', ...actor }));
+  recordCorrectionInterruption(root, manual({ scope: 'task-1', iteration: 1, reason: 'the harness crashed', ...actor }));
+  reserveCorrectionIteration(root, manual({ scope: 'task-1', iteration: 2, kind: 'diagnosis', reason: 'missing-retry-evidence', ...actor }));
+  const authorized = authorizeCorrectionDispatch(root, manual({ scope: 'task-1', iteration: 2, role: 'diagnostic', target, ...actor }));
+  assert.equal(authorized.ok, true, authorized.message);
+}
+
+const recordDiagnosis = (root, input = {}) => recordCorrectionDiagnosis(root, manual({
+  scope: 'task-1', iteration: 2, response: diagnosisResponse(), ...input,
+}));
+
+test('a valid manual diagnosis is recorded with its artifact digest on the unchanged tree', () => withRepo(PLAN_TWO, ({ root, put, bytes, json }) => {
+  diagnosisAuthorized(root);
+  put(DIAGNOSIS, diagnosisBody({
+    evidence: [{ path: 'source.txt', digest: sha256(Buffer.from('baseline\n')) }, { path: recordPath(4), digest: sha256(bytes(recordPath(4))) }],
+  }));
+  const result = recordDiagnosis(root);
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.valid, true);
+  const observation = observeSource(root).digest;
+  assert.deepEqual(json(recordPath(7)).record, {
+    kind: 'DIAGNOSIS_RECORDED', scope: 'task-1', cycle: 1, iteration: 2, valid: true,
+    hypothesis: 'the harness exhausted its memory on the large fixture', remedy: 'dispatch the writer with the fixture trimmed',
+    confirmingCheck: 'surface-test', recommendation: 'split the fixture before the next writer',
+    artifact: { path: DIAGNOSIS, digest: sha256(bytes(DIAGNOSIS)) }, before: observation, after: observation,
+  });
+  assert.deepEqual(result.next, { action: 'retry-or-diagnosis', scope: 'task-1', cycle: 1, iteration: 3, diagnosisAvailable: false });
+}));
+
+test('a diagnosis is valid only when DIAGNOSED, complete, bound to a check and backed by current bytes', () => {
+  const cases = [
+    ['INCONCLUSIVE', diagnosisBody(), diagnosisResponse({ status: 'INCONCLUSIVE' })],
+    ['BLOCKED', diagnosisBody(), diagnosisResponse({ status: 'BLOCKED' })],
+    ['an empty hypothesis', diagnosisBody({ hypothesis: ' ' }), diagnosisResponse()],
+    ['an empty recommendation', diagnosisBody({ recommendation: '' }), diagnosisResponse()],
+    ['an unbound confirming check', diagnosisBody({ confirmingCheck: 'lint' }), diagnosisResponse()],
+    ['a stale source digest', diagnosisBody({ evidence: [{ path: 'source.txt', digest: '0'.repeat(64) }] }), diagnosisResponse()],
+    ['an unobserved source path', diagnosisBody({ evidence: [{ path: 'missing.txt', digest: '0'.repeat(64) }] }), diagnosisResponse()],
+    ['a stale work artifact digest', diagnosisBody({ evidence: [{ path: recordPath(4), digest: '0'.repeat(64) }] }), diagnosisResponse()],
+    ['another iteration', diagnosisBody({ iteration: 1 }), diagnosisResponse()],
+    ['an open key', diagnosisBody({ note: 'extra' }), diagnosisResponse()],
+    ['a duplicate key', diagnosisBody().replace('{"version":1,', '{"version":1,"version":1,'), diagnosisResponse()],
+    ['another artifact', diagnosisBody(), diagnosisResponse({ artifact: `${CORRECTION}/task-1-cycle-1-iteration-3-diagnosis.json` })],
+    ['an unknown status', diagnosisBody(), diagnosisResponse({ status: 'DONE' })],
+    ['reported changed paths', diagnosisBody(), diagnosisResponse({ 'changed-paths': 'source.txt' })],
+    ['an autopilot three-field response on a manual drive', diagnosisBody(),
+      envelopeText({ status: 'DIAGNOSED', artifact: DIAGNOSIS, signals: 'none' })],
+  ];
+  return withCopies(PLAN_TWO, ({ root }) => diagnosisAuthorized(root), cases, ({ root, put, json }, [label, body, response]) => {
+    put(DIAGNOSIS, body);
+    const result = recordDiagnosis(root, { response });
+    assert.equal(result.ok, true, `${label}: ${result.message}`);
+    assert.equal(result.valid, false, label);
+    assert.equal(json(recordPath(7)).record.valid, false, label);
+    assert.deepEqual(result.next, { action: 'prove-isolation', scope: 'task-1', cycle: 1 }, label);
+  });
+});
+
+test('an autopilot diagnosis response with a changed-paths field is invalid', () => withRepo(PLAN_TWO, ({ root, put, json }) => {
+  put(manifestPath(1), manifest('run-1', 1));
+  const actor = { runId: 'run-1', attempt: 1 };
+  openCorrectionRun(root, manual({ drive: 'autopilot', ...actor }));
+  diagnosisAuthorized(root, actor);
+  put(DIAGNOSIS, diagnosisBody());
+  const four = recordDiagnosis(root, { ...actor });
+  assert.equal(four.ok, true, four.message);
+  assert.equal(four.valid, false);
+  assert.equal(json(recordPath(7)).record.valid, false);
+}));
+
+test('an autopilot diagnosis with the three-field response is valid', () => withRepo(PLAN_TWO, ({ root, put, json }) => {
+  put(manifestPath(1), manifest('run-1', 1));
+  const actor = { runId: 'run-1', attempt: 1 };
+  openCorrectionRun(root, manual({ drive: 'autopilot', ...actor }));
+  diagnosisAuthorized(root, actor);
+  put(DIAGNOSIS, diagnosisBody());
+  const result = recordDiagnosis(root, { ...actor, response: envelopeText({ status: 'DIAGNOSED', artifact: DIAGNOSIS, signals: 'none' }) });
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.valid, true);
+  assert.equal(json(recordPath(7)).record.valid, true);
+}));
+
+test('record-diagnosis refuses a missing artifact, another target or a diagnosis that is not next', () => {
+  withRepo(PLAN_TWO, ({ root, put, exists }) => {
+    diagnosisAuthorized(root);
+    assert.equal(recordDiagnosis(root).code, CORRECTION_GUARD_CODES.INPUT_INVALID, 'a missing artifact');
+    put(DIAGNOSIS, diagnosisBody());
+    assert.equal(recordDiagnosis(root, { response: undefined }).code, CORRECTION_GUARD_CODES.INPUT_INVALID, 'no response');
+    assert.equal(recordDiagnosis(root, { iteration: 3 }).code, CORRECTION_GUARD_CODES.STEP_INVALID);
+    assert.equal(exists(recordPath(7)), false);
+  });
+  withRepo(PLAN_TWO, ({ root, put, exists }) => {
+    diagnosisAuthorized(root, {}, `${RUN}/diagnosis.md`);
+    put(DIAGNOSIS, diagnosisBody());
+    assert.equal(recordDiagnosis(root).code, CORRECTION_GUARD_CODES.INPUT_INVALID, 'a target that is not the diagnosis path');
+    assert.equal(exists(recordPath(7)), false);
+  });
+});
+
+test('a source change during the diagnosis appends RUN_HALTED and exits 3', () => withRepo(PLAN_TWO, ({ root, put, json }) => {
+  diagnosisAuthorized(root);
+  put(DIAGNOSIS, diagnosisBody());
+  put('source.txt', 'the diagnostic edited the source\n');
+  const result = cli(root, ['--action', 'record-diagnosis', '--scope', 'task-1', '--iteration', '2'], { input: diagnosisResponse() });
+  assert.equal(result.status, 3);
+  assert.equal(result.json.message, DIAGNOSIS_HALT);
+  const { record } = json(recordPath(7));
+  assert.deepEqual([record.kind, record.reason, record.observation], ['RUN_HALTED', DIAGNOSIS_HALT, observeSource(root).digest]);
+}));
+
+test('the record-diagnosis CLI reads the response from stdin', () => withRepo(PLAN_TWO, ({ root, put, json }) => {
+  diagnosisAuthorized(root);
+  put(DIAGNOSIS, diagnosisBody());
+  const result = cli(root, ['--action', 'record-diagnosis', '--scope', 'task-1', '--iteration', '2'], { input: diagnosisResponse() });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(json(recordPath(7)).record.valid, true);
+}));
+
+// --- isolation ------------------------------------------------------------------------------------
+
+const stop = (root) => stopCorrectionCycle(root, manual({ scope: 'task-1', reason: 'HUMAN_INTERRUPTED', note: 'paused by the user' }));
+const prove = (root, input = {}) => proveCorrectionIsolation(root, manual({ scope: 'task-1', ...input }));
+
+test('a stopped cycle on its opening tree proves baseline-equal isolation', () => withRepo(PLAN_TWO, ({ root, json }) => {
+  interruptedRun(root);
+  assert.equal(stop(root).ok, true);
+  const result = prove(root);
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.mode, 'baseline-equal');
+  assert.deepEqual(json(recordPath(6)).record, {
+    kind: 'ISOLATION_RECORDED', scope: 'task-1', cycle: 1, mode: 'baseline-equal', observation: observeSource(root).digest,
+  });
+  assert.deepEqual(result.next, { action: 'open-cycle', scope: 'final' });
+}));
+
+test('a stopped cycle on its verified best candidate whose checks passed proves retained-best isolation', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, json } = repo;
+  await manualReviewAuthorized(repo);
+  put(REVIEW, 'Status: Issues Found\n');
+  put(ISSUES, '- add the regression test\n');
+  put(DEFECTS, defectsBody({ verdict: 'ISSUES_FOUND', defects: [defectEntry()] }));
+  assert.equal(recordReview(root, { response: reviewResponse({ status: 'ISSUES_FOUND', artifact: ISSUES }) }).status, 'ISSUES_FOUND');
+  assert.equal(stop(root).ok, true);
+  const result = prove(root);
+  assert.equal(result.ok, true, result.message);
+  assert.equal(result.mode, 'retained-best');
+  assert.deepEqual(json(recordPath(10)).record, {
+    kind: 'ISOLATION_RECORDED', scope: 'task-1', cycle: 1, mode: 'retained-best', observation: observeSource(root).digest,
+  });
+}));
+
+test('an unprovable isolation halts with recovery evidence and leaves every source byte and Git state unchanged', () => withRepo(PLAN_TWO, async (repo) => {
+  const { root, put, bytes, json, git } = repo;
+  manualWriterRecorded(repo);
+  const failing = collector({ surface: { exitCode: 1, passed: false, excerpt: '# fail 3\n' } });
+  assert.equal((await verifyCheck(root, { collectEvidence: failing.collectEvidence })).ok, true);
+  assert.equal(stop(root).ok, true);
+  const sources = ['.gitignore', 'source.txt'];
+  const before = sources.map((path) => bytes(path));
+  const gitBefore = [git('rev-parse', 'HEAD').toString(), git('status', '--porcelain').toString(), bytes('.git/index')];
+  const snapshot = json(recordPath(5)).record.candidate;
+  const baseline = { path: baselinePath('task-1', 1), digest: sha256(bytes(baselinePath('task-1', 1))) };
+  const result = cli(root, ['--action', 'prove-isolation', '--scope', 'task-1']);
+  assert.equal(result.status, 3);
+  assert.equal(result.json.code, CORRECTION_GUARD_CODES.INTEGRITY);
+  const { record } = json(recordPath(8));
+  assert.equal(record.kind, 'RUN_HALTED');
+  assert.match(record.reason, /isolation of task-1#1 is unprovable.*source\.txt/u);
+  assert.deepEqual(record.evidence, [snapshot, baseline]);
+  assert.equal(record.observation, observeSource(root).digest);
+  assert.deepEqual(result.json.identity.recovery, {
+    bestCandidate: { iteration: 1, observation: record.observation, snapshot },
+    baseline,
+    changedPaths: ['source.txt'],
+  });
+  assert.deepEqual(sources.map((path) => bytes(path)), before, 'the guard never restores a source file');
+  assert.deepEqual([git('rev-parse', 'HEAD').toString(), git('status', '--porcelain').toString(), bytes('.git/index')], gitBefore);
+  put('source.txt', 'baseline\n');
+  assert.equal(prove(root).code, CORRECTION_GUARD_CODES.RUN_HALTED, 'the halted run stays halted');
+}));
+
+test('prove-isolation refuses a scope whose isolation is not the next step, writing nothing', () => withRepo(PLAN_TWO, ({ root, exists }) => {
+  interruptedRun(root);
+  assert.equal(prove(root).code, CORRECTION_GUARD_CODES.STEP_INVALID, 'the cycle is still open');
+  assert.equal(stop(root).ok, true);
+  assert.equal(prove(root, { scope: 'task-2' }).code, CORRECTION_GUARD_CODES.STEP_INVALID);
+  assert.equal(exists(recordPath(6)), false);
+  assert.equal(cli(root, ['--action', 'prove-isolation', '--scope', 'task-1']).status, 0);
+  assert.equal(prove(root).code, CORRECTION_GUARD_CODES.STEP_INVALID, 'isolation is proven once');
+}));
+
 // --- verify ---------------------------------------------------------------------------------------
 
 test('verify replays the run and checks drift without writing a record', () => withRepo(PLAN_TWO, (repo) => {
@@ -799,9 +1760,9 @@ const SCRIPT = fileURLToPath(new URL('../scripts/correction-guard.mjs', import.m
 
 // Runs the CLI in a new process. Every invocation that is not a migrate refusal prints exactly one JSON
 // line on stdout.
-function cli(root, args, { plan = PLAN } = {}) {
+function cli(root, args, { plan = PLAN, input = '' } = {}) {
   const argv = [SCRIPT, '--repo-root', root, ...(plan === null ? [] : ['--plan', plan]), ...args];
-  const result = spawnSync(process.execPath, argv, { cwd: root, encoding: 'utf8' });
+  const result = spawnSync(process.execPath, argv, { cwd: root, encoding: 'utf8', input });
   if (result.status !== 25) {
     assert.match(result.stdout, /^[^\n]+\n$/u, `one JSON line on stdout for ${args.join(' ')}`);
   }
@@ -852,6 +1813,11 @@ test('usage errors exit 2 with one JSON line and write nothing', () => withRepo(
     [['--action', 'reserve', '--scope', 'task-1', '--iteration', 'one', '--kind', 'initial'], /--iteration/u],
     [['--action', 'open', '--drive', 'autopilot', '--run-id', 'r', '--attempt', '0'], /--attempt/u],
     [['--action', 'next', '--run-id', 'r'], /--run-id/u],
+    [['--action', 'record-review', '--scope', 'task-1', '--iteration', '1', '--role', 'task-reviewer'], /--defects/u],
+    [['--action', 'record-writer', '--scope', 'task-1', '--iteration', '1', '--review-state', 'x'], /--review-state/u],
+    [['--action', 'verify-check', '--scope', 'task-1'], /--iteration/u],
+    [['--action', 'record-diagnosis', '--scope', 'task-1', '--iteration', '2', '--defects', 'x'], /--defects/u],
+    [['--action', 'prove-isolation', '--scope', 'task-1', '--iteration', '1'], /--iteration/u],
   ];
   for (const [args, message] of cases) {
     const result = cli(root, args);
@@ -921,15 +1887,41 @@ test('per-action options are the kebab-case forms of the library input keys', ()
   assert.match(owned.json.message, /ownerTask: null and affectedCriteria: \[\]/u);
 }));
 
-test('main returns the exit code in-process and writes one JSON line to the injected stdout', () => withRepo(PLAN_TWO, ({ root }) => {
+test('main resolves the exit code in-process and writes one JSON line to the injected stdout', () => withRepo(PLAN_TWO, async ({ root }) => {
   const out = [];
   const err = [];
   const io = { stdout: { write: (text) => out.push(text) }, stderr: { write: (text) => err.push(text) } };
-  assert.equal(main(['--repo-root', root, '--plan', PLAN, '--action', 'open', '--drive', 'manual'], io), 0);
+  assert.equal(await main(['--repo-root', root, '--plan', PLAN, '--action', 'open', '--drive', 'manual'], io), 0);
   assert.equal(out.length, 1);
   assert.equal(JSON.parse(out[0]).action, 'open');
   assert.deepEqual(err, []);
-  assert.equal(main(['--repo-root', root, '--plan', PLAN, '--action', 'reopen', '--authorization', reopenPath(), '--run-id', 'r'], io), 1);
+  assert.equal(await main(['--repo-root', root, '--plan', PLAN, '--action', 'reopen', '--authorization', reopenPath(), '--run-id', 'r'], io), 1);
   assert.equal(JSON.parse(out[1]).code, CORRECTION_GUARD_CODES.ACTOR_INVALID);
-  assert.throws(() => main([], { stdout: io.stdout, log: io.stdout }), TypeError);
+  await assert.rejects(main([], { stdout: io.stdout, log: io.stdout }), TypeError);
+  await assert.rejects(main([], { ...io, stdin: 'not a function' }), TypeError);
+}));
+
+test('main reads a manual response from the injected stdin only for the actions that take one', () => withRepo(PLAN_TWO, async ({ root, put, json }) => {
+  manualWriterAuthorized(root);
+  put('source.txt', 'changed\n');
+  put(TASK_REPORT, 'report\n');
+  const reads = [];
+  const out = [];
+  const io = {
+    stdout: { write: (text) => out.push(text) }, stderr: { write: () => {} },
+    stdin: () => { reads.push(true); return Buffer.from(writerResponse()); },
+  };
+  assert.equal(await main(['--repo-root', root, '--plan', PLAN, '--action', 'next'], io), 0);
+  assert.equal(reads.length, 0);
+  assert.equal(await main(['--repo-root', root, '--plan', PLAN, '--action', 'record-writer', '--scope', 'task-1', '--iteration', '1'], io), 0);
+  assert.equal(reads.length, 1);
+  assert.equal(json(recordPath(5)).record.responseDigest, sha256(Buffer.from(writerResponse())));
+}));
+
+test('the verify-check CLI refuses a step that is not the checks without running any command', () => withRepo(PLAN_TWO, ({ root, exists }) => {
+  manualWriterAuthorized(root);
+  const result = cli(root, ['--action', 'verify-check', '--scope', 'task-1', '--iteration', '1']);
+  assert.equal(result.status, 1);
+  assert.equal(result.json.code, CORRECTION_GUARD_CODES.STEP_INVALID);
+  assert.equal(exists(checkEvidencePath(1)), false);
 }));
