@@ -930,7 +930,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   function seedPlanArtifacts(run) {
     const planPath = join(run.dir, '.formula', 'work', 'plans', 'topic.md');
     mkdirSync(dirname(planPath), { recursive: true });
-    writeFileSync(planPath, '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC1\n');
+    writeFileSync(planPath, '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Test command:** `npm test`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC1\n');
     mkdirSync(run.taskDir, { recursive: true });
     writeFileSync(join(run.taskDir, 'ledger.md'), '# Ledger\n');
   }
@@ -2404,7 +2404,7 @@ if (process.argv[2] === '--version') {
   it('routes all-mechanical implementation cheaply while enforcing the standard review floor', async () => {
     const run = makeRun({ featureComplexity: 'mechanical' });
     const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
-    const mechanicalPlan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC1\n';
+    const mechanicalPlan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Test command:** `npm test`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC1\n';
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -2428,7 +2428,7 @@ if (process.argv[2] === '--version') {
   it('rejects an omitted higher-complexity plan task before review spawn', async () => {
     const run = makeRun({ featureComplexity: 'mechanical' });
     const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
-    const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** `scripts`\n- **Complexity:** `design`\n- **Dependencies:** none\n- **Success criteria:** SC2\n';
+    const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Test command:** `npm test`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** `scripts`\n- **Test command:** `npm test`\n- **Complexity:** `design`\n- **Dependencies:** none\n- **Success criteria:** SC2\n';
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -3303,7 +3303,7 @@ if (process.argv[2] === '--version') {
     const run = makeRun();
     try {
       const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'steepysite-receipt',
-        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1, SC2\n' };
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Test command:** `npm test`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1, SC2\n' };
       const first = await drive(run, env);
       assert.equal(first.code, 1, first.err);
       assert.match(statusOf(run), /TASK_RESULT_PROTOCOL — version=2/);
@@ -3330,7 +3330,7 @@ if (process.argv[2] === '--version') {
     const run = makeRun();
     try {
       const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'receipt-needs-context',
-        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n' };
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Test command:** `npm test`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n' };
       assert.equal((await drive(run, env)).code, 1);
       const paths = ['baseline.json', 'capture.json', 'result.json', 'report.md'].map((suffix) =>
         join(run.taskDir, `task-1-execution-1-${suffix}`));
@@ -3352,7 +3352,7 @@ if (process.argv[2] === '--version') {
     const run = makeRun();
     try {
       const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'receipt-wrong-ancestor',
-        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n' };
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Test command:** `npm test`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n' };
       assert.equal((await drive(run, env)).code, 1);
       const result = await drive(run, env);
       assert.equal(result.code, 1);
@@ -3439,7 +3439,7 @@ if (process.argv[2] === '--version') {
     try {
       const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'steepysite-receipt',
         FAKE_HARNESS_PLAN_TEXT: '# Plan\n' + ['1', '2'].map((id) =>
-          `\n## Task ${id}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC${id}\n`).join('') };
+          `\n## Task ${id}\n\n- **Surface:** scripts\n- **Test command:** \`npm test\`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC${id}\n`).join('') };
       assert.equal((await drive(run, env)).code, 1);
       const second = await drive(run, env);
       assert.equal(second.code, 0, second.err);
@@ -3511,6 +3511,22 @@ if (process.argv[2] === '--version') {
       assert.equal(JSON.parse(readFileSync(join(run.taskDir, 'final-review-guard-attempt-1-iteration-1-original.json'))).status, 'ISSUES_FOUND');
       assert.equal(JSON.parse(readFileSync(join(run.taskDir, 'final-review-guard-attempt-1-iteration-2-original.json'))).status, 'APPROVED');
       assert.match(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('a default done run leaves a correction run whose handoff verifies COMPLETE', async () => {
+    const run = makeRun();
+    const runId = '66666666-6666-4666-8666-666666666666';
+    try {
+      const result = await drive(run, { FAKE_HARNESS_MODE: 'done' }, { runId });
+      assert.equal(result.code, 0, result.err);
+      const { verifyCorrectionHandoff } = await import('../scripts/correction-guard.mjs');
+      const verified = verifyCorrectionHandoff(run.dir, {
+        planPath: '.formula/work/plans/topic.md', indexPath: '.formula/work/tasks/topic/task-result-index.md',
+        runId, attempt: 1,
+      });
+      assert.equal(verified.ok, true, `${verified.code}: ${verified.message}`);
+      assert.equal(verified.outcome, 'COMPLETE');
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
