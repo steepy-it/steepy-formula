@@ -31,6 +31,8 @@
 //                                   correlated marker of the same attempt
 //   FAKE_HARNESS_RESULT_INDEX_TEXT — task entries that replace the index's receipt projection after the terminal
 //                                   projection (the correction summary block stays)
+//   FAKE_HARNESS_HOLD             — <phase> — the review of correction-partial / correction-reopen-forgery
+//                                   lingers after acting until the conductor stops it (self-exit after 30 s)
 // Modes:
 //   done     — append the phase's completion marker (review → READY_FOR_PR), exit 0
 //   blocked  — append BLOCKED with a reason, exit 1 (a child that gave up)
@@ -49,9 +51,11 @@
 //                               forged REOPEN_AUTHORIZED record to the guard history
 //   correction-history-rewrite — implement: a complete guarded run, after which the child rewrites record-1.json
 //   correction-final-stopped  — implement: the final review finds an issue and the final cycle is stopped (the
-//                               run is PARTIAL); the fresh attempt records DONE, a resumed attempt PARTIAL
+//                               run is PARTIAL); the fresh attempt records FAKE_HARNESS_FINAL_STOPPED_MARK
+//                               (default DONE), a resumed attempt PARTIAL
 //   review-forged-ready       — review: records READY_FOR_PR (after a partial implementation)
 //   The correction modes run as `done` in every phase they do not act in.
+//   marker-only — append only the correlated FAKE_HARNESS_MARK (default: the phase's completion marker), exit 0
 // Every implement scenario that reaches implement acceptance also drives the real
 // correction guard (scripts/correction-guard.mjs, drive autopilot) around its
 // task-result receipts and reviewer gates; see correctionGuard below.
@@ -921,19 +925,28 @@ async function correctionPartialScenario({ forgeReopen = false } = {}) {
   return 0;
 }
 
-// A run whose final cycle the child stopped (see materializeReviewGates): the fresh attempt claims DONE for
-// it; a resumed attempt records PARTIAL for that earlier attempt's stopped final, with no new work.
+// A run whose final cycle the child stopped (see materializeReviewGates): the fresh attempt records
+// FAKE_HARNESS_FINAL_STOPPED_MARK for it (default DONE, a false claim; PARTIAL is the honest marker); a
+// resumed attempt records PARTIAL for that earlier attempt's stopped final, with no new work.
 async function finalStoppedScenario() {
   const trace = '.formula/work/tasks/topic/final-stopped-trace.txt';
   if (!existsSync(trace)) {
     await materializePhaseArtifacts();
     writeFileSync(trace, 'stopped-final\n');
-    append(phase, 'DONE', correlated('claims DONE for a stopped final'));
+    const mark = process.env.FAKE_HARNESS_FINAL_STOPPED_MARK ?? 'DONE';
+    append(phase, mark, correlated(mark === 'DONE' ? 'claims DONE for a stopped final' : 'the final cycle is stopped'));
     return 0;
   }
   appendFileSync(trace, 'resumed\n');
   append(phase, 'PARTIAL', correlated('the stopped final of an earlier attempt'));
   return 0;
+}
+
+// Exits with `code`, or, when FAKE_HARNESS_HOLD names this phase, lingers after acting (self-exiting after
+// 30 s) until the conductor stops it.
+function exitOrHold(code) {
+  if (process.env.FAKE_HARNESS_HOLD !== phase) process.exit(code);
+  setTimeout(() => process.exit(code), 30000);
 }
 
 // Also appends a second correlated marker for this attempt when FAKE_HARNESS_ALSO_MARK names this phase.
@@ -970,11 +983,16 @@ switch (scenario) {
     // The review of a partial delivery records PARTIAL_REVIEWED, never READY_FOR_PR.
     if (forgeReopen) forgeReopenRecord(JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8')));
     append(phase, 'PARTIAL_REVIEWED', correlated('reviewed the partial delivery'));
-    process.exit(0);
+    exitOrHold(0);
     break;
   }
   case 'review-forged-ready':
     append(phase, 'READY_FOR_PR', correlated('claims READY_FOR_PR for a partial delivery'));
+    process.exit(0);
+    break;
+  case 'marker-only':
+    // Records only its correlated marker (FAKE_HARNESS_MARK, else the phase's completion marker); no other work.
+    append(phase, process.env.FAKE_HARNESS_MARK ?? (phase === 'review' ? 'READY_FOR_PR' : 'DONE'), correlated('marker only'));
     process.exit(0);
     break;
   case 'receipt-needs-context':

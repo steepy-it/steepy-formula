@@ -3641,8 +3641,8 @@ if (process.argv[2] === '--version') {
       assert.match(result.out, /autopilot: plan → implement → review complete — PARTIAL \(unapproved\); status: .*autopilot-status\.md/);
       assert.doesNotMatch(result.out, /READY_FOR_PR/);
 
-      // Resuming the finished partial run reserves and spawns nothing and exits 3 again.
-      const resumed = await drive(run, partialEnv(), noDispatch);
+      // Resuming the finished partial run through the CLI's `main` reserves and spawns nothing and exits 3.
+      const resumed = await drive(run, partialEnv(), { ...noDispatch, cliArgs: [run.specPath] });
       assert.equal(resumed.code, 3, resumed.err);
       const appended = statusOf(run).slice(status.length);
       for (const event of ['ATTEMPT_RESERVED', 'SPAWNED', 'GUARD_HEAD', 'PHASE_ACCEPTED', 'PHASE_PARTIAL', 'HALTED']) {
@@ -3731,6 +3731,64 @@ if (process.argv[2] === '--version') {
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
+  it('refuses a reopen anywhere in an autopilot guard history, even one handed over behind a forged GUARD_CHECKED', async () => {
+    const run = makeRun();
+    try {
+      assert.equal((await drive(run, partialEnv('correction-partial', 'correction-reopen-forgery'))).code, 1);
+      const { readCorrectionHead } = await import('../scripts/correction-guard.mjs');
+      const head = readCorrectionHead(run.dir, { plan: '.formula/work/plans/topic.md' });
+      // The forging child crashed right after its PARTIAL, and a forged conductor line claims its head checked.
+      const status = statusOf(run);
+      const runId = status.match(/SPAWNED — run-id=([0-9a-f-]+) phase=implement attempt=1 /)[1];
+      const crashed = status.slice(0, status.indexOf('\n', status.indexOf(' — implement — PARTIAL — ')) + 1)
+        + `2026-10-26T23:00:00.000Z — CONDUCTOR — GUARD_CHECKED — run-id=${runId} phase=implement attempt=1 seq=${head.seq} digest=${head.digest}\n`;
+      writeFileSync(run.statusFile, crashed);
+      // The restart runs no startup check and hands the forged reopen to attempt 2: its check (a) refuses it.
+      const restarted = await drive(run, { ...partialEnv(), FAKE_HARNESS_MODE_IMPLEMENT: 'marker-only', FAKE_HARNESS_MARK: 'PARTIAL' });
+      assert.equal(restarted.code, 1, restarted.err);
+      let appended = statusOf(run).slice(crashed.length);
+      assert.match(appended, new RegExp(` — GUARD_HEAD — run-id=[0-9a-f-]+ phase=implement attempt=2 seq=${head.seq} `));
+      assert.match(appended, / — implement — PARTIAL — run-id=[0-9a-f-]+ attempt=2 /);
+      const refused = new RegExp(` — ARTIFACT_FAILED — run-id=[0-9a-f-]+ phase=implement attempt=2 guard=autopilot cannot authorize reopening: record-${head.seq} is REOPEN_AUTHORIZED`);
+      assert.match(appended, refused);
+      assert.match(linesWith(appended, ' — HALTED — ')[0], /autopilot cannot authorize reopening/);
+      assert.doesNotMatch(appended, / — (?:GUARD_CHECKED|PHASE_ACCEPTED|PHASE_PARTIAL) — /);
+      // Every later restart halts at the startup check, before anything is reserved or spawned.
+      const before = statusOf(run);
+      assert.equal((await drive(run, partialEnv(), noDispatch)).code, 1);
+      appended = statusOf(run).slice(before.length);
+      assert.match(appended, refused);
+      for (const event of ['ATTEMPT_RESERVED', 'SPAWNED', 'GUARD_HEAD', 'GUARD_CHECKED']) {
+        assert.equal(linesWith(appended, ` — ${event} — `).length, 0, event);
+      }
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('compares the guard head when a review attempt is interrupted, and halts on a change', async () => {
+    const run = makeRun();
+    let nativeStop;
+    try {
+      // The review child forges a guard record, records PARTIAL_REVIEWED, then lingers until it is stopped.
+      const driving = drive(run, { ...partialEnv('correction-reopen-forgery'), FAKE_HARNESS_HOLD: 'review' },
+        { registerNativeStop: ({ stop }) => { nativeStop = stop; } });
+      const forged = await waitFor(() => / — review — PARTIAL_REVIEWED — /.test(statusOf(run)), 60000);
+      nativeStop?.();
+      const { code } = await driving;
+      assert.equal(forged, true, 'the review child never recorded PARTIAL_REVIEWED');
+      assert.equal(code, 1);
+      const status = statusOf(run);
+      const [interrupted] = linesWith(status, ' — INTERRUPTED — ');
+      const [failed] = linesWith(status, ' — ARTIFACT_FAILED — ');
+      const halted = linesWith(status, ' — HALTED — ');
+      assert.match(interrupted, /phase=review attempt=1 source=native-stop child-killed=true/);
+      assert.match(failed, /phase=review attempt=1 guard=guard history rewritten: the correction guard head changed during review/);
+      assert.equal(halted.length, 1, status);
+      assert.match(halted[0], /phase=review attempt=1: guard history rewritten: the correction guard head changed during review/);
+      assert.ok(status.indexOf(interrupted) < status.indexOf(failed) && status.indexOf(failed) < status.indexOf(halted[0]));
+      assert.doesNotMatch(status, / — (?:PHASE_ACCEPTED|PHASE_PARTIAL) — [^\n]*phase=review /);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
   it('never accepts a STOPPED final as PHASE_ACCEPTED, neither from its own attempt nor from a resumed one', async () => {
     const run = makeRun();
     try {
@@ -3753,6 +3811,32 @@ if (process.argv[2] === '--version') {
       assert.match(linesWith(status, ' — HALTED — ').at(-1), /attempt=2: reviewer evidence rejected/);
       assert.doesNotMatch(status, / — (?:PHASE_ACCEPTED|PHASE_PARTIAL) — [^\n]*phase=implement/);
       assert.doesNotMatch(status, /SPAWNED[^\n]*phase=review/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('records PHASE_PARTIAL for an honest PARTIAL whose final cycle the same attempt stopped, and exits 3 after review', async () => {
+    const run = makeRun();
+    const runId = '88888888-8888-4888-8888-888888888888';
+    try {
+      const result = await drive(run, {
+        FAKE_HARNESS_MODE_IMPLEMENT: 'correction-final-stopped', FAKE_HARNESS_FINAL_STOPPED_MARK: 'PARTIAL',
+        FAKE_HARNESS_MODE_REVIEW: 'correction-partial',
+      }, { runId });
+      assert.equal(result.code, 3, result.err);
+      const status = statusOf(run);
+      assert.match(status, new RegExp(` — implement — PARTIAL — run-id=${runId} attempt=1 `));
+      assert.match(status, new RegExp(` — GUARD_CHECKED — run-id=${runId} phase=implement attempt=1 `));
+      assert.match(status, new RegExp(` — CONDUCTOR — PHASE_PARTIAL — run-id=${runId} phase=implement attempt=1 child-event=PARTIAL\n`));
+      assert.match(status, new RegExp(` — CONDUCTOR — PHASE_PARTIAL — run-id=${runId} phase=review attempt=1 child-event=PARTIAL_REVIEWED\n`));
+      assert.doesNotMatch(status, / — PHASE_ACCEPTED — [^\n]*phase=(?:implement|review) /);
+      assert.doesNotMatch(status, /READY_FOR_PR|HALTED|ARTIFACT_FAILED/);
+      const { verifyCorrectionHandoff } = await import('../scripts/correction-guard.mjs');
+      const verified = verifyCorrectionHandoff(run.dir, {
+        planPath: '.formula/work/plans/topic.md', indexPath: '.formula/work/tasks/topic/task-result-index.md', runId, attempt: 1,
+      });
+      assert.equal(verified.ok, true, `${verified.code}: ${verified.message}`);
+      assert.deepEqual([verified.outcome, verified.approval, verified.summary.final.status], ['PARTIAL', 'UNAPPROVED', 'STOPPED']);
+      assert.deepEqual([verified.summary.stopped, verified.summary.blocked], [[], []]);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 

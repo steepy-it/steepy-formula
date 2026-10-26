@@ -780,8 +780,10 @@ function correctionRecordPath(specName, seq) {
 
 // The correction run's history against `recorded`, the head read before an implement child ran: the full
 // replay must succeed, record n must keep its digest (the hash chain then proves the whole prefix
-// unchanged), and no record after n may authorize a reopening, which only a human grants. Returns the
-// current head, or the reason the history fails.
+// unchanged), and no record after n may authorize a reopening, which only a human grants. On an
+// autopilot-drive run no record at all may: the guard's reopen refuses every autopilot actor and a run has
+// one drive, so a reopen anywhere in its history is forged, even one an earlier attempt handed over.
+// Returns the current head, or the reason the history fails.
 function guardHistoryVerdict(cwd, specName, recorded) {
   const plan = `.formula/work/plans/${specName}.md`;
   const head = readCorrectionHead(cwd, { plan });
@@ -796,9 +798,11 @@ function guardHistoryVerdict(cwd, specName, recorded) {
         return { ok: false, reason: `guard history rewritten: record-${recorded.seq} no longer has the digest recorded before the child ran` };
       }
     }
-    for (let seq = recorded.seq + 1; seq <= head.seq; seq += 1) {
-      const path = correctionRecordPath(specName, seq);
-      const envelope = JSON.parse(readWorkPath(cwd, path, { expect: 'work-output', family: 'correction-record', encoding: 'utf8' }));
+    const envelopeAt = (seq) => JSON.parse(readWorkPath(cwd, correctionRecordPath(specName, seq),
+      { expect: 'work-output', family: 'correction-record', encoding: 'utf8' }));
+    const autopilotDrive = head.seq > 0 && envelopeAt(1)?.record?.drive === 'autopilot';
+    for (let seq = autopilotDrive ? 1 : recorded.seq + 1; seq <= head.seq; seq += 1) {
+      const envelope = envelopeAt(seq);
       if (envelope?.record?.kind === CORRECTION_RECORD_KINDS.REOPEN_AUTHORIZED) {
         return { ok: false, reason: `autopilot cannot authorize reopening: record-${seq} is ${CORRECTION_RECORD_KINDS.REOPEN_AUTHORIZED}` };
       }
@@ -2569,6 +2573,19 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
         appendStatus(cwd, statusPath, 'CONDUCTOR', 'GUARD_HEAD', `${identity} ${guardHeadNote(guardHead)}`);
       }
     }
+    // After a review attempt, however it ended: a changed (or unreadable) guard head is ARTIFACT_FAILED and
+    // halts the run. Returns whether it halted.
+    const reviewHeadChanged = () => {
+      if (phase !== 'review') return false;
+      const head = readCorrectionHead(cwd, { plan: planPath });
+      if (head.ok && head.seq === guardHead.seq && head.digest === guardHead.digest) return false;
+      const reason = head.ok
+        ? `guard history rewritten: the correction guard head changed during review (${guardHeadNote(guardHead)} became ${guardHeadNote(head)})`
+        : `guard history rewritten: ${head.code}: ${head.message}`;
+      appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} guard=${reason}`);
+      halt(`${identity}: ${reason}`);
+      return true;
+    };
 
     const statusOffset = readStatus(cwd, statusPath).length;
 
@@ -2622,6 +2639,8 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
           `${identity} source=${reason} child-killed=true`,
         );
         console.error(`autopilot: ${line}`);
+        // An interrupted review attempt is held to the same guard head before the interruption halts.
+        if (reviewHeadChanged()) return;
         halt(`${identity} interrupted by ${reason}; child killed`);
       },
       onDegradation: reportDegradation,
@@ -2659,16 +2678,7 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
       const errorCode = result.error.code ? `${result.error.code}: ` : '';
       return halt(`${identity}: ${errorCode}${result.error.message}`);
     }
-    if (phase === 'review') {
-      const head = readCorrectionHead(cwd, { plan: planPath });
-      if (!head.ok || head.seq !== guardHead.seq || head.digest !== guardHead.digest) {
-        const reason = head.ok
-          ? `guard history rewritten: the correction guard head changed during review (${guardHeadNote(guardHead)} became ${guardHeadNote(head)})`
-          : `guard history rewritten: ${head.code}: ${head.message}`;
-        appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} guard=${reason}`);
-        return halt(`${identity}: ${reason}`);
-      }
-    }
+    if (reviewHeadChanged()) return 1;
 
     const phaseStatus = readStatus(cwd, statusPath).slice(statusOffset);
     const marker = haltMarker(phaseStatus, phase);
