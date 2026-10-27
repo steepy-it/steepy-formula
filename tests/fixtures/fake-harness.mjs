@@ -33,6 +33,9 @@
 //                                   projection (the correction summary block stays)
 //   FAKE_HARNESS_HOLD             — <phase> — the review of correction-partial / correction-reopen-forgery
 //                                   lingers after acting until the conductor stops it (self-exit after 30 s)
+//   FAKE_HARNESS_PARTIAL_SURFACE_FAIL — <n> — correction-partial's Task 2 fails its surface test with `# fail <n>`
+//                                   at both iterations, its writers changing no source, instead of repeating a
+//                                   review defect: it stagnates on its opening tree (baseline-equal isolation)
 // Modes:
 //   done     — append the phase's completion marker (review → READY_FOR_PR), exit 0
 //   blocked  — append BLOCKED with a reason, exit 1 (a child that gave up)
@@ -126,14 +129,18 @@ function captureSpawnEvidence() {
 }
 
 // Stands in for collectReviewEvidence behind the guard's `collectEvidence` seam: it writes the exact
-// evidence file it is given and reports a passing surface test (none for a gate-only capture) and a
-// passing coherence gate. No test command and no graph gate ever run.
-async function collectEvidence({ repoRoot, evidencePath, testCommand, gateOnly = false }) {
-  writeFileSync(join(repoRoot, evidencePath),
-    `# Synthetic check evidence\n\n${gateOnly ? 'coherence gate only' : `surface test: ${testCommand}`}\n# fail 0\nviolations: 0\n`);
-  const command = (label, excerpt) => ({ label, passed: true, exitCode: 0, excerpt });
-  return { commands: [...(gateOnly ? [] : [command('surface-test', '# fail 0\n')]), command('coherence-gate', 'violations: 0\n')] };
+// evidence file it is given and reports the surface test with `failures` failed assertions (none for a
+// gate-only capture) and a passing coherence gate. No test command and no graph gate ever run.
+function checkCollector(failures) {
+  return async ({ repoRoot, evidencePath, testCommand, gateOnly = false }) => {
+    writeFileSync(join(repoRoot, evidencePath),
+      `# Synthetic check evidence\n\n${gateOnly ? 'coherence gate only' : `surface test: ${testCommand}`}\n# fail ${failures}\nviolations: 0\n`);
+    const command = (label, failed, excerpt) => ({ label, passed: failed === 0, exitCode: failed === 0 ? 0 : 1, excerpt });
+    return { commands: [...(gateOnly ? [] : [command('surface-test', failures, `# fail ${failures}\n`)]),
+      command('coherence-gate', 0, 'violations: 0\n')] };
+  };
 }
+const collectEvidence = checkCollector(0);
 
 // The real correction guard of this implement attempt (drive autopilot, actor = the manifest's run id and
 // attempt). Every call follows the run's next step, so a step out of order, a refusal, or a review the
@@ -184,10 +191,10 @@ function correctionGuard(manifest, specName) {
       return must(recordCorrectionWriter(root, { ...actor, scope: step.scope, iteration: step.iteration, execution }),
         `record-writer ${execution}`);
     },
-    async checks() {
+    async checks(collect = collectEvidence) {
       const step = expect('checks');
       return must(await recordCorrectionChecks(root, { ...actor, scope: step.scope, iteration: step.iteration },
-        { collectEvidence }), `verify-check ${step.scope} ${step.iteration}`);
+        { collectEvidence: collect }), `verify-check ${step.scope} ${step.iteration}`);
     },
     // Records the authorized reviewer with its strict-JSON defects artifact, whose verdict is its status.
     recordReview(role, reviewState, verdict, defects = [], ownerTask) {
@@ -240,12 +247,13 @@ function correctionGuard(manifest, specName) {
 }
 
 // One guarded writer dispatch: authorized for its exact execution state before `run` begins it, recorded
-// from the receipt `run` leaves, then checked. Every source edit of `run` falls inside that window.
-async function guardedWriter(guard, execution, run, owner) {
+// from the receipt `run` leaves, then checked (through `collect`, else the passing collector). Every source
+// edit of `run` falls inside that window.
+async function guardedWriter(guard, execution, run, owner, collect) {
   guard?.authorize('writer', execution, owner);
   const result = run();
   guard?.recordWriter(execution);
-  await guard?.checks();
+  await guard?.checks(collect);
   return result;
 }
 
@@ -878,15 +886,16 @@ function forgeReopenRecord(manifest) {
 }
 
 // A partial delivery under the guard: Task 1 is approved; Task 2 repeats its one blocking defect, so its
-// correction stagnates and the cycle stops, retaining its best candidate (execution 1); Task 3 depends on
-// Task 2 and is blocked; the final cycle approves the delivered work. The run ends PARTIAL, and the child
-// records PARTIAL (after forging a reopen record when asked).
+// correction stagnates and the cycle stops, retaining its best candidate (execution 1) — or, with
+// FAKE_HARNESS_PARTIAL_SURFACE_FAIL, repeats its surface-test failure and stops on its opening tree; Task 3
+// depends on Task 2 and is blocked; the final cycle approves the delivered work. The run ends PARTIAL, and
+// the child records PARTIAL (after forging a reopen record when asked).
 async function correctionPartialScenario({ forgeReopen = false } = {}) {
   const manifest = JSON.parse(readFileSync(manifestPathFromPrompt(), 'utf8'));
   const dir = '.formula/work/tasks/topic', plan = '.formula/work/plans/topic.md', indexPath = `${dir}/task-result-index.md`;
   const execution = (task, n) => `${dir}/task-${task}-execution-${n}`;
   const guard = correctionGuard(manifest, 'topic');
-  const write = (task, n, { role = 'implementer', previousState, parentState, work } = {}) => guardedWriter(guard, execution(task, n), () => {
+  const write = (task, n, { role = 'implementer', previousState, parentState, work, collect } = {}) => guardedWriter(guard, execution(task, n), () => {
     const report = `${dir}/task-${task}-report.md`;
     beginTask(process.cwd(), execution(task, n), { runId: manifest.runId, attempt: manifest.attempt, task, execution: n, role,
       report, planPath: plan, ...(previousState ? { previousState } : {}), ...(parentState ? { parentState } : {}) });
@@ -894,7 +903,7 @@ async function correctionPartialScenario({ forgeReopen = false } = {}) {
     writeFileSync(report, `Synthetic Task ${task} execution ${n} report.\n`);
     const result = recordTaskResult(process.cwd(), execution(task, n), `status: DONE\nartifact: ${report}\nsignals: none\n`);
     if (!result.accepted) throw new Error(`synthetic task result rejected: ${result.reason}`);
-  });
+  }, undefined, collect);
   mkdirSync(dir, { recursive: true });
   writeFileSync(indexPath, '# Results\n');
   guard.open();
@@ -902,17 +911,38 @@ async function correctionPartialScenario({ forgeReopen = false } = {}) {
   await write('1', 1, { work: () => writeFileSync('task-1.txt', 'task 1 delivered\n') });
   projectTaskResults(process.cwd(), { indexPath, states: [execution('1', 1)] });
   setReviewReference(process.cwd(), { indexPath, state: approveTaskGate(manifest, dir, guard, '1') });
-  const defect = reviewDefect('SC2', 'missing-case', 'the Task 2 change misses its case', 'add the missing case');
   guard.openCycle('task-2');
-  await write('2', 1, { parentState: execution('1', 1), work: () => writeFileSync('task-2.txt', 'task 2 attempt\n') });
-  const found = reviewTaskIssues(manifest, dir, guard, '2', 1, execution('2', 1), defect);
-  guard.retry({ kind: 'defect', target: 'SC2', evidence: found.ref,
-    observedFailure: 'the Task 2 review found its case missing', hypothesis: 'the writer skipped the case',
-    remedy: 'add the missing case', difference: 'the correction adds the case', confirmingCheck: 'review' });
-  // The correction changes no source: the tree stays the retained best candidate, execution 1.
-  await write('2', 2, { role: 'fix', previousState: execution('2', 1), parentState: execution('2', 1) });
-  reviewTaskIssues(manifest, dir, guard, '2', 2, execution('2', 2), defect);
-  guard.proveIsolation('task-2', 'retained-best');
+  const surfaceFailures = process.env.FAKE_HARNESS_PARTIAL_SURFACE_FAIL;
+  if (surfaceFailures === undefined) {
+    const defect = reviewDefect('SC2', 'missing-case', 'the Task 2 change misses its case', 'add the missing case');
+    await write('2', 1, { parentState: execution('1', 1), work: () => writeFileSync('task-2.txt', 'task 2 attempt\n') });
+    const found = reviewTaskIssues(manifest, dir, guard, '2', 1, execution('2', 1), defect);
+    guard.retry({ kind: 'defect', target: 'SC2', evidence: found.ref,
+      observedFailure: 'the Task 2 review found its case missing', hypothesis: 'the writer skipped the case',
+      remedy: 'add the missing case', difference: 'the correction adds the case', confirmingCheck: 'review' });
+    // The correction changes no source: the tree stays the retained best candidate, execution 1.
+    await write('2', 2, { role: 'fix', previousState: execution('2', 1), parentState: execution('2', 1) });
+    reviewTaskIssues(manifest, dir, guard, '2', 2, execution('2', 2), defect);
+    guard.proveIsolation('task-2', 'retained-best');
+  } else {
+    // Task 2's writers change no source and its surface test fails twice with the same count: the retry,
+    // citing the failing check evidence, admits a correction that repeats the failure, so the cycle stagnates
+    // with no reviewer dispatched and stays on its opening tree.
+    const failures = Number(surfaceFailures);
+    if (!Number.isSafeInteger(failures) || failures < 1) {
+      throw new Error(`FAKE_HARNESS_PARTIAL_SURFACE_FAIL must be a positive integer, not '${surfaceFailures}'`);
+    }
+    const collect = checkCollector(failures);
+    await write('2', 1, { parentState: execution('1', 1), collect });
+    const evidence = `${dir}/correction/task-2-cycle-1-iteration-1-check-1-evidence.md`;
+    guard.retry({ kind: 'defect', target: 'SC2',
+      evidence: { path: evidence, digest: createHash('sha256').update(readFileSync(evidence)).digest('hex') },
+      observedFailure: `the Task 2 surface test failed ${failures} assertions`, hypothesis: 'the writer left the Task 2 case unhandled',
+      remedy: 'handle the Task 2 case the surface test exercises', difference: 'the correction handles the failing case',
+      confirmingCheck: 'surface-test' });
+    await write('2', 2, { role: 'fix', previousState: execution('2', 1), parentState: execution('2', 1), collect });
+    guard.proveIsolation('task-2', 'baseline-equal');
+  }
   // Task 3 is blocked behind the stopped Task 2: the final cycle opens on the PENDING summary.
   guard.openCycle('final');
   guard.project();
