@@ -525,8 +525,9 @@ An explicit user interruption is recorded with `--action stop --scope <scope> --
 Reopening a stopped scope has one route: in manual drive, when the guard reports `terminal` with a
 `PARTIAL` outcome, implement asks the human, before it publishes the index READY and the plan
 CONSUMED, whether to reopen a stopped scope and continue in the same session or to publish the
-partial. That is the Step 5 reopen-or-publish question: a reopen asked for mid-run waits for it, and
-an implement resume before publication reaches the same question. To reopen, the human's explicit words naming the scope, plus a new remedy, are written verbatim to `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-reopen.json`,
+partial. That is the Step 5 reopen-or-publish question: a reopen asked for mid-run waits for it,
+an implement resume before publication reaches the same question, and it comes before the handoff
+verifications, so a partial that delivered no task still reaches it, offering reopen only. To reopen, the human's explicit words naming the scope, plus a new remedy, are written verbatim to `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-reopen.json`,
 where `<c>` is the stopped cycle, as strict JSON
 `{ "version": 1, "scope": "<task-N|final>", "statement": "<the human's exact words>", "remedy": "<the new remedy>" }`;
 then `--action reopen --authorization <that path>` must succeed before the scope runs again, in a
@@ -721,7 +722,48 @@ Do not hand review the full plan or source spec. Before emitting this envelope, 
 canonical header grammar, its three metadata paths, the criteria artifact's canonical `Source` and
 `Heading` attribution against that metadata, and that `branch-diff` is the unmodified aggregate diff.
 
-**Verify the handoff before claiming completion.** The review phase parses
+**Project at `terminal`, then decide.** After the guard reports `terminal`, first run its terminal
+projection (autopilot adds `--run-id <supplied-run-id> --attempt <supplied-attempt>`):
+
+```sh
+node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan .formula/work/plans/<plan-basename>.md --action project --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md
+```
+
+The terminal `next` reports the summary with its `outcome`, and `project` writes that summary into
+the index. In manual drive with a `PARTIAL` outcome, state the partial outcome and ask the
+reopen-or-publish question below right after `project`, before the two handoff verifications that
+follow: those verifications gate only publication, never the question. A `COMPLETE` outcome, and
+autopilot, go straight on to the verifications.
+
+State a PARTIAL outcome explicitly as unapproved partial delivery, listing from the projected summary
+the completed, stopped and blocked task IDs, the failed criteria, the best candidates and the next remedies
+of the stopped tasks, and a stopped final cycle's unresolved defects, best candidate and next remedy
+(the summary's `final`). An explicit stop's note, such as a plan split, is reported as that scope's next
+remedy. Never present it as success.
+
+**Reopen or publish (manual drive, `PARTIAL`).** Reopening a stopped scope has one route: in manual
+drive, when the guard reports `terminal` with a `PARTIAL` outcome, implement asks the human, before it
+publishes the index READY and the plan CONSUMED, whether to reopen a stopped scope and continue in the
+same session or to publish the partial. Ask it as one explicit question right after the statement
+above, before the handoff verifications and before recording anything for publication; never proceed
+on silence. To reopen, the human
+answers in their own words, naming the scope literally with a remedy new to that scope: write the
+authorization and run `--action reopen --authorization <that path>` under "Resume and reopening"
+(Step 2.7), then continue from `next` in this session — after a task reopen, the reopened cycle and
+any task it unblocks run, then the final review reruns once without a final-scope reopen; after a
+`final review` reopen, the reopened final cycle runs; either way this step runs again at the new
+`terminal`. To publish, continue below. When the summary lists no `completed` task, nothing was
+delivered: the index carries no task result, both handoff verifications refuse it (`task result index
+contains no reviewed task entries`), and publication is impossible. The question then offers reopen
+only and says so; if the human declines to reopen, stop without publishing — the plan stays `READY`
+and the index `DRAFT` — and tell the human that further work needs a new `brainstorm` and `plan` (an
+implement resume of this run reaches only the same reopen-only question). Once published (plan
+CONSUMED, index READY) and reviewed, a partial is final: further work on its stopped or blocked tasks
+needs a new `brainstorm` and `plan`. Autopilot never asks: it publishes the partial once its handoff
+verifies.
+
+**Verify the handoff before claiming completion.** For a manual-drive PARTIAL, run these
+verifications only once the human chose to publish. The review phase parses
 `task-result-index.md` against the plan before it can build anything. Manual-drive bullets must
 match the Step 3.5 grammar; autopilot uses the verified generated JSON receipt projection.
 Run the same parse here, where it is still fixable:
@@ -735,37 +777,17 @@ offending result: in manual drive correct that line and re-run; in autopilot
 inspect the exact receipt and regenerate the projection, never edit machine evidence to pass.
 Never proceed on a rejected handoff.
 
-After the guard reports `terminal`, also run the guard's terminal projection and handoff
-verification, in addition to the verifications above (autopilot adds
-`--run-id <supplied-run-id> --attempt <supplied-attempt>` to both):
+After the guard reports `terminal` and `project` has run, also run the guard's handoff verification,
+in addition to the verification above (autopilot adds
+`--run-id <supplied-run-id> --attempt <supplied-attempt>`):
 
 ```sh
-node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan .formula/work/plans/<plan-basename>.md --action project --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md
 node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan .formula/work/plans/<plan-basename>.md --action verify-handoff --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md
 ```
 
 `verify-handoff` is read-only: exit 1 means the run is not terminal or the handoff does not verify,
 and exit 3 means corrupt evidence or a dispatch the guard never authorized, which halts the run. It
 reports the outcome and its approval: `COMPLETE` is `APPROVED`; `PARTIAL` is always `UNAPPROVED`.
-State a PARTIAL outcome explicitly as unapproved partial delivery, listing from the projected summary
-the completed, stopped and blocked task IDs, the failed criteria, the best candidates and the next remedies
-of the stopped tasks, and a stopped final cycle's unresolved defects, best candidate and next remedy
-(the summary's `final`). An explicit stop's note, such as a plan split, is reported as that scope's next
-remedy. Never present it as success.
-
-**Reopen or publish (manual drive, `PARTIAL`).** Reopening a stopped scope has one route: in manual
-drive, when the guard reports `terminal` with a `PARTIAL` outcome, implement asks the human, before it
-publishes the index READY and the plan CONSUMED, whether to reopen a stopped scope and continue in the
-same session or to publish the partial. Ask it as one explicit question right after the statement
-above, before recording anything for publication; never proceed on silence. To reopen, the human
-answers in their own words, naming the scope literally with a remedy new to that scope: write the
-authorization and run `--action reopen --authorization <that path>` under "Resume and reopening"
-(Step 2.7), then continue from `next` in this session — after a task reopen, the reopened cycle and
-any task it unblocks run, then the final review reruns once without a final-scope reopen; after a
-`final review` reopen, the reopened final cycle runs; either way this step runs again at the new
-`terminal`. To publish, continue below. Once published (plan CONSUMED, index READY) and reviewed, a
-partial is final: further work on its stopped or blocked tasks needs a new `brainstorm` and `plan`.
-Autopilot never asks: it publishes the partial.
 
 Only after every task gate succeeds, the whole-branch review approves, and this handoff verification
 succeeds — or, for a PARTIAL outcome, after the guard reaches `terminal` and both handoff verifications

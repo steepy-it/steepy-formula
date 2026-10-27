@@ -3464,6 +3464,24 @@ test('implement: Step 5 verifies the terminal guard handoff and states a PARTIAL
     'a reopen answer runs the guard reopen and continues from next in the same session');
   assert.match(prose, /after a task reopen, the reopened cycle and any task it unblocks run, then the final review reruns once without a final-scope reopen; after a `final review` reopen, the reopened final cycle runs; either way this step runs again at the new `terminal`/,
     'after a task reopen the final review reruns once on its own, and Step 5 runs again at the new terminal');
+  // Final-review fix C (R1-1, option a): the question follows `terminal` and `project` and precedes both
+  // handoff verifications, which gate only publication, so a zero-delivery PARTIAL still reaches it.
+  const projectAt = step5.indexOf('--action project --task-result-index');
+  const questionAt = step5.indexOf('**Reopen or publish (manual drive, `PARTIAL`).**');
+  const contextVerifyAt = step5.indexOf('autopilot-context.mjs --verify-handoff');
+  const guardVerifyAt = step5.indexOf('--action verify-handoff --task-result-index');
+  assert.ok(projectAt !== -1 && questionAt > projectAt,
+    'the manual PARTIAL reopen-or-publish question comes after the guard projects the terminal summary');
+  assert.ok(contextVerifyAt > questionAt && guardVerifyAt > questionAt,
+    'the manual PARTIAL reopen-or-publish question comes before both handoff verifications');
+  assert.match(prose, /those verifications gate only publication, never the question/,
+    'the handoff verifications gate only publication, never the reopen-or-publish question');
+  assert.match(prose, /For a manual-drive PARTIAL, run these verifications only once the human chose to publish/,
+    'a manual PARTIAL runs the handoff verifications only after choosing to publish');
+  assert.match(prose, /When the summary lists no `completed` task, nothing was delivered: the index carries no task result, both handoff verifications refuse it \(`task result index contains no reviewed task entries`\), and publication is impossible\. The question then offers reopen only and says so/,
+    'a manual zero-delivery PARTIAL reaches the question, which offers reopen only and states publication is impossible');
+  assert.match(prose, /if the human declines to reopen, stop without publishing — the plan stays `READY` and the index `DRAFT` — and tell the human that further work needs a new `brainstorm` and `plan`/,
+    'a declined zero-delivery reopen stops unpublished and points to a new chain');
   assert.match(prose, /and, in manual drive, the human chose to publish/, 'a manual PARTIAL records publication proof only after the human chose to publish');
   assert.match(prose, /Publish READY then CONSUMED in that order for both outcomes \(a manual-drive `PARTIAL` only once the human chose to publish\)/,
     'a manual PARTIAL publishes only once the human chose to publish');
@@ -3765,6 +3783,9 @@ test('reopen route: implement, review and docs/workflow.md name the same single 
   const resume = flatText(carriers[0][1]);
   assert.match(resume, /Autopilot never reopens: it hands the request back to the human, and its partial is published, so further work needs a new `brainstorm` and `plan`/,
     'autopilot never reopens, and its published partial needs a new chain');
+  // Final-review fix C (R1-1): the question precedes the handoff verifications, so it is reachable with no delivered task.
+  assert.match(resume, /it comes before the handoff verifications, so a partial that delivered no task still reaches it, offering reopen only/,
+    'Resume and reopening notes that a zero-delivery partial still reaches the question');
 });
 
 // Final-review fix B (routed): every child that may resolve context during a Gear-3 run learns the --out duty
