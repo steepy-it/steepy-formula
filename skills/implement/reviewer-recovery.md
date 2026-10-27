@@ -37,7 +37,8 @@ its baseline, with the correction guard (`<engine-root>/scripts/correction-guard
 `--action authorize --scope <task-N-or-final> --iteration <i> --role <task-reviewer-or-final-reviewer> --target <prefix> --run-id <supplied-run-id> --attempt <supplied-attempt>`,
 where `<prefix>` is the full state path `.formula/work/tasks/<plan-basename>/<scope>-review-guard-attempt-<attempt>-iteration-<iteration>`
 and `<i>` is the guard iteration. The owner task's review inside a final-scope iteration adds
-`--owner-task <n>`. Only the final cycle's first iteration authorizes its reviewer before the guard's
+`--owner-task <n>`. The prefix's `<scope>` is the reviewer-response scope, which is not always the
+guard's: the owner task's review inside a final-scope iteration uses the task prefix `task-<n>-review-guard-attempt-<attempt>-iteration-<iteration>` with reviewer-response `--task <n>`, while its guard calls use `--scope final --owner-task <n>`. Only the final cycle's first iteration authorizes its reviewer before the guard's
 `verify-check`; every other reviewer is authorized after it. Follow the guard's `next`. The source
 must not change between this authorization and the recorded review.
 
@@ -94,7 +95,7 @@ and adds `--owner-task <n>`. A receipt without a valid response, a BLOCKED or NE
 receipt, or an invalid defects artifact is recorded as a failed review (`INVALID`, `BLOCKED` or
 `NEEDS_CONTEXT`) that concludes the iteration. A reviewer redispatch after a failure consumes a new iteration through an admitted `tool-failure` retry;
 never redispatch inside the same iteration. A dispatch that left no receipt to record is recorded
-with the guard's `--action record-interruption --scope <task-N-or-final> --iteration <i> --reason <text>`
+with the guard's `--action record-interruption --scope <task-N-or-final> --iteration <i> --reason <text> --run-id <supplied-run-id> --attempt <supplied-attempt>`
 and stays spent. A review that changed the source, and any guard exit 3, halts the whole run: only
 then append correlated BLOCKED and exit.
 

@@ -156,8 +156,8 @@ gate permits a ledger task-complete transition. Verify checks exact task coverag
 all current task reports, and the latest source observation. Keep required task/final review
 references bound through `reviewer-response.mjs --action bind-reference`.
 
-Before implement DONE, run receipt verify, canonical handoff verification, and reviewer
-verify-handoff; require every applicable gate, not just the projection. The conductor independently
+Before implement DONE or PARTIAL, run receipt verify, canonical handoff verification, reviewer
+verify-handoff and the guard's `verify-handoff`; require every applicable gate, not just the projection. The conductor independently
 replays v2 task receipts and required task/final approvals before phase acceptance and resumed
 review. Verification exposes bounded `executions` facts for every ancestor, including failed attempts
 followed by retries. The gate checks each unique execution's runId, attempt, and protocol 2 against

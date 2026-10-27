@@ -115,9 +115,11 @@ of the cycle (`SKILL.md` Step 2.7), each spending an iteration. When no evidence
 cycle stops: by the guard's own decision, or with
 `--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <reason> --run-id <supplied-run-id> --attempt <supplied-attempt>`.
 A task-local stop continues with the next runnable task after `prove-isolation`; it is never a run stop.
-Only a whole-run halt or an unresolvable protocol failure appends
+Only a whole-run halt (exit 3 from any guard action) appends
 `<ISO timestamp> — implement — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>`
-to `.formula/work/tasks/<spec-basename>/autopilot-status.md` and exits non-zero. The conductor halts and a
+to `.formula/work/tasks/<spec-basename>/autopilot-status.md` and exits non-zero inside the guarded
+loop; the Step 0–2.5 preflight refusals and a missing or invalid manifest (task-local manifest
+protocol below) keep their own correlated `BLOCKED` exit before the dispatch they would feed. The conductor halts and a
 human resumes later; the chain artifacts, ledger and guard history are the state, nothing to reconstruct.
 
 ## Step 4 — whole-branch review (final-review manifest)

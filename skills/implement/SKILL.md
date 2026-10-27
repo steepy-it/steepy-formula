@@ -297,7 +297,7 @@ phase manifest):
 
 - **`graph` mode:** resolve the hub context from the canonical graph — run
   `steepy-formula context resolve --path <p>...` over the accepted plan's or direct spec's exact
-  paths (exit 0 emits `context.json` + `context.md`). The resolved context supplies each task's
+  paths (exit 0 emits `context.json` + `context.md`; in Gear 3 add `--out <dir>` outside the source tree, per Step 2.7). The resolved context supplies each task's
   owning **surface**,
   its Rules — the standards the implementers follow — its Terms, and the surface test
   command from its Check item's `ext_v1_command` extension property (fall back to the
@@ -430,6 +430,7 @@ node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan <plan-path>
 ```
 
 A rejected plan stops before any dispatch with the parser message. There is no fallback: the user re-runs the `plan` skill (invoke it the way your harness invokes skills).
+On resume, run `--action next` first: `next: null` with head `seq: 0` means the run was never opened — run `open`; any other step resumes from it.
 
 **The loop.** `next` decides the step: run `--action next`, perform exactly the step it names, then
 ask again. `open-cycle` opens each scope: `--action open-cycle --scope <task-N|final>`, a task once
@@ -443,8 +444,9 @@ iteration's slot before its first dispatch. `authorize` binds each dispatch to i
 prefix `.formula/work/tasks/<plan-basename>/task-N-execution-E` (autopilot) or its report
 `.formula/work/tasks/<plan-basename>/task-N-report.md` (manual); a reviewer's is its review guard
 state prefix `.formula/work/tasks/<plan-basename>/<scope>-review-guard-attempt-<attempt>-iteration-<iteration>`
-(autopilot) or its review artifact `task-N-review.md` or `final-review.md` in that directory
-(manual); the diagnostic's is `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-iteration-<i>-diagnosis.json`.
+(autopilot; the owner task's review inside a final-scope iteration uses its task's prefix
+`task-<n>-review-guard-…` under guard `--scope final`) or its review artifact `task-N-review.md` or
+`final-review.md` in that directory (manual); the diagnostic's is `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-iteration-<i>-diagnosis.json`.
 
 For each iteration: record the writer (`--action record-writer --scope <scope> --iteration <i>`,
 adding `--execution <state>` on autopilot; on a manual drive the writer's exact four-field response
@@ -465,17 +467,26 @@ one tree.
 **On failure.** An iteration that concludes without approval leaves `next` at `retry-or-diagnosis`.
 Either write the retry request at `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-retry-<i>.json`,
 where `<i>` is the next iteration — strict JSON with exactly the twelve keys `version` (`1`), `scope`,
-`cycle`, `iteration`, `kind` (`defect` or `tool-failure`), `target` (a bound criterion or check ID),
-`observedFailure`, `evidence` (`{ "path", "digest" }` of the concluded iteration's evidence or of the
-valid diagnosis artifact), `hypothesis`, `remedy` (never one already admitted), `difference` and
-`confirmingCheck` (a check ID, `review` or `rubric`) — then run `--action admit-retry --request <that path>`
-and reserve the iteration as `--kind correction`; or reserve the single diagnosis with
-`--kind diagnosis --reason missing-retry-evidence|comparison-unavailable` (`next` itself demands
-`comparison-unavailable` when two outcomes cannot be compared), authorize the `diagnostic`, dispatch
-`diagnosis-prompt.md` through its manifest (`model: standard`, `most-capable` for a design task; with no task/subagent tool, a dedicated inline read-only pass with the degradation recorded in the ledger),
-and record it with `--action record-diagnosis --scope <scope> --iteration <i>` (the diagnostic's
-response on stdin, on both drives). When no evidence supports a retry and the diagnosis is spent,
-stop the cycle with `--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <text>`.
+`cycle`, `iteration`, `kind`, `target`, `observedFailure`, `evidence`, `hypothesis`, `remedy` (never
+one already admitted), `difference` and `confirmingCheck` — then run
+`--action admit-retry --request <that path>` and reserve the iteration as `--kind correction`.
+`target` is a bound criterion ID or a check ID of the cycle — `surface-test` and `coherence-gate` in a task cycle, `surface-test-<k>` and `coherence-gate` in the final cycle —
+and `confirmingCheck` is one of those check IDs, `review` or `rubric`. `evidence` is a
+`{ "path", "digest" }` reference (the lowercase SHA-256 of the cited bytes) from the latest concluded
+iteration: after a writer, checks, review or interruption conclusion, either the printed `ref` of the action that recorded it
+or one of that iteration's evidence files (the writer's task report or execution result and report,
+the failed checks' evidence, the review, issues and defects artifacts, plus on autopilot the review
+guard's baseline and original); an interruption offers only its `ref`; after a diagnosis, the diagnosis artifact.
+`kind` is `defect` or `tool-failure`, and a `tool-failure` retry cites only interruption, writer-failure or review-failure evidence:
+never check evidence, an APPROVED or ISSUES_FOUND review, or the diagnosis artifact. Or reserve the
+single diagnosis with `--kind diagnosis --reason missing-retry-evidence|comparison-unavailable`
+(`next` itself demands `comparison-unavailable` when two outcomes cannot be compared), authorize the
+`diagnostic`, dispatch `diagnosis-prompt.md` (`model: standard`, `most-capable` for a design task) — in autopilot through its manifest; in manual drive pass the prompt's manual fallback inputs directly (the brief or criteria, the exact evidence paths of the concluded iteration, the diff, the standards, and `[DIAGNOSIS_FILE]` set to the authorized diagnostic target) and record the no-manifest degradation;
+with no task/subagent tool, run it as a dedicated inline read-only pass with the degradation recorded
+in the ledger — and record it with `--action record-diagnosis --scope <scope> --iteration <i>` (the
+diagnostic's response on stdin, on both drives). When no evidence supports a retry and the diagnosis is spent, or the remedy is one the bound plan cannot admit (such as a plan split), stop the cycle
+with `--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <text>`; the stop note and
+the ledger carry such a remedy, because the projected summary does not.
 Stagnation, exhaustion, an unavailable comparison and an inconclusive diagnosis are the guard's decision: it stops the cycle itself, and the controller never overrides that stop.
 
 **Task-local stop and integrity halt.** After a task-local stop, run `--action prove-isolation --scope task-N`:
@@ -514,14 +525,21 @@ Reopening a stopped scope happens only in manual drive: the human's explicit wor
 where `<c>` is the stopped cycle, as strict JSON
 `{ "version": 1, "scope": "<task-N|final>", "statement": "<the human's exact words>", "remedy": "<the new remedy>" }`;
 then `--action reopen --authorization <that path>` must succeed before the scope runs again, in a
-linked cycle with a fresh allowance. Autopilot never reopens: it hands the request back to the human.
+linked cycle with a fresh allowance. The guard accepts the authorization only under these rules:
+
+- The human's words must name the scope literally, as `Task <N>` for `task-<N>` or `final review` for `final` (case-sensitive; `Task 1` is not followed by a digit, and `task-1` does not count).
+- The remedy must be new to the scope: never a remedy already admitted in its cycles, never the diagnosis `remedy` or `recommendation`, never an earlier reopen remedy, and therefore never the summary's `nextRemedy`.
+- Only a stopped scope with no open cycle is reopened, and only once until its reopened cycle opens. A dependency-blocked task never ran and is never reopened: reopen the stopped task that blocks it (`blocked[].causes` in the summary). Once that cause is approved, the blocked task becomes runnable on its own.
+
+When the human's words do not satisfy these rules, ask the human again; never rewrite their words.
+Autopilot never reopens: it hands the request back to the human.
 
 ### Step 3 — Per-task loop (sequential; one implementer in flight)
 
 For plan-backed work, execute each remaining task in plan order. For direct Gear-2 work, execute the
 single derived Task 1 from the accepted spec. Use `<entry-basename>` in task paths below; it is the
 plan basename for plan-backed work and the spec basename for direct Gear 2. In Gear 3, each task runs
-as its guard cycle (Step 2.7): open it when `next` names its scope. Each dispatch is preceded by `reserve` and `authorize` — the implementer, every fix or retry, every reviewer and the diagnostic.
+as its guard cycle (Step 2.7): open it when `next` names its scope. Each dispatch is preceded by `reserve` and `authorize` — one `reserve` per iteration before its first dispatch, and an `authorize` before each dispatch (the implementer, every fix or retry, every reviewer and the diagnostic).
 
 1. **Brief.** Materialize the task's complete contract at
    `.formula/work/tasks/<entry-basename>/task-N-brief.md`.
@@ -558,7 +576,7 @@ as its guard cycle (Step 2.7): open it when `next` names its scope. Each dispatc
    transport degradation, a test reservation, or an unattributed DONE_WITH_CONCERNS. Missing or
    inconsistent attribution is a result-contract concern, not permission to infer a discovery.
 
-Handle implementer status: **DONE_WITH_CONCERNS** — read the concerns first; **NEEDS_CONTEXT** — provide it and re-dispatch; **BLOCKED** — give more context, re-dispatch on a more capable model (add `escalated: <from>→<to>` to the task's ledger line), or stop the cycle and record a plan split as the next remedy (the approved plan is bound; a split needs a new plan). Never force the same model to retry unchanged. In Gear 3 every re-dispatch is an admitted retry that spends an iteration of the cycle (Step 2.7); a split is recorded with `--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <the plan split it needs>` and in the ledger. In manual drive, a NEEDS_CONTEXT answered by the human is a retry whose remedy is the supplied context, and it consumes an iteration.
+Handle implementer status: **DONE_WITH_CONCERNS** — read the concerns first; **NEEDS_CONTEXT** — provide it and re-dispatch; **BLOCKED** — give more context, re-dispatch on a more capable model (add `escalated: <from>→<to>` to the task's ledger line), or stop the cycle and record a plan split as the next remedy (the approved plan is bound; a split needs a new plan) (Gear 3; in Gear 2, which runs no guard, it is the decomposition stop). Never force the same model to retry unchanged. In Gear 3 every re-dispatch is an admitted retry that spends an iteration of the cycle (Step 2.7); a split is recorded with `--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <the plan split it needs>` and in the ledger. In manual drive, a NEEDS_CONTEXT answered by the human is a retry whose remedy is the supplied context, and it consumes an iteration.
 
 **Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the no-human escalation and BLOCKED handling.
 
@@ -589,8 +607,10 @@ diff, report, or test transcript may be in the response. Implementer/fix statuse
 
 For manual drive, before trusting a child result, validate the four-field shape, status, sanitized repo-relative artifact
 path, and signals; also validate field order and comma-list-or-`none` changed paths.
-A malformed envelope is never trusted: autopilot records correlated `BLOCKED` and exits; manual drive
-records the explicit same-session/degraded handling in the ledger. The controller opens the artifact only when
+A malformed envelope is never trusted, and autopilot appends correlated `BLOCKED` only for a whole-run halt.
+In Gear 3 (both drives) the guard records a malformed child envelope as an `INVALID` writer or review that concludes the iteration (Step 2.7):
+retry it through an admitted `tool-failure` retry within the allowance where the receipt protocol
+permits, else the cycle stops task-locally. Manual drive records the explicit same-session/degraded handling in the ledger. The controller opens the artifact only when
 its action status requires the next decision; otherwise it passes the artifact reference to
 the next consumer. The ledger and task-result index record only the compact outcome and artifact reference,
 never full detail.
@@ -632,7 +652,7 @@ iteration follows `next`. A final fix names its approved owner task and affected
 admitted by a retry request citing the final review. For an integration or design owner task, the guard
 requires that task's approved review in the same iteration before the final review
 (`--role task-reviewer --owner-task <n>`, defects `correction/final-cycle-<c>-iteration-<i>-task-reviewer-defects.json`).
-A stopped or blocked deliverable is never completed this way; it needs a reopen.
+A stopped or blocked deliverable is never completed this way; it needs a reopen — of the stopped task itself, or for a blocked task, of the stopped task that blocks it.
 
 After the last task, capture the aggregate branch change at `.formula/work/tasks/<plan-basename>/branch-diff.txt`
 as the unmodified aggregate `git diff` and materialize the criteria-only `success-criteria.md` artifact:
@@ -719,7 +739,7 @@ node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan .formula/wo
 and exit 3 means corrupt evidence or a dispatch the guard never authorized, which halts the run. It
 reports the outcome and its approval: `COMPLETE` is `APPROVED`; `PARTIAL` is always `UNAPPROVED`.
 State a PARTIAL outcome explicitly as unapproved partial delivery, listing from the projected summary
-the completed, stopped and blocked task IDs, the failed criteria, the best candidates and the next remedies.
+the completed, stopped and blocked task IDs, the failed criteria, the best candidates and the next remedies (a reopen needs a remedy different from these), and any plan split recorded in the ledger.
 Never present it as success.
 
 Only after every task gate succeeds, the whole-branch review approves, and this handoff verification
