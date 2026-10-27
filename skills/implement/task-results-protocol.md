@@ -42,6 +42,10 @@ is the same-task prior execution for a fix or retry, absent for its first implem
 is the immediately preceding completed execution across all tasks, absent only for the first
 execution of the run. A late fix therefore uses its own previousState and the latest global
 parentState even when another task ran in between. Never substitute one for the other.
+After a task-local stop, the next execution's `parentState` is the stopped cycle's retained execution (`retained-best`), or the lineage tip the stopped cycle started from — the execution whose `after` equals the stopped cycle's opening tree (`baseline-equal`).
+The guard's projected summary names that retained execution as the stopped task's `execution`
+(`null` for `baseline-equal`). A non-accepted execution is never the parent of another task's execution;
+only a same-task `retry` may name one.
 
 ```sh
 node <engine-root>/scripts/task-results.mjs --repo-root . --action begin --state <exact-state-prefix> --run-id <supplied-run-id> --attempt <supplied-attempt> --task N --execution E --role <implementer-or-fix-or-retry> --report .formula/work/tasks/<plan-basename>/task-N-report.md --plan <exact-authorized-plan-path> --format text
@@ -106,17 +110,24 @@ Do not manufacture missing evidence or reset code.
 A captured semantic NEEDS_CONTEXT or BLOCKED result is not task completion. Inspect its derived
 `retryable` fact. If true, resolve the question from authorized context or choose a concrete remedy
 such as supplying missing context or escalating the model, and record that remedy in the ledger.
-Never repeat an unchanged request automatically. If there is no remedy, retain the correlated block.
+Never repeat an unchanged request automatically. If there is no remedy, the result stays unresolved
+and its guard cycle stops; the run continues with the next runnable task.
 The record CLI returns exit 1 for those semantic non-success statuses; inspect its structured result
 before deciding recovery. Exit 1 without a valid retryable result remains a failure, never inferred
 permission to dispatch.
+
+In Gear 3, a `--role retry` execution also requires an admitted guard retry and a reserved correction iteration:
+the remedy is written into the guard's retry request and admitted with `admit-retry`, the iteration
+is reserved as `--kind correction`, and the writer is authorized with `--target` naming the new
+execution state before `begin` (`SKILL.md` Step 2.7). A retry never exceeds the cycle allowance:
+when the cycle has no iteration left, the guard stops it and no retry begins.
 
 After a remedy, begin a **new** execution with `--role retry`, execution E+1, and both
 `--previous-state` and `--parent-state` naming that exact non-success execution. The source and
 canonical report must still match its capture. Do not overwrite the old response, report snapshot,
 or receipt. The retry preserves cumulative changed paths, discovery evidence, and the original task
 baseline. A normal `fix` still requires a successful previous execution; no unrelated task may
-advance past the unresolved result. A retry that returns another valid non-success may be continued
+advance past the unresolved result while its cycle is open. A retry that returns another valid non-success may be continued
 only after another explicit remedy. Baseline-only ambiguity, malformed semantics, missing/empty
 reports, and drift are never made retryable by the status word BLOCKED.
 

@@ -68,6 +68,17 @@ unobserved commit.
 **Autopilot:** do not ask the batched question. A conflict that cannot be resolved from authoritative
 artifacts is unresolvable: append the correlated `BLOCKED` marker from Step 0 and exit non-zero.
 
+## Step 2.7 — correction guard (correlated)
+
+Open the correction guard with `--drive autopilot` before Task 1 and drive every cycle through it as
+`SKILL.md` Step 2.7 describes. Pass `--run-id <supplied-run-id> --attempt <supplied-attempt>`, the
+conductor-supplied identity, to every mutating guard action and `verify-handoff`; `next` and `verify` take neither (the CLI refuses them as a usage error).
+Every guard record binds the implement phase manifest of that attempt, so never derive or invent
+either value. Never reopen: an autopilot drive cannot grant reopening (`reopen` takes no identity and
+the conductor halts on any reopen record in the history); hand a reopen request back to the human.
+A whole-run halt (exit 3 from any guard action) appends the correlated `BLOCKED` marker from Step 0
+with the guard's reason and exits non-zero.
+
 ## Step 3 — per-task loop (dispatch manifests)
 
 Begin the exact execution receipt before every implementer/fix dispatch and record
@@ -77,6 +88,9 @@ review-pending without another implementation. Project the index from receipts r
 writing `- Task` bullets; projection alone never marks a task complete. A whole-branch fix uses both the
 same-task previous execution and latest global parent execution, then refreshes any obsolete task
 review approval before the new final review.
+Before every writer `begin`, `authorize` the writer with `--target` set to that exact execution state
+prefix; after `record`, record it with the guard's
+`--action record-writer --scope <scope> --iteration <i> --execution <exact-state-prefix> --run-id <supplied-run-id> --attempt <supplied-attempt>`.
 For a valid captured NEEDS_CONTEXT or BLOCKED with `retryable: true`, follow the explicit remedy and
 new `--role retry` execution transition in `task-results-protocol.md`; a nonzero capture exit alone
 does not erase that structured outcome. Keep the original implementer/fix manifest role and use a
@@ -96,10 +110,15 @@ must not acquire this signal by inference. A conflicting status/signal pair is a
 defect to resolve through the authorized artifact-first protocol, not a reason to preload reports.
 
 **Autopilot:** there is no human to answer a NEEDS_CONTEXT question or adjudicate an unresolvable
-BLOCKED — exhaust the non-human remedies first (re-dispatch with more context, escalate the model,
-split the task); if still stuck, append `<ISO timestamp> — implement — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>`
-to `.formula/work/tasks/<spec-basename>/autopilot-status.md` and exit non-zero. The conductor halts and a
-human resumes later; the chain artifacts and ledger are the state, nothing to reconstruct.
+BLOCKED — non-human remedies (re-dispatch with more context, escalate the model) run only through admitted retries within the allowance
+of the cycle (`SKILL.md` Step 2.7), each spending an iteration. When no evidenced remedy remains, the
+cycle stops: by the guard's own decision, or with
+`--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <reason> --run-id <supplied-run-id> --attempt <supplied-attempt>`.
+A task-local stop continues with the next runnable task after `prove-isolation`; it is never a run stop.
+Only a whole-run halt or an unresolvable protocol failure appends
+`<ISO timestamp> — implement — BLOCKED — run-id=<conductor-supplied> attempt=<positive supplied> <reason>`
+to `.formula/work/tasks/<spec-basename>/autopilot-status.md` and exits non-zero. The conductor halts and a
+human resumes later; the chain artifacts, ledger and guard history are the state, nothing to reconstruct.
 
 ## Step 4 — whole-branch review (final-review manifest)
 
@@ -109,14 +128,21 @@ you are about to dispatch, not as a handoff. First create and validate `final-re
 using the canonical command below; the criteria-only success-criteria source, task-result index,
 aggregate branch diff, and relevant standards are its exact required inventory.
 
+When `next` reports the final cycle, project the correction summary into the task-result index with the guard's `--action project` before the final `reviewer-response.mjs --action begin`, and again at terminal.
+The final cycle runs even when tasks stopped; the projected summary already declares the stopped and
+blocked tasks the final reviewer-response baseline parses.
+
 ## Step 5 — hand off
 
 **Autopilot:** after the handoff verifies and the SKILL.md → "Step 5 — Hand off" lifecycle completes
-(output READY first, input CONSUMED second), run the `reviewer-recovery.md` verify-handoff command, then append `<ISO timestamp> — implement — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <commit range>` to `.formula/work/tasks/<spec-basename>/autopilot-status.md`. The session then simply ends — the conductor spawns the `review` skill next. Resume uses only manifest-authorized paths and the same exact-pair proof; manual resume capabilities do not widen an autopilot manifest or authorize scanning for prior outputs.
+(output READY first, input CONSUMED second), run the guard's `verify-handoff` and the `reviewer-recovery.md` verify-handoff command, then append the marker the verified outcome names. A `COMPLETE` run appends `<ISO timestamp> — implement — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <commit range>` to `.formula/work/tasks/<spec-basename>/autopilot-status.md`.
+A terminal partial appends `<ISO timestamp> — implement — PARTIAL — run-id=<conductor-supplied> attempt=<positive supplied> <summary>`
+to the same file and never `DONE`; the summary names the completed, stopped and blocked task IDs. Both markers, or a
+marker contradicting the verified outcome, halt the run at the conductor. The session then simply ends — the conductor spawns the `review` skill next. Resume uses only manifest-authorized paths and the same exact-pair proof; manual resume capabilities do not widen an autopilot manifest or authorize scanning for prior outputs.
 
 ## Task-local manifest protocol
 
-Before **every** implementer, task-reviewer, fix, or final-review dispatch, invoke
+Before **every** implementer, task-reviewer, fix, final-review, or diagnosis dispatch, invoke
 `node <engine-root>/scripts/autopilot-context.mjs` with only that role's strict named arguments.
 Use the conductor-supplied run ID, the selected abstract tier, the brief's exact test command and
 criterion IDs, and repository-relative paths. Create `.formula/work/tasks/<plan-basename>/context/` and
@@ -125,7 +151,9 @@ use these deterministic output paths:
 - implementer: `task-N-implement.json`;
 - task reviewer: `task-N-review-<iteration>.json`;
 - fix: `task-N-fix-<iteration>.json`;
-- final reviewer: `final-review-<iteration>.json`.
+- final reviewer: `final-review-<iteration>.json`;
+- task diagnosis: `task-N-diagnosis-<i>.json`;
+- final diagnosis: `final-diagnosis-<i>.json`.
 
 Never choose the task-result protocol from a child response, report, or an inferred most-recent
 artifact.
@@ -134,10 +162,21 @@ The canonical command shapes are:
 
 ```sh
 node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role implementer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .formula/work/tasks/<plan-basename>/task-N-brief.md --standard <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/task-N-report.md --output .formula/work/tasks/<plan-basename>/context/task-N-implement.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role task-reviewer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .formula/work/tasks/<plan-basename>/task-N-brief.md --report .formula/work/tasks/<plan-basename>/task-N-report.md --task-diff .formula/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --hub-index <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/task-N-review.md --artifact-output .formula/work/tasks/<plan-basename>/task-N-issues.md --output .formula/work/tasks/<plan-basename>/context/task-N-review-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role task-reviewer --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .formula/work/tasks/<plan-basename>/task-N-brief.md --report .formula/work/tasks/<plan-basename>/task-N-report.md --task-diff .formula/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --hub-index <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/task-N-review.md --artifact-output .formula/work/tasks/<plan-basename>/task-N-issues.md --artifact-output .formula/work/tasks/<plan-basename>/correction/task-N-cycle-<c>-iteration-<i>-defects.json --output .formula/work/tasks/<plan-basename>/context/task-N-review-<iteration>.json
 node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role fix --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .formula/work/tasks/<plan-basename>/task-N-brief.md --issue .formula/work/tasks/<plan-basename>/task-N-issues.md --task-diff .formula/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/task-N-report.md --output .formula/work/tasks/<plan-basename>/context/task-N-fix-<iteration>.json
-node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role final-review --run-id <supplied-run-id> --task-result-protocol 2 --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --criteria .formula/work/tasks/<plan-basename>/success-criteria.md --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md --branch-diff .formula/work/tasks/<plan-basename>/branch-diff.txt --standard <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/final-review.md --artifact-output .formula/work/tasks/<plan-basename>/final-review-issues.md --output .formula/work/tasks/<plan-basename>/context/final-review-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role final-review --run-id <supplied-run-id> --task-result-protocol 2 --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --criteria .formula/work/tasks/<plan-basename>/success-criteria.md --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md --branch-diff .formula/work/tasks/<plan-basename>/branch-diff.txt --standard <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/final-review.md --artifact-output .formula/work/tasks/<plan-basename>/final-review-issues.md --artifact-output .formula/work/tasks/<plan-basename>/correction/final-cycle-<c>-iteration-<i>-defects.json --output .formula/work/tasks/<plan-basename>/context/final-review-<iteration>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role diagnosis --run-id <supplied-run-id> --task-result-protocol 2 --task N --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --brief .formula/work/tasks/<plan-basename>/task-N-brief.md --evidence <exact-evidence-path> --task-diff .formula/work/tasks/<plan-basename>/task-N-diff.txt --standard <resolved-context-path> --hub-index <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/correction/task-N-cycle-<c>-iteration-<i>-diagnosis.json --output .formula/work/tasks/<plan-basename>/context/task-N-diagnosis-<i>.json
+node <engine-root>/scripts/autopilot-context.mjs --repo-root . --role final-diagnosis --run-id <supplied-run-id> --task-result-protocol 2 --model-tier <tier> --test-command '<exact-command>' --criterion <ID> --criteria .formula/work/tasks/<plan-basename>/success-criteria.md --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md --branch-diff .formula/work/tasks/<plan-basename>/branch-diff.txt --evidence <exact-evidence-path> --standard <resolved-context-path> --artifact-output .formula/work/tasks/<plan-basename>/correction/final-cycle-<c>-iteration-<i>-diagnosis.json --output .formula/work/tasks/<plan-basename>/context/final-diagnosis-<i>.json
 ```
+
+Each reviewer manifest declares its defects artifact as an output: `<c>` and `<i>` are the guard
+cycle and iteration of that review. The owner task's review inside a final-scope iteration is a
+task-reviewer manifest whose defects output is role-qualified:
+`--artifact-output .formula/work/tasks/<plan-basename>/correction/final-cycle-<c>-iteration-<i>-task-reviewer-defects.json`.
+Each diagnosis manifest's one output is the diagnostic's authorized guard target, `<i>` the reserved
+diagnosis iteration. Repeat `--evidence` once per evidence path: each is an exact evidence reference
+of the concluded iteration (its check evidence, defects artifact or task report).
+Dispatch `diagnosis-prompt.md` with only that manifest path; the diagnostic is read-only.
 
 Repeat `--standard` with `<resolved-context-path>` once per resolved context path. The examples show one
 occurrence; plural selected paths use repeated `--standard` arguments identically for implementer,

@@ -3022,7 +3022,10 @@ test('autopilot prompts specify only status, artifact, signals; manual drive kee
   const recovery = readFileSync(join(skillsDir, 'implement/reviewer-recovery.md'), 'utf8');
   assert.match(recovery, /--execution/);
   assert.match(recovery, /reviewer-response-v2\.schema\.json/);
-  assert.doesNotMatch(recovery, /correction/i);
+  // Task 14: reviewer recovery now names the correction guard and its record paths; any other
+  // correction wording would reintroduce the retired response correction.
+  assert.doesNotMatch(recovery.replace(/correction-guard\.mjs|correction guard|\/correction\//g, ''), /correction/i,
+    'reviewer recovery names only the correction guard and its record paths, never a response correction');
   const schema = JSON.parse(readFileSync(join(skillsDir, 'implement/reviewer-response-v2.schema.json'), 'utf8'));
   assert.deepEqual(schema.required, ['status', 'artifact', 'signals']);
   assert.equal(schema.additionalProperties, false);
@@ -3146,6 +3149,290 @@ test('diagnosis prompt is a harness-neutral read-only diagnostic with the guard-
   assert.match(text, /inline[^]*degradation/i, 'diagnosis declares the inline degradation');
   assert.match(text, /changed-paths: none/, 'manual drive adds changed-paths: none');
   assert.doesNotMatch(text, /legacy|\$\{CLAUDE_PLUGIN_ROOT\}/i, 'diagnosis stays harness-neutral');
+});
+
+// Task 14: the implement skill and its protocols drive Gear-3 correction through the shipped
+// correction guard in both drives. Prose is flattened so line wrapping never decides a lock.
+const implementText = (file) => readFileSync(join(skillsDir, 'implement', file), 'utf8');
+const flatText = (text) => text.replace(/\s+/g, ' ');
+const guardStep = () => sectionBetween(implementText('SKILL.md'), '### Step 2.7', '### Step 3');
+
+// The per-action options of the shipped guard, read from its own usage text so a lock can never
+// accept a flag the CLI does not parse.
+function guardUsageOptions() {
+  const source = readFileSync(join(root, 'scripts', 'correction-guard.mjs'), 'utf8');
+  const usage = source.slice(source.indexOf('const USAGE = `'), source.indexOf('`;', source.indexOf('const USAGE = `')));
+  const lines = usage.slice(usage.indexOf('actions:\n') + 'actions:\n'.length).split('\n');
+  const actions = new Map();
+  let current = null;
+  for (const line of lines) {
+    if (line.trim() === '') break;
+    const head = line.match(/^ {2}([a-z-]+)(?:\s|$)/);
+    if (head) {
+      current = head[1];
+      actions.set(current, new Set());
+    }
+    for (const [, flag] of line.matchAll(/--([a-z-]+)/g)) actions.get(current).add(flag);
+  }
+  // The usage note: every mutating action and verify-handoff take --run-id/--attempt; next and
+  // verify never do, and reopen refuses them on every drive.
+  for (const [action, flags] of actions) {
+    if (!['next', 'verify', 'reopen'].includes(action)) {
+      flags.add('run-id');
+      flags.add('attempt');
+    }
+  }
+  return actions;
+}
+
+// Every code span (inline or fenced line) of `text` that names a guard command.
+function guardSpans(text, actions) {
+  const spans = [];
+  const prose = text.replace(/```[^\n]*\n([\s\S]*?)```/g, (_, body) => {
+    spans.push(...body.split('\n'));
+    return '';
+  });
+  for (const [, span] of prose.matchAll(/`([^`]+)`/g)) spans.push(span.replace(/\s+/g, ' '));
+  // project, verify and verify-handoff are also task-results or reviewer-response actions.
+  const guardOnly = [...actions.keys()].filter((action) => !['project', 'verify', 'verify-handoff'].includes(action));
+  return spans.filter((span) => span.includes('correction-guard.mjs')
+    || guardOnly.some((action) => new RegExp(`--action ${action}(?:\\s|$)`).test(span)));
+}
+
+test('implement: every documented correction-guard command line uses only flags the shipped CLI parses', () => {
+  const actions = guardUsageOptions();
+  assert.ok(actions.size >= 17 && actions.get('stop').has('scope'), 'the guard usage text parses into its actions');
+  let checked = 0;
+  for (const file of ['SKILL.md', 'autopilot-protocol.md', 'task-results-protocol.md', 'reviewer-recovery.md']) {
+    for (const span of guardSpans(implementText(file), actions)) {
+      const named = [...span.matchAll(/--action ([a-z-]+)/g)].map((match) => match[1]);
+      assert.ok(named.length <= 1, `${file}: one guard action per command span: ${span}`);
+      if (named.length === 0) continue;
+      const [action] = named;
+      assert.ok(actions.has(action), `${file}: --action ${action} is a shipped guard action`);
+      for (const [, flag] of span.matchAll(/--([a-z-]+)/g)) {
+        if (['repo-root', 'plan', 'action'].includes(flag)) continue;
+        assert.ok(actions.get(action).has(flag), `${file}: --${flag} is not an option of the guard's --action ${action}: ${span}`);
+      }
+      checked += 1;
+    }
+  }
+  assert.ok(checked >= 15, 'the lock actually checks the documented guard command lines');
+});
+
+test('implement: Step 2.7 opens the correction guard before any dispatch in both drives, Gear 2 unchanged', () => {
+  const text = implementText('SKILL.md');
+  const i25 = text.indexOf('### Step 2.5 — Pre-flight input scan');
+  const i27 = text.indexOf('### Step 2.7 — Gear-3 correction guard (both drives)');
+  const i3 = text.indexOf('### Step 3 —');
+  assert.ok(i25 !== -1 && i27 > i25 && i3 > i27, 'Step 2.7 sits between Step 2.5 and Step 3');
+  const step27 = guardStep();
+  const prose = flatText(step27);
+  assert.match(prose, /\*\*Gear 3 only\.\*\* Gear 2 runs no guard and is unchanged\./, 'Step 2.7 applies to Gear 3 only; Gear 2 is unchanged');
+  assert.ok(step27.includes('node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan <plan-path> --action open --drive <manual|autopilot>'),
+    'the guard opens with the exact shipped open command');
+  assert.match(prose, /Before Task 1, run/, 'the guard opens before Task 1');
+  assert.match(prose, /A rejected plan stops before any dispatch with the parser message\. There is no fallback: the user re-runs the `plan` skill/,
+    'a rejected plan stops before any dispatch, without fallback');
+  assert.match(prose, /`\.formula\/work\/tasks\/<plan-basename>\/correction\/` are machine-replay state derived from the plan basename/,
+    'guard records are machine-replay state derived from the plan basename');
+  assert.match(prose, /not model read capabilities and need no new handoff role/, 'guard records grant no read capability and no handoff role');
+  assert.ok(text.indexOf('--action open --drive') < text.indexOf('**Implement.**'), 'the guard opens before the implementer dispatch');
+  const checklist = sectionBetween(text, '## Checklist', '## Procedure');
+  assert.match(checklist, /Gear 3[^\n]*correction guard[^\n]*Step 2\.7/, 'the checklist names the Gear-3 correction guard step');
+});
+
+test('implement: next decides each Gear-3 step, and reserve and authorize precede every dispatch', () => {
+  const prose = flatText(guardStep());
+  assert.match(prose, /`next` decides the step/, 'next decides the step');
+  assert.match(prose, /`open-cycle` opens each scope/, 'open-cycle opens each scope');
+  assert.match(prose, /`reserve` runs before every dispatch/, 'reserve runs before every dispatch');
+  assert.match(prose, /`authorize` binds each dispatch to its exact target/, 'authorize binds each dispatch to its exact target');
+  for (const action of ['next', 'open-cycle', 'reserve', 'authorize', 'record-writer', 'verify-check', 'record-review', 'admit-retry',
+    'record-diagnosis', 'prove-isolation', 'stop', 'record-interruption', 'reopen']) {
+    assert.ok(prose.includes(`--action ${action}`), `Step 2.7 documents --action ${action}`);
+  }
+  const order = ['--action record-writer', '--action verify-check', 'dispatch the reviewer', '--action record-review'].map((s) => prose.indexOf(s));
+  assert.ok(order.every((index, k) => index !== -1 && (k === 0 || index > order[k - 1])),
+    'each iteration records the writer, runs verify-check, dispatches the reviewer, then records the review');
+  assert.match(prose, /record the review with the defects artifact/, 'the review is recorded with its defects artifact');
+  assert.match(prose, /`--role writer\|task-reviewer\|final-reviewer\|diagnostic`/, 'authorize names the guard roles exactly');
+  const step3 = flatText(sectionBetween(implementText('SKILL.md'), '### Step 3', '### Step 4'));
+  assert.match(step3, /Each dispatch is preceded by `reserve` and `authorize`/, 'Step 3 precedes each dispatch with reserve and authorize');
+  assert.match(step3, /Mark a task complete only when the guard approves its cycle/, 'a task completes only on guard approval');
+});
+
+test('implement: the guard allowance is three iterations with one diagnosis and no separate retry allowance or spend limit', () => {
+  const prose = flatText(guardStep());
+  assert.match(prose, /three iterations per task cycle and per final-review cycle/i, 'three iterations per task and final-review cycle');
+  assert.match(prose, /at most one diagnosis, charged to the same allowance/i, 'one diagnosis charged to the same allowance');
+  assert.match(prose, /no separate fix or retry allowance/i, 'no separate fix or retry allowance');
+  assert.match(prose, /No time, token or cost limit applies: token and cost stay observational/, 'no time, token or cost limit; spend stays observational');
+  const results = flatText(implementText('task-results-protocol.md'));
+  assert.match(results, /A retry never exceeds the cycle allowance/, 'a task-results retry never exceeds the cycle allowance');
+});
+
+test('implement: a failed iteration continues only by an admitted retry or the one diagnosis; guard stops stand', () => {
+  const step27 = guardStep();
+  const prose = flatText(step27);
+  assert.ok(step27.includes('.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-retry-<i>.json'), 'the retry request path is exact');
+  for (const key of ['version', 'scope', 'cycle', 'iteration', 'kind', 'target', 'observedFailure', 'evidence', 'hypothesis', 'remedy',
+    'difference', 'confirmingCheck']) {
+    assert.ok(prose.includes(`\`${key}\``), `the retry request lists field ${key}`);
+  }
+  assert.match(prose, /exactly the twelve keys/, 'the retry request has exactly twelve keys');
+  assert.match(prose, /`--kind diagnosis --reason missing-retry-evidence\|comparison-unavailable`/, 'the single diagnosis is reserved with its reason');
+  assert.match(prose, /`diagnosis-prompt\.md`[^.]*through its manifest[^.]*`model: standard`[^.]*`most-capable`/, 'the diagnosis dispatches diagnosis-prompt.md at an explicit tier');
+  assert.match(prose, /Stagnation, exhaustion, an unavailable comparison and an inconclusive diagnosis are the guard's decision/,
+    'stagnation, exhaustion and inconclusive-diagnosis stops are the guard\'s decision');
+});
+
+test('implement: task-local stops prove isolation and continue; exit 3 and source drift halt the whole run', () => {
+  const text = implementText('SKILL.md');
+  const discipline = flatText(sectionBetween(text, '## Execution discipline', '## Checklist'));
+  assert.match(discipline,
+    /The only reasons to stop mid-run are a whole-run halt \(guard integrity or unauthorized mutation\), a genuine human question in manual drive, a direct Gear-2 decomposition stop, or the guard's terminal step/,
+    'the only mid-run stops are a whole-run halt, a manual human question, a Gear-2 decomposition stop or the terminal step');
+  assert.match(discipline, /A task-local stop continues with the next runnable independent task, and dependency-blocked tasks are never dispatched/,
+    'a task-local stop continues; dependency-blocked tasks are never dispatched');
+  assert.doesNotMatch(discipline, /unresolved \*\*BLOCKED\*\*/, 'an unresolved BLOCKED is no longer a run stop');
+  const prose = flatText(guardStep());
+  assert.match(prose, /After a task-local stop, run `--action prove-isolation --scope task-N`/, 'a task-local stop proves isolation');
+  assert.match(prose, /Exit 3 from any guard action halts the whole run: report it and never continue/, 'exit 3 halts the whole run');
+  assert.match(prose, /source change outside an authorized writer dispatch[^.]*halts the whole run \(exit 3\) by design/,
+    'a source change outside an authorized writer dispatch halts the run');
+  assert.match(prose, /re-running `open` after editing files/, 'editing files then re-running open halts');
+  assert.match(prose, /recording an interruption after a crashed writer left changes/, 'an interruption over a crashed writer\'s changes halts');
+  assert.match(prose, /context resolution[^.]*writes its output outside the source tree/, 'context resolution writes outside the source tree');
+  assert.match(prose, /`steepy-formula context resolve[^`]*--out [^`]+`/, 'the context resolve instruction carries --out');
+  assert.match(prose, /after a task-local stop the next execution builds on the retained execution or on the pre-cycle lineage tip/,
+    'the continuation references the lineage parent rule');
+});
+
+test('implement: Step 3 binds the guard to every dispatch and drops the task split', () => {
+  const step3 = sectionBetween(implementText('SKILL.md'), '### Step 3', '### Step 4');
+  const prose = flatText(step3);
+  assert.doesNotMatch(prose, /re-review until \*\*Status: Approved\*\*/, 'Step 3 no longer re-reviews until a Status line');
+  assert.match(prose, /re-review until the guard approves or stops the cycle/, 'Step 3 re-reviews until the guard approves or stops the cycle');
+  assert.doesNotMatch(prose, /or split the task/, 'a task is never split inside an approved plan');
+  assert.ok(prose.includes('or stop the cycle and record a plan split as the next remedy (the approved plan is bound; a split needs a new plan)'),
+    'a split is recorded as the next remedy of a stopped cycle');
+  assert.ok(prose.includes("add `escalated: <from>→<to>` to the task's ledger line"), 'the escalation ledger marker is kept verbatim');
+  assert.ok(prose.includes('Never force the same model to retry unchanged'), 'the unchanged-retry prohibition is kept verbatim');
+  assert.match(prose, /In manual drive, a NEEDS_CONTEXT answered by the human is a retry whose remedy is the supplied context, and it consumes an iteration/,
+    'a human-answered NEEDS_CONTEXT is a retry that spends an iteration');
+});
+
+test('implement: the final-review cycle runs on partial delivery after the summary projection', () => {
+  const step4 = sectionBetween(implementText('SKILL.md'), '### Step 4', '### Step 5');
+  const prose = flatText(step4);
+  assert.match(prose, /The whole-branch review is the final-review cycle of three iterations, and it runs even when tasks stopped/,
+    'the final-review cycle runs even when tasks stopped');
+  const project = prose.indexOf('--action project --task-result-index');
+  const openFinal = prose.indexOf('--action open-cycle --scope final');
+  assert.ok(project !== -1 && openFinal !== -1 && project < openFinal, 'project runs before the final cycle opens');
+  assert.match(prose, /before any final-review baseline and before any reviewer dispatch/, 'project precedes the final baseline and dispatch');
+  assert.match(prose, /a partial index must already declare its stopped and blocked tasks/, 'a partial index declares stopped and blocked tasks');
+  assert.match(prose, /Run `project` again at terminal/, 'project runs again at terminal');
+  assert.match(prose, /A final fix names its approved owner task and affected criteria/, 'a final fix names its owner task and criteria');
+  assert.match(prose, /A stopped or blocked deliverable is never completed this way; it needs a reopen/, 'stopped or blocked work needs a reopen');
+  assert.doesNotMatch(prose, /re-review until \*\*Status: Approved\*\*/, 'Step 4 no longer re-reviews until a Status line');
+  assert.match(prose, /until the guard approves or stops the final cycle/, 'Step 4 runs until the guard approves or stops the final cycle');
+  const protocol = flatText(sectionBetween(implementText('autopilot-protocol.md'), '## Step 4', '## Step 5'));
+  assert.match(protocol, /project[^.]*before the final `reviewer-response\.mjs --action begin`, and again at terminal/,
+    'autopilot projects the summary before the final reviewer baseline and at terminal');
+});
+
+test('implement: defects artifacts are named per scope and role, the owner task review in a final iteration role-qualified', () => {
+  const prose = flatText(guardStep());
+  assert.ok(prose.includes('correction/<scope>-cycle-<c>-iteration-<i>-defects.json'), 'the plain defects name per scope');
+  assert.ok(prose.includes('correction/final-cycle-<c>-iteration-<i>-task-reviewer-defects.json'),
+    'an owner task review in a final-scope iteration uses the role-qualified defects name');
+  assert.match(prose, /`\[DEFECTS_FILE\]`/, 'the reviewer prompt slot is filled with the defects path');
+  const protocol = implementText('autopilot-protocol.md');
+  const line = (marker) => protocol.split('\n').find((entry) => entry.includes(marker)) ?? '';
+  assert.ok(line('--role task-reviewer').includes('--artifact-output .formula/work/tasks/<plan-basename>/correction/task-N-cycle-<c>-iteration-<i>-defects.json'),
+    'the task-reviewer manifest declares its defects artifact output');
+  assert.ok(line('--role final-review ').includes('--artifact-output .formula/work/tasks/<plan-basename>/correction/final-cycle-<c>-iteration-<i>-defects.json'),
+    'the final-review manifest declares the plain final defects artifact output');
+  assert.ok(protocol.includes('--artifact-output .formula/work/tasks/<plan-basename>/correction/final-cycle-<c>-iteration-<i>-task-reviewer-defects.json'),
+    'an owner task review inside a final-scope iteration declares the role-qualified defects output');
+});
+
+test('implement: Step 5 verifies the terminal guard handoff and states a PARTIAL outcome as unapproved partial delivery', () => {
+  const step5 = sectionBetween(implementText('SKILL.md'), '### Step 5 — Hand off', '## Model Selection');
+  const prose = flatText(step5);
+  for (const action of ['project', 'verify-handoff']) {
+    assert.ok(step5.includes(`node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan .formula/work/plans/<plan-basename>.md --action ${action} --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md`),
+      `Step 5 runs the guard's ${action} at terminal`);
+  }
+  assert.match(prose, /After the guard reports `terminal`/, 'the terminal verification follows the guard terminal step');
+  assert.match(prose, /unapproved partial delivery/, 'a PARTIAL outcome is unapproved partial delivery');
+  assert.match(prose, /completed, stopped and blocked task IDs, the failed criteria, the best candidates and the next remedies/,
+    'a PARTIAL outcome lists IDs, failed criteria, best candidates and next remedies');
+  assert.ok(prose.includes('Run the `review` skill in a new session'), 'the review handoff envelope is unchanged');
+});
+
+test('autopilot: guard actions carry correlated identity, a partial run appends PARTIAL and never DONE, and autopilot never reopens', () => {
+  const protocol = implementText('autopilot-protocol.md');
+  const prose = flatText(protocol);
+  assert.ok(protocol.includes('<ISO timestamp> — implement — PARTIAL — run-id=<conductor-supplied> attempt=<positive supplied> <summary>'),
+    'a terminal partial appends the correlated PARTIAL marker');
+  assert.match(prose, /never `DONE`/, 'a partial run never appends DONE');
+  assert.ok(protocol.includes('<ISO timestamp> — implement — DONE — run-id=<conductor-supplied> attempt=<positive supplied> <commit range>'),
+    'the DONE marker text for complete runs is unchanged');
+  assert.match(prose, /Never reopen/, 'autopilot never reopens');
+  assert.match(prose, /--run-id <supplied-run-id> --attempt <supplied-attempt>[^.]*every mutating guard action and `verify-handoff`/,
+    'every mutating guard action and verify-handoff carry the supplied identity');
+  assert.match(prose, /`next` and `verify` take neither/, 'the read-only guard actions take no identity');
+  assert.doesNotMatch(prose, /split the task/, 'autopilot never splits a task');
+  assert.match(prose, /non-human remedies[^.]*only through admitted retries within the allowance/, 'autopilot remedies run only as admitted retries');
+  assert.match(prose, /A task-local stop continues with the next runnable task/, 'autopilot continues after a task-local stop');
+  for (const [role, output] of [['diagnosis', 'context/task-N-diagnosis-<i>.json'], ['final-diagnosis', 'context/final-diagnosis-<i>.json']]) {
+    const command = protocol.split('\n').find((entry) => entry.includes(`--role ${role} `)) ?? '';
+    assert.ok(command.startsWith('node <engine-root>/scripts/autopilot-context.mjs --repo-root . '), `the ${role} manifest has a canonical command`);
+    assert.ok(command.includes(`--output .formula/work/tasks/<plan-basename>/${output}`), `the ${role} manifest is written at ${output}`);
+    assert.match(command, /--evidence <exact-evidence-path>/, `the ${role} manifest names its evidence`);
+  }
+  assert.match(prose, /Repeat `--evidence` once per evidence path/, 'evidence paths repeat --evidence');
+});
+
+test('implement: reopening is manual-only with a verbatim authorization, and resume keeps counters', () => {
+  const prose = flatText(guardStep());
+  assert.match(prose, /#### Resume and reopening/, 'Step 2.7 carries the Resume and reopening subsection');
+  assert.match(prose, /Resume never resets counters and never redispatches captured work/, 'resume keeps counters and captured work');
+  assert.match(prose, /A reserved dispatch whose execution is uncertain stays spent[^.]*`--action record-interruption/,
+    'an uncertain reserved dispatch stays spent and is recorded as an interruption');
+  assert.match(prose, /A captured execution resumes through `task-results\.mjs`[^.]*then `record-writer`, without a new reservation/,
+    'a captured execution resumes through task-results then record-writer');
+  assert.ok(prose.includes('`--action stop --scope <scope> --reason HUMAN_INTERRUPTED --note <text>`'), 'an explicit user interruption is a HUMAN_INTERRUPTED stop');
+  assert.match(prose, /Reopening a stopped scope happens only in manual drive/, 'reopening is manual-only');
+  assert.match(prose, /explicit words naming the scope, plus a new remedy, are written verbatim to `\.formula\/work\/tasks\/<plan-basename>\/correction\/<scope>-cycle-<c>-reopen\.json`/,
+    'the human authorization is written verbatim to the reopen artifact');
+  assert.match(prose, /then `--action reopen --authorization [^`]+` must succeed/, 'reopen must succeed before the scope reopens');
+  assert.match(prose, /Autopilot never reopens: it hands the request back to the human/, 'autopilot hands reopening back to the human');
+});
+
+test('task-results protocol pins the post-stop parent rule and binds retries to the guard', () => {
+  const prose = flatText(implementText('task-results-protocol.md'));
+  assert.match(prose,
+    /After a task-local stop, the next execution's `parentState` is the stopped cycle's retained execution \(`retained-best`\), or the lineage tip the stopped cycle started from[^.]*\(`baseline-equal`\)/,
+    'after a task-local stop the parent is the retained execution or the pre-cycle lineage tip');
+  assert.match(prose, /A non-accepted execution is never the parent of another task's execution/, 'a non-accepted execution never parents another task');
+  assert.match(prose, /a `--role retry` execution also requires an admitted guard retry and a reserved correction iteration/,
+    'a retry execution requires an admitted guard retry and a reserved correction iteration');
+});
+
+test('reviewer recovery binds every reviewer dispatch to the guard and verifies partial handoffs through the guard', () => {
+  const recovery = implementText('reviewer-recovery.md');
+  const prose = flatText(recovery);
+  assert.match(prose, /Every reviewer dispatch is a guard-authorized dispatch in the current iteration/, 'every reviewer dispatch is guard-authorized');
+  assert.match(prose, /A reviewer redispatch after a failure consumes a new iteration through an admitted `tool-failure` retry/,
+    'a reviewer redispatch spends a new iteration through a tool-failure retry');
+  assert.match(prose, /`--action record-review[^`]*--review-state <[^`]*--defects <[^`]*`/, 'each review is recorded with its review state and defects');
+  assert.match(prose, /Partial verification uses the guard's `--action verify-handoff`/, 'partial verification uses the guard verify-handoff');
+  assert.doesNotMatch(prose, /requires final approval/, 'the reviewer handoff no longer claims it always requires final approval');
+  assert.match(prose, /`status: UNAPPROVED`/, 'a stopped final verifies as UNAPPROVED, never success');
 });
 
 // Global graph-only lock (Task 20): no skill outside graph-migrate carries a Markdown-hub reference,
