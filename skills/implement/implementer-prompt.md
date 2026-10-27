@@ -49,6 +49,11 @@ Subagent (<surface>-agent):
     ordinary repository source normally as needed, and record the no-manifest degradation. Never
     enumerate `.formula/work/**`, infer another work artifact, or widen the orchestrator's capability.
 
+    During a Gear-3 correction run, any `steepy-formula context resolve` you run writes outside the
+    source tree: add `--out <dir>` with `<dir>` under `.formula/work/tasks/<plan-basename>/` or a
+    temporary directory. Without `--out` it writes `context.json` and `context.md` into the working
+    directory, which the correction guard counts as source changes.
+
     ## Before you begin
     If anything is ambiguous, write the concrete question to [REPORT_FILE] and return
     `status: NEEDS_CONTEXT`; do not guess and do not put the question in the response.
@@ -72,6 +77,11 @@ Subagent (<surface>-agent):
     Do not edit the graph inline. If the brief's change invalidates a durable Rule, Term, or Decision,
     report it as a typed promotion candidate in [REPORT_FILE] for review's sweep. Do not broaden scope
     beyond the brief.
+
+    ## Correction dispatch
+    When this dispatch is a correction, the report names the admitted remedy it applied and its
+    confirming check, and shows that check's result. Never edit criteria or tests to make a failure
+    disappear; a failing check is fixed in the implementation, or reported as a concern.
 
     ## Self-review and commit
     Verify the brief completely, test quality, names, and pristine output. If commit authorization is

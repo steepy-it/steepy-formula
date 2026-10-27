@@ -11,11 +11,12 @@ import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { readProjectConfig } from './formula/core/project-config.mjs';
 import { parseWorkPath, readWorkPath, writeWorkPath } from './work-paths.mjs';
 import { parseTaskResultProjection } from './task-results.mjs';
+import { parseCorrectionSummaryBlock } from './correction-state.mjs';
 
 export const CONTEXT_MANIFEST_SCHEMA_VERSION = 1;
 export const MODEL_TIERS = Object.freeze(['cheap', 'standard', 'most-capable']);
 export const PHASE_ROLES = Object.freeze(['plan', 'implement', 'review']);
-export const TASK_ROLES = Object.freeze(['implementer', 'task-reviewer', 'fix', 'final-review']);
+export const TASK_ROLES = Object.freeze(['implementer', 'task-reviewer', 'fix', 'final-review', 'diagnosis', 'final-diagnosis']);
 
 const COMPLEXITY_TIER = Object.freeze({
   mechanical: 'cheap',
@@ -47,8 +48,10 @@ const ROLE_PHASE = Object.freeze({
   'task-reviewer': 'implement',
   fix: 'implement',
   'final-review': 'implement',
+  diagnosis: 'implement',
+  'final-diagnosis': 'implement',
 });
-const TASK_SCOPED_ROLES = new Set(['implementer', 'task-reviewer', 'fix']);
+const TASK_SCOPED_ROLES = new Set(['implementer', 'task-reviewer', 'fix', 'diagnosis']);
 const MANIFEST_KEYS = new Set([
   'schemaVersion', 'runId', 'scope', 'objective', 'required', 'onDemand', 'outputs',
   'modelTier', 'attempt', 'testCommand', 'criterionIds', 'contract',
@@ -64,6 +67,7 @@ const PURPOSES = Object.freeze({
   brief: 'task contract',
   report: 'implementer report',
   issue: 'reviewer issue artifact',
+  evidence: 'failing correction evidence',
   taskDiff: 'current task diff',
   branchDiff: 'aggregate branch diff',
   resultIndex: 'plan and task-result index',
@@ -118,6 +122,14 @@ function markdownField(section, label) {
   return match[1].trim().replace(/^`([^`]*)`$/, '$1').trim();
 }
 
+function markdownFieldLines(section, label) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Horizontal whitespace only after the label, so an empty value never swallows the next line.
+  return [...String(section).matchAll(new RegExp(
+    `^[ \\t]*[-*]?[ \\t]*(?:\\*\\*${escaped}(?::\\*\\*|\\*\\*:)|${escaped}:)[ \\t]*(.*?)[ \\t]*$`, 'gim',
+  ))];
+}
+
 function complexityValue(raw, label) {
   const value = String(raw ?? '').replace(/[`*_]/g, '').trim().toLowerCase();
   if (!Object.hasOwn(COMPLEXITY_TIER, value)) {
@@ -164,6 +176,16 @@ export function specPhaseContext(specText) {
   };
 }
 
+function parseDependencies(raw, taskId) {
+  const value = plainMetadataValue(raw.trim().replace(/^`([^`]*)`$/, '$1'));
+  const numbers = /^[1-9]\d*(?:, [1-9]\d*)*$/.test(value) ? value.split(', ').map(Number) : null;
+  const increasing = numbers?.every((number, index) => index === 0 || number > numbers[index - 1]);
+  if (value !== 'none' && !increasing) {
+    throw new Error(`Task ${taskId} has malformed Dependencies '${value}': expected none or increasing earlier task numbers like 1, 3`);
+  }
+  return value === 'none' ? [] : value.split(', ');
+}
+
 export function planPhaseContext(planText, { review = false } = {}) {
   const text = String(planText ?? '');
   // Discover every H2 Task-like boundary before validating any identifier. If
@@ -204,6 +226,10 @@ export function planPhaseContext(planText, { review = false } = {}) {
     const criteria = markdownField(section, 'Success criteria');
     if (criteria === undefined) throw new Error(`Task ${heading[1]} is missing Success criteria evidence`);
     const { criterionIds } = parseSuccessCriteria(criteria, { label: `Task ${heading[1]} Success criteria` });
+    const dependencyFields = markdownFieldLines(section, 'Dependencies');
+    if (dependencyFields.length === 0) throw new Error(`Task ${heading[1]} is missing Dependencies evidence`);
+    if (dependencyFields.length > 1) throw new Error(`Task ${heading[1]} has duplicate Dependencies fields`);
+    const dependencies = parseDependencies(dependencyFields[0][1], heading[1]);
     return {
       task: assertSafeLine(heading[1], 'task identifier'),
       owningSurface: assertSafeLine(surface.replace(/[`*_]/g, '').trim(), `Task ${heading[1]} surface`),
@@ -212,8 +238,19 @@ export function planPhaseContext(planText, { review = false } = {}) {
         testCommand: assertSafeLine(testCommand.replace(/[`*_]/g, '').trim(), `Task ${heading[1]} test command`),
       }),
       criterionIds,
+      dependencies,
     };
   });
+  const taskIds = new Set(tasks.map(({ task }) => task));
+  for (const { task, dependencies } of tasks) {
+    for (const dep of dependencies) {
+      if (dep === task) throw new Error(`Task ${task} cannot depend on itself`);
+      if (taskIds.has(dep) && Number(dep) > Number(task)) {
+        throw new Error(`Task ${task} has a forward dependency on Task ${dep}`);
+      }
+      if (!taskIds.has(dep)) throw new Error(`Task ${task} depends on unknown Task ${dep}`);
+    }
+  }
   const distribution = complexityDistribution(tasks);
   const allMechanical = distribution.mechanical === tasks.length;
   const eligibleTier = allMechanical ? 'cheap' : 'standard';
@@ -231,6 +268,36 @@ export function planPhaseContext(planText, { review = false } = {}) {
   };
 }
 
+// The plan tasks a partial handoff omits, in plan order, as its correction summary declares them: each
+// stopped task with the execution it retained, each dependency-blocked task with none. The omitted
+// tasks must be exactly the declared ones, a declared task never has a result, and every completed task
+// has one.
+function declaredOmissions(omittedIds, delivered, summary) {
+  const declared = new Map();
+  const declare = (task, omission) => {
+    if (declared.has(task)) throw new Error(`correction summary names task ${task} more than once`);
+    declared.set(task, omission);
+  };
+  for (const entry of summary.stopped) declare(entry.task, { reason: 'stopped', execution: entry.execution });
+  for (const entry of summary.blocked) declare(entry.task, { reason: 'dependency-blocked', execution: null });
+  for (const [task, { reason }] of declared) {
+    if (delivered.has(task)) throw new Error(`task result index has a result for ${reason} task ${task}`);
+  }
+  for (const task of summary.completed) {
+    if (!delivered.has(task)) throw new Error(`correction summary completed task ${task} has no task result`);
+  }
+  const undeclared = omittedIds.filter((task) => !declared.has(task));
+  if (undeclared.length > 0) throw new Error(`task result index omits plan task ids: ${undeclared.join(', ')}`);
+  const unknown = [...declared.keys()].filter((task) => !omittedIds.includes(task));
+  if (unknown.length > 0) throw new Error(`correction summary names unknown plan task ids: ${unknown.join(', ')}`);
+  return omittedIds.map((task) => ({ task, ...declared.get(task) }));
+}
+
+// The review route of an implemented plan: the reviewed (delivered) tasks of the result index. An index
+// carrying a correction summary block (a partial handoff, its block projected PENDING once the final
+// cycle is due) may omit exactly the stopped and dependency-blocked tasks it declares; the route then
+// also names them (`omitted`), the run's `correctionOutcome`, and every plan criterion for the review to
+// map. Without a block every plan task must have a result.
 export function reviewPhaseContext(planText, resultIndexText) {
   const plan = planPhaseContext(planText);
   const planTasks = new Map();
@@ -243,6 +310,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
   const reviewedIds = [];
   const seen = new Set();
   const normalizedIndex = String(resultIndexText ?? '').replace(/\r\n?/g, '\n');
+  const summary = parseCorrectionSummaryBlock(normalizedIndex);
   const projection = parseTaskResultProjection(normalizedIndex);
   const recordId = (id) => {
     const key = id.toLowerCase();
@@ -278,9 +346,10 @@ export function reviewPhaseContext(planText, resultIndexText) {
   const omittedIds = plan.tasks
     .map((task) => task.task)
     .filter((id) => !seen.has(id.toLowerCase()));
-  if (omittedIds.length > 0) {
+  if (summary === null && omittedIds.length > 0) {
     throw new Error(`task result index omits plan task ids: ${omittedIds.join(', ')}`);
   }
+  const omitted = summary === null ? null : declaredOmissions(omittedIds, seen, summary);
 
   const tasks = reviewedIds.map((id) => planTasks.get(id.toLowerCase()));
   const distribution = complexityDistribution(tasks);
@@ -288,7 +357,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
   const eligibleTier = allMechanical ? 'cheap' : 'standard';
   const modelTier = eligibleTier === 'cheap' ? 'standard' : eligibleTier;
   const testCommands = [...new Set(tasks.map((task) => task.testCommand).filter(Boolean))];
-  const criterionIds = [...new Set(tasks.flatMap((task) => task.criterionIds))];
+  const criterionIds = [...new Set((summary === null ? tasks : plan.tasks).flatMap((task) => task.criterionIds))];
   return {
     tasks,
     modelTier,
@@ -300,6 +369,7 @@ export function reviewPhaseContext(planText, resultIndexText) {
       distributionSegment(distribution),
       ...(eligibleTier === 'cheap' ? ['reviewer-floor=standard'] : []),
     ].join(';'),
+    ...(summary === null ? {} : { omitted, correctionOutcome: summary.outcome }),
   };
 }
 
@@ -677,6 +747,54 @@ export function buildFinalReviewManifest(input) {
   });
 }
 
+function selectedEvidencePaths(input) {
+  const paths = safePaths(input.evidencePaths, 'evidence path');
+  if (paths.length === 0) throw new Error('diagnosis requires at least one evidence path');
+  const seen = new Set();
+  for (const path of paths) {
+    if (seen.has(path)) throw new Error(`duplicate evidence path '${path}'`);
+    seen.add(path);
+  }
+  return paths;
+}
+
+export function buildDiagnosisManifest(input) {
+  const standards = selectedStandardPaths(input);
+  const evidence = selectedEvidencePaths(input);
+  const outputs = safePaths(input.outputs, 'output path');
+  if (outputs.length !== 1) throw new Error('diagnosis requires exactly one output path');
+  parseWorkPath(outputs[0], 'work-output', 'correction-diagnosis');
+  return taskInput(input, {
+    role: 'diagnosis',
+    objective: `Diagnose the failed correction cycle for Task ${safeInteger(input.task, 'task')} without changing source`,
+    requiredInputs: (root) => [
+      required(root, input.briefPath, PURPOSES.brief),
+      ...evidence.map((path) => required(root, path, PURPOSES.evidence)),
+      required(root, input.taskDiffPath, PURPOSES.taskDiff),
+      ...standards.map((path) => required(root, path, PURPOSES.standard)),
+    ],
+    onDemandInputs: (root) => optionalOnDemand(root, input.hubIndexPath, PURPOSES.hub),
+  });
+}
+
+export function buildFinalDiagnosisManifest(input) {
+  const standards = selectedStandardPaths(input);
+  const evidence = selectedEvidencePaths(input);
+  return commonManifest(input, {
+    phase: 'implement',
+    role: 'final-diagnosis',
+    objective: 'Diagnose the failed final-review cycle without changing source',
+    requiredInputs: (root) => [
+      required(root, assertCriteriaOnlyPath(input.criteriaPath), PURPOSES.criteria),
+      required(root, input.taskResultIndexPath, PURPOSES.resultIndex),
+      required(root, input.branchDiffPath, PURPOSES.branchDiff),
+      ...evidence.map((path) => required(root, path, PURPOSES.evidence)),
+      ...standards.map((path) => required(root, path, PURPOSES.standard)),
+    ],
+    onDemandInputs: () => [],
+  });
+}
+
 export function buildTaskManifest(role, input) {
   safeRole(role);
   const builders = {
@@ -684,6 +802,8 @@ export function buildTaskManifest(role, input) {
     'task-reviewer': buildTaskReviewerManifest,
     fix: buildFixManifest,
     'final-review': buildFinalReviewManifest,
+    diagnosis: buildDiagnosisManifest,
+    'final-diagnosis': buildFinalDiagnosisManifest,
   };
   if (!Object.hasOwn(builders, role)) throw new Error(`'${role}' is not a task role`);
   return builders[role](input);
@@ -893,7 +1013,7 @@ export function validateContextManifest(manifest, { repoRoot }) {
   const onDemandInputs = manifest.onDemand.map((entry, index) => validateInputEntry(entry, index, 'onDemand', root));
   const outputs = safePaths(manifest.outputs, 'output path');
   const modelTier = safeTier(manifest.modelTier);
-  if (role === 'review' || role === 'final-review') {
+  if (role === 'review' || role === 'final-review' || role === 'final-diagnosis') {
     const criteria = requiredInputs.find((entry) => entry.purpose === PURPOSES.criteria);
     if (!criteria) throw new Error(`role '${role}' requires a criteria-only artifact`);
     assertCriteriaOnlyPath(criteria.path);
@@ -952,7 +1072,7 @@ export function manifestReferencePrompt({ phase, manifestPath, skill, runId, att
 
 const CLI_PATH_OPTIONS = Object.freeze([
   'brief', 'report', 'task-diff', 'standard', 'hub-index', 'plan', 'spec', 'issue',
-  'criteria', 'task-result-index', 'branch-diff', 'artifact-output',
+  'criteria', 'task-result-index', 'branch-diff', 'evidence', 'artifact-output',
 ]);
 
 const ROLE_OPTIONS = Object.freeze({
@@ -960,6 +1080,8 @@ const ROLE_OPTIONS = Object.freeze({
   'task-reviewer': new Set(['brief', 'report', 'task-diff', 'standard', 'hub-index']),
   fix: new Set(['brief', 'issue', 'task-diff', 'standard']),
   'final-review': new Set(['criteria', 'task-result-index', 'branch-diff', 'standard']),
+  diagnosis: new Set(['brief', 'evidence', 'task-diff', 'standard', 'hub-index']),
+  'final-diagnosis': new Set(['criteria', 'task-result-index', 'branch-diff', 'evidence', 'standard']),
 });
 
 function cliInput(values, repoRoot) {
@@ -1000,6 +1122,7 @@ function cliInput(values, repoRoot) {
       criteriaPath: values.criteria,
       taskResultIndexPath: values['task-result-index'],
       branchDiffPath: values['branch-diff'],
+      evidencePaths: values.evidence,
     },
   };
 }
@@ -1070,7 +1193,7 @@ function verifyHandoff(values) {
 }
 
 export function main(argv = process.argv.slice(2)) {
-  const usage = 'usage: autopilot-context.mjs --role <implementer|task-reviewer|fix|final-review> --repo-root <root> --run-id <id> --model-tier <tier> --output <manifest-path> [role-specific named paths]';
+  const usage = 'usage: autopilot-context.mjs --role <implementer|task-reviewer|fix|final-review|diagnosis|final-diagnosis> --repo-root <root> --run-id <id> --model-tier <tier> --output <manifest-path> [role-specific named paths]';
   let values;
   try {
     ({ values } = parseArgs({
@@ -1097,6 +1220,7 @@ export function main(argv = process.argv.slice(2)) {
         criteria: { type: 'string' },
         'task-result-index': { type: 'string' },
         'branch-diff': { type: 'string' },
+        evidence: { type: 'string', multiple: true },
         'artifact-output': { type: 'string', multiple: true },
         output: { type: 'string' },
         'verify-plan': { type: 'boolean' },

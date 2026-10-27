@@ -38,6 +38,15 @@ function acceptedPhase(phase = 'plan') {
     + `2026-08-10T09:00:01.000Z — ${phase} — ${event} — run-id=${priorRun} attempt=1 complete\n`
     + `2026-08-10T09:00:02.000Z — CONDUCTOR — PHASE_ACCEPTED — run-id=${priorRun} phase=${phase} attempt=1 child-event=${event}\n`;
 }
+// A verified partial outcome of `phase` (implement or review), correlated with its spawn.
+function partialPhase(phase) {
+  const event = phase === 'review' ? 'PARTIAL_REVIEWED' : 'PARTIAL';
+  const number = ['plan', 'implement', 'review'].indexOf(phase) + 1;
+  return protocolLine + taskResultLine
+    + `2026-08-10T09:00:00.000Z — CONDUCTOR — SPAWNED — run-id=${priorRun} phase=${phase} attempt=1 display-name=steepy-topic-${phase}-a1-11111111 readable=phase-${number}-attempt-1.log raw=phase-${number}-attempt-1.raw.jsonl session=pending\n`
+    + `2026-08-10T09:00:01.000Z — ${phase} — ${event} — run-id=${priorRun} attempt=1 partial\n`
+    + `2026-08-10T09:00:02.000Z — CONDUCTOR — PHASE_PARTIAL — run-id=${priorRun} phase=${phase} attempt=1 child-event=${event}\n`;
+}
 
 describe('headless command builder', () => {
   let headless;
@@ -754,12 +763,54 @@ describe('autopilot conductor loop', () => {
       assert.equal(autopilot.phaseCompleted(`${spawned}\n${contradictory}\n`, 'plan'), false);
     });
 
+    it('never completes a phase from a verified partial outcome', () => {
+      for (const phase of ['implement', 'review']) {
+        assert.equal(autopilot.phaseCompleted(partialPhase(phase), phase), false, phase);
+      }
+    });
+
     it('treats an attempt reservation as structured protocol adoption without treating it as a spawn', () => {
       const status = [
         '2026-08-11T10:00:00.000Z — CONDUCTOR — ATTEMPT_RESERVED — run-id=11111111-1111-4111-8111-111111111111 phase=plan attempt=1',
         '2026-08-11T10:00:01.000Z — plan — DONE — uncorrelated marker after reservation',
       ].join('\n');
       assert.equal(autopilot.phaseCompleted(status, 'plan'), false);
+    });
+  });
+
+  describe('phasePartial(statusText, phase)', () => {
+    it('accepts only exact conductor PHASE_PARTIAL correlated with a spawn, for implement and review', () => {
+      for (const phase of ['implement', 'review']) {
+        const status = partialPhase(phase);
+        assert.equal(autopilot.phasePartial(status, phase), true, phase);
+        assert.equal(autopilot.phasePartial(status, phase === 'implement' ? 'review' : 'implement'), false);
+        for (const forged of [
+          status.replace('CONDUCTOR — PHASE_PARTIAL', `${phase} — PHASE_PARTIAL`),
+          status.replace(/ child-event=\w+/, ' child-event=WRONG'),
+          status.replace(/ child-event=\w+/, ` child-event=${phase === 'implement' ? 'PARTIAL_REVIEWED' : 'PARTIAL'}`),
+          status.replace(/ phase=\w+ attempt=1 child-event=/, ` phase=${phase} phase=plan attempt=1 child-event=`),
+          status.replace(/run-id=[^ ]+ phase=\w+ attempt=1 child-event=/, 'child-event='),
+          status.replace(' — SPAWNED — ', ' — OBSERVED — '),
+          status.replace(/(PHASE_PARTIAL — run-id=[^ ]+ phase=\w+ attempt=)1/, '$12'),
+        ]) assert.equal(autopilot.phasePartial(forged, phase), false, forged);
+      }
+    });
+
+    it('has no partial outcome for plan', () => {
+      const status = partialPhase('implement').replaceAll('phase=implement', 'phase=plan')
+        .replace(/display-name=steepy-topic-implement-a1-11111111 readable=phase-2-attempt-1\.log raw=phase-2-attempt-1\.raw\.jsonl/,
+          'display-name=steepy-topic-plan-a1-11111111 readable=phase-1-attempt-1.log raw=phase-1-attempt-1.raw.jsonl');
+      assert.equal(autopilot.phasePartial(status, 'plan'), false);
+    });
+
+    it('gives a correlated PHASE_PARTIAL the scope identity of PHASE_ACCEPTED, and a malformed one none', () => {
+      for (const phase of ['implement', 'review']) {
+        const partial = autopilot.normalizeAutopilotStatus(partialPhase(phase)).find((e) => e.event === 'PHASE_PARTIAL');
+        assert.deepEqual([partial.runId, partial.scope, partial.attempt], [priorRun, phase, 1]);
+        const malformed = autopilot.normalizeAutopilotStatus(partialPhase(phase).replace(/ child-event=\w+/, ' child-event=WRONG'))
+          .find((e) => e.event === 'PHASE_PARTIAL');
+        assert.equal(malformed.scope, null);
+      }
     });
   });
 
@@ -930,7 +981,7 @@ UPSTREAM_BODY_SENTINEL_MUST_NOT_BE_IN_PROMPT
   function seedPlanArtifacts(run) {
     const planPath = join(run.dir, '.formula', 'work', 'plans', 'topic.md');
     mkdirSync(dirname(planPath), { recursive: true });
-    writeFileSync(planPath, '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Success criteria:** SC1\n');
+    writeFileSync(planPath, '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Test command:** `npm test`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC1\n');
     mkdirSync(run.taskDir, { recursive: true });
     writeFileSync(join(run.taskDir, 'ledger.md'), '# Ledger\n');
   }
@@ -2404,7 +2455,7 @@ if (process.argv[2] === '--version') {
   it('routes all-mechanical implementation cheaply while enforcing the standard review floor', async () => {
     const run = makeRun({ featureComplexity: 'mechanical' });
     const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
-    const mechanicalPlan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Success criteria:** SC1\n';
+    const mechanicalPlan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Test command:** `npm test`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC1\n';
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -2428,7 +2479,7 @@ if (process.argv[2] === '--version') {
   it('rejects an omitted higher-complexity plan task before review spawn', async () => {
     const run = makeRun({ featureComplexity: 'mechanical' });
     const capturePath = join(run.dir, '.formula', 'work', 'spawn-capture.jsonl');
-    const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** `scripts`\n- **Complexity:** `design`\n- **Success criteria:** SC2\n';
+    const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Test command:** `npm test`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** `scripts`\n- **Test command:** `npm test`\n- **Complexity:** `design`\n- **Dependencies:** none\n- **Success criteria:** SC2\n';
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
@@ -2439,7 +2490,8 @@ if (process.argv[2] === '--version') {
       assert.equal(code, 1);
       const captures = captureEntries(capturePath);
       assert.deepEqual(captures.map(({ descriptor }) => descriptor.requestedModelTier), ['cheap', 'standard']);
-      assert.match(linesWith(statusOf(run), ' — ARTIFACT_FAILED — ')[0], /omits plan task ids: 2/i);
+      // The guard handoff routes the index against its COMPLETE summary, which names Task 2 completed.
+      assert.match(linesWith(statusOf(run), ' — ARTIFACT_FAILED — ')[0], /correction summary completed task 2 has no task result/i);
       assert.ok(!existsSync(join(run.taskDir, 'context', 'phase-review-attempt-1.json')));
     } finally {
       rmSync(run.dir, { recursive: true, force: true });
@@ -2489,7 +2541,7 @@ if (process.argv[2] === '--version') {
     try {
       const { code } = await drive(run, {
         FAKE_HARNESS_MODE: 'done',
-        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `enormous`\n',
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `enormous`\n- **Dependencies:** none\n',
       });
       assert.equal(code, 1);
       const status = statusOf(run);
@@ -3293,7 +3345,8 @@ if (process.argv[2] === '--version') {
       writeFileSync(join(run.taskDir, 'final-review.md'), 'Status: Approved\n');
       const result = await drive(run, { FAKE_HARNESS_SKIP_REVIEW_GATE: '1' });
       assert.equal(result.code, 1);
-      assert.match(statusOf(run), /reviewer evidence rejected.*final reviewer gate/);
+      // No reviewer gate ran under the guard: check (a) finds no correction run behind the DONE.
+      assert.match(statusOf(run), /guard=correction guard rejected: RUN_NOT_OPEN: the correction run was never opened/);
       assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
       assert.doesNotMatch(statusOf(run), /SPAWNED[^\n]*phase=review/);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
@@ -3303,7 +3356,7 @@ if (process.argv[2] === '--version') {
     const run = makeRun();
     try {
       const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'steepysite-receipt',
-        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1, SC2\n' };
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Test command:** `npm test`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1, SC2\n' };
       const first = await drive(run, env);
       assert.equal(first.code, 1, first.err);
       assert.match(statusOf(run), /TASK_RESULT_PROTOCOL — version=2/);
@@ -3330,7 +3383,7 @@ if (process.argv[2] === '--version') {
     const run = makeRun();
     try {
       const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'receipt-needs-context',
-        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n' };
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Test command:** `npm test`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n' };
       assert.equal((await drive(run, env)).code, 1);
       const paths = ['baseline.json', 'capture.json', 'result.json', 'report.md'].map((suffix) =>
         join(run.taskDir, `task-1-execution-1-${suffix}`));
@@ -3352,7 +3405,7 @@ if (process.argv[2] === '--version') {
     const run = makeRun();
     try {
       const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'receipt-wrong-ancestor',
-        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n' };
+        FAKE_HARNESS_PLAN_TEXT: '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Test command:** `npm test`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n' };
       assert.equal((await drive(run, env)).code, 1);
       const result = await drive(run, env);
       assert.equal(result.code, 1);
@@ -3439,7 +3492,7 @@ if (process.argv[2] === '--version') {
     try {
       const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'steepysite-receipt',
         FAKE_HARNESS_PLAN_TEXT: '# Plan\n' + ['1', '2'].map((id) =>
-          `\n## Task ${id}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC${id}\n`).join('') };
+          `\n## Task ${id}\n\n- **Surface:** scripts\n- **Test command:** \`npm test\`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC${id}\n`).join('') };
       assert.equal((await drive(run, env)).code, 1);
       const second = await drive(run, env);
       assert.equal(second.code, 0, second.err);
@@ -3461,8 +3514,11 @@ if (process.argv[2] === '--version') {
       try {
         const result = await drive(run, { FAKE_HARNESS_GATE_MUTATION: mutation });
         assert.equal(result.code, 1);
-        assert.match(statusOf(run), /reviewer evidence rejected/);
-        if (mutation === 'bullet-index') assert.match(statusOf(run), /reviewer-evidence=required v2 task result receipts are missing/);
+        // A code change after the final approval is drift from the guard's last observation (check (a)).
+        assert.match(statusOf(run), mutation === 'change-code'
+          ? /guard=correction guard rejected: INTEGRITY: source drift outside an authorized writer dispatch/
+          : /reviewer evidence rejected/);
+        if (mutation === 'bullet-index') assert.match(statusOf(run), /reviewer-evidence=[^\n]*required v2 task result receipts are missing/);
         assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
         assert.doesNotMatch(statusOf(run), /SPAWNED[^\n]*phase=review/);
       } finally { rmSync(run.dir, { recursive: true, force: true }); }
@@ -3496,7 +3552,8 @@ if (process.argv[2] === '--version') {
       assert.equal((await drive(run, env)).code, 1);
       assert.equal((await drive(run, { ...env, FAKE_HARNESS_FINAL_RESUME_MUTATION: '1' })).code, 1);
       assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
-      assert.match(statusOf(run), /final reviewer gate is not approved|latest task source snapshot drift/);
+      // The post-approval code change is caught by check (a) as drift from the guard's last observation.
+      assert.match(statusOf(run), /guard=correction guard rejected: INTEGRITY: source drift outside an authorized writer dispatch/);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
@@ -3511,6 +3568,345 @@ if (process.argv[2] === '--version') {
       assert.equal(JSON.parse(readFileSync(join(run.taskDir, 'final-review-guard-attempt-1-iteration-1-original.json'))).status, 'ISSUES_FOUND');
       assert.equal(JSON.parse(readFileSync(join(run.taskDir, 'final-review-guard-attempt-1-iteration-2-original.json'))).status, 'APPROVED');
       assert.match(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('a default done run leaves a correction run whose handoff verifies COMPLETE', async () => {
+    const run = makeRun();
+    const runId = '66666666-6666-4666-8666-666666666666';
+    try {
+      const result = await drive(run, { FAKE_HARNESS_MODE: 'done' }, { runId });
+      assert.equal(result.code, 0, result.err);
+      const { readCorrectionHead, verifyCorrectionHandoff } = await import('../scripts/correction-guard.mjs');
+      const verified = verifyCorrectionHandoff(run.dir, {
+        planPath: '.formula/work/plans/topic.md', indexPath: '.formula/work/tasks/topic/task-result-index.md',
+        runId, attempt: 1,
+      });
+      assert.equal(verified.ok, true, `${verified.code}: ${verified.message}`);
+      assert.equal(verified.outcome, 'COMPLETE');
+      // The guard head is recorded before the implement spawn and checked after the child, before acceptance.
+      const status = statusOf(run);
+      const identity = `run-id=${runId} phase=implement attempt=1`;
+      const head = readCorrectionHead(run.dir, { plan: '.formula/work/plans/topic.md' });
+      assert.ok(head.seq > 0);
+      const [guardHead] = linesWith(status, ' — GUARD_HEAD — ');
+      const [guardChecked] = linesWith(status, ' — GUARD_CHECKED — ');
+      assert.match(guardHead, new RegExp(` — CONDUCTOR — GUARD_HEAD — ${identity} seq=0 digest=none$`));
+      assert.match(guardChecked, new RegExp(` — CONDUCTOR — GUARD_CHECKED — ${identity} seq=${head.seq} digest=${head.digest}$`));
+      assert.equal(linesWith(status, ' — GUARD_HEAD — ').length, 1, 'only implement records the guard head');
+      const spawnedImplement = linesWith(status, ' — SPAWNED — ').find((line) => line.includes('phase=implement'));
+      const acceptedImplement = linesWith(status, ' — PHASE_ACCEPTED — ').find((line) => line.includes('phase=implement'));
+      assert.ok(status.indexOf(guardHead) < status.indexOf(spawnedImplement));
+      assert.ok(status.indexOf(` — implement — DONE — `) < status.indexOf(guardChecked));
+      assert.ok(status.indexOf(guardChecked) < status.indexOf(acceptedImplement));
+      assert.match(status, / — review — READY_FOR_PR — /);
+      assert.equal(linesWith(status, ' — PHASE_PARTIAL — ').length, 0);
+      assert.match(result.out, /autopilot: plan → implement → review complete — READY_FOR_PR; status: /);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  // Task 1 is delivered; Task 2 stagnates and stops; Task 3 depends on Task 2 and is blocked.
+  const PARTIAL_PLAN = `# Plan\n${[['1', 'none', 'SC1'], ['2', 'none', 'SC2'], ['3', '2', 'SC2']].map(([id, dependencies, criteria]) =>
+    `\n## Task ${id} — task ${id}\n\n- **Surface:** \`scripts\`\n- **Test command:** \`npm test\`\n- **Complexity:** \`integration\`\n- **Dependencies:** ${dependencies}\n- **Success criteria:** ${criteria}\n`).join('')}`;
+  const partialEnv = (review = 'correction-partial', implement = 'correction-partial') => ({
+    FAKE_HARNESS_PLAN_TEXT: PARTIAL_PLAN, FAKE_HARNESS_MODE_IMPLEMENT: implement, FAKE_HARNESS_MODE_REVIEW: review,
+  });
+  const noDispatch = { commandFor: () => { throw new Error('must not dispatch'); } };
+
+  it('ends a guard-verified partial run with exit 3 and PHASE_PARTIAL for implement and review, and resumes it without spawning', async () => {
+    const run = makeRun();
+    const runId = '77777777-7777-4777-8777-777777777777';
+    try {
+      const result = await drive(run, partialEnv(), { runId });
+      assert.equal(result.code, 3, result.err);
+      const status = statusOf(run);
+      assert.match(status, new RegExp(` — implement — PARTIAL — run-id=${runId} attempt=1 `));
+      assert.match(status, new RegExp(` — CONDUCTOR — PHASE_PARTIAL — run-id=${runId} phase=implement attempt=1 child-event=PARTIAL\n`));
+      assert.match(status, new RegExp(` — review — PARTIAL_REVIEWED — run-id=${runId} attempt=1 `));
+      assert.match(status, new RegExp(` — CONDUCTOR — PHASE_PARTIAL — run-id=${runId} phase=review attempt=1 child-event=PARTIAL_REVIEWED\n`));
+      assert.match(status, / — PHASE_ACCEPTED — [^\n]*phase=plan /);
+      assert.doesNotMatch(status, / — PHASE_ACCEPTED — [^\n]*phase=(?:implement|review) /);
+      assert.doesNotMatch(status, /READY_FOR_PR|HALTED/);
+      assert.match(status, new RegExp(` — GUARD_CHECKED — run-id=${runId} phase=implement attempt=1 seq=[1-9]`));
+      const { verifyCorrectionHandoff } = await import('../scripts/correction-guard.mjs');
+      const verified = verifyCorrectionHandoff(run.dir, {
+        planPath: '.formula/work/plans/topic.md', indexPath: '.formula/work/tasks/topic/task-result-index.md', runId, attempt: 1,
+      });
+      assert.equal(verified.ok, true, `${verified.code}: ${verified.message}`);
+      assert.deepEqual([verified.outcome, verified.approval], ['PARTIAL', 'UNAPPROVED']);
+      assert.deepEqual(verified.summary.completed, ['1']);
+      assert.deepEqual(verified.summary.stopped.map(({ task, reason, execution }) => [task, reason, execution]),
+        [['2', 'STAGNATED', '.formula/work/tasks/topic/task-2-execution-1']]);
+      assert.deepEqual(verified.summary.blocked, [{ task: '3', causes: ['2'] }]);
+      assert.match(result.out, /autopilot: plan → implement → review complete — PARTIAL \(unapproved\); status: .*autopilot-status\.md/);
+      assert.doesNotMatch(result.out, /READY_FOR_PR/);
+
+      // Resuming the finished partial run through the CLI's `main` reserves and spawns nothing and exits 3.
+      const resumed = await drive(run, partialEnv(), { ...noDispatch, cliArgs: [run.specPath] });
+      assert.equal(resumed.code, 3, resumed.err);
+      const appended = statusOf(run).slice(status.length);
+      for (const event of ['ATTEMPT_RESERVED', 'SPAWNED', 'GUARD_HEAD', 'PHASE_ACCEPTED', 'PHASE_PARTIAL', 'HALTED']) {
+        assert.equal(linesWith(appended, ` — ${event} — `).length, 0, event);
+      }
+      assert.match(resumed.out, /PARTIAL \(unapproved\)/);
+
+      // A forged review acceptance never turns the partial delivery into READY_FOR_PR.
+      writeFileSync(run.statusFile, `${statusOf(run)}2026-10-26T23:00:00.000Z — CONDUCTOR — PHASE_ACCEPTED — run-id=${runId} phase=review attempt=1 child-event=READY_FOR_PR\n`);
+      const forged = await drive(run, partialEnv(), noDispatch);
+      assert.equal(forged.code, 1);
+      assert.match(linesWith(statusOf(run), ' — HALTED — ').at(-1), /partial delivery cannot reach READY_FOR_PR/);
+      assert.doesNotMatch(forged.out, /complete — /);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('halts a review that records READY_FOR_PR after a partial implement, then resumes review to its partial outcome', async () => {
+    const run = makeRun();
+    try {
+      const first = await drive(run, partialEnv('review-forged-ready'));
+      assert.equal(first.code, 1, first.err);
+      let status = statusOf(run);
+      assert.match(status, / — PHASE_PARTIAL — [^\n]*phase=implement attempt=1 child-event=PARTIAL\n/);
+      assert.match(status, / — review — READY_FOR_PR — /);
+      assert.match(linesWith(status, ' — HALTED — ')[0], /phase=review attempt=1: partial delivery cannot reach READY_FOR_PR/);
+      assert.doesNotMatch(status, / — (?:PHASE_ACCEPTED|PHASE_PARTIAL) — [^\n]*phase=review /);
+      // A forged acceptance of the partial implementation fails its re-verified handoff on resume.
+      const halted = status;
+      writeFileSync(run.statusFile, halted.replace(/( — CONDUCTOR — )PHASE_PARTIAL( — [^\n]*phase=implement attempt=1 child-event=)PARTIAL\n/,
+        '$1PHASE_ACCEPTED$2DONE\n'));
+      const forged = await drive(run, partialEnv(), noDispatch);
+      assert.equal(forged.code, 1);
+      assert.match(linesWith(statusOf(run), ' — HALTED — ').at(-1),
+        /resume reviewer evidence rejected: the implementation ended PHASE_ACCEPTED but the verified correction outcome is PARTIAL \(UNAPPROVED\)/);
+      writeFileSync(run.statusFile, halted);
+      // The resumed run re-verifies the partial handoff and runs only the review.
+      const second = await drive(run, partialEnv());
+      assert.equal(second.code, 3, second.err);
+      status = statusOf(run);
+      assert.equal(linesWith(status, ' — SPAWNED — ').filter((line) => line.includes('phase=implement')).length, 1);
+      assert.match(status, / — PHASE_PARTIAL — [^\n]*phase=review attempt=2 child-event=PARTIAL_REVIEWED\n/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('halts a review that records PARTIAL_REVIEWED after a complete implement', async () => {
+    const run = makeRun();
+    try {
+      const result = await drive(run, { FAKE_HARNESS_MODE: 'done', FAKE_HARNESS_MODE_REVIEW: 'correction-partial' });
+      assert.equal(result.code, 1, result.err);
+      const status = statusOf(run);
+      assert.match(status, / — PHASE_ACCEPTED — [^\n]*phase=implement /);
+      assert.match(linesWith(status, ' — HALTED — ')[0], /phase=review attempt=1: PARTIAL_REVIEWED after a complete implementation/);
+      assert.doesNotMatch(status, / — (?:PHASE_ACCEPTED|PHASE_PARTIAL) — [^\n]*phase=review /);
+      // A forged partial review of the complete delivery is refused on resume too.
+      const runId = status.match(/SPAWNED — run-id=([0-9a-f-]+) phase=review attempt=1 /)[1];
+      writeFileSync(run.statusFile, `${status}2026-10-26T23:00:00.000Z — CONDUCTOR — PHASE_PARTIAL — run-id=${runId} phase=review attempt=1 child-event=PARTIAL_REVIEWED\n`);
+      const forged = await drive(run, { FAKE_HARNESS_MODE: 'done' }, noDispatch);
+      assert.equal(forged.code, 1);
+      assert.match(linesWith(statusOf(run), ' — HALTED — ').at(-1), /resume: PARTIAL_REVIEWED after a complete implementation/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('halts when the implement child appends a reopen record: autopilot cannot authorize reopening', async () => {
+    const run = makeRun();
+    try {
+      const result = await drive(run, partialEnv('correction-partial', 'correction-reopen-forgery'));
+      assert.equal(result.code, 1, result.err);
+      const status = statusOf(run);
+      assert.match(status, / — ARTIFACT_FAILED — [^\n]*phase=implement attempt=1 guard=autopilot cannot authorize reopening: record-\d+ is REOPEN_AUTHORIZED/);
+      assert.match(linesWith(status, ' — HALTED — ')[0], /autopilot cannot authorize reopening/);
+      assert.doesNotMatch(status, / — (?:GUARD_CHECKED|PHASE_ACCEPTED|PHASE_PARTIAL) — [^\n]*phase=implement /);
+      assert.doesNotMatch(status, /SPAWNED[^\n]*phase=review/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('halts when a review attempt changes the correction guard head', async () => {
+    const run = makeRun();
+    try {
+      const result = await drive(run, partialEnv('correction-reopen-forgery'));
+      assert.equal(result.code, 1, result.err);
+      const status = statusOf(run);
+      assert.match(status, / — PHASE_PARTIAL — [^\n]*phase=implement /);
+      assert.match(status, / — review — PARTIAL_REVIEWED — /);
+      assert.match(status, / — ARTIFACT_FAILED — [^\n]*phase=review attempt=1 guard=guard history rewritten: the correction guard head changed during review/);
+      assert.doesNotMatch(status, / — (?:PHASE_ACCEPTED|PHASE_PARTIAL) — [^\n]*phase=review /);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('refuses a reopen anywhere in an autopilot guard history, even one handed over behind a forged GUARD_CHECKED', async () => {
+    const run = makeRun();
+    try {
+      assert.equal((await drive(run, partialEnv('correction-partial', 'correction-reopen-forgery'))).code, 1);
+      const { readCorrectionHead } = await import('../scripts/correction-guard.mjs');
+      const head = readCorrectionHead(run.dir, { plan: '.formula/work/plans/topic.md' });
+      // The forging child crashed right after its PARTIAL, and a forged conductor line claims its head checked.
+      const status = statusOf(run);
+      const runId = status.match(/SPAWNED — run-id=([0-9a-f-]+) phase=implement attempt=1 /)[1];
+      const crashed = status.slice(0, status.indexOf('\n', status.indexOf(' — implement — PARTIAL — ')) + 1)
+        + `2026-10-26T23:00:00.000Z — CONDUCTOR — GUARD_CHECKED — run-id=${runId} phase=implement attempt=1 seq=${head.seq} digest=${head.digest}\n`;
+      writeFileSync(run.statusFile, crashed);
+      // The restart runs no startup check and hands the forged reopen to attempt 2: its check (a) refuses it.
+      const restarted = await drive(run, { ...partialEnv(), FAKE_HARNESS_MODE_IMPLEMENT: 'marker-only', FAKE_HARNESS_MARK: 'PARTIAL' });
+      assert.equal(restarted.code, 1, restarted.err);
+      let appended = statusOf(run).slice(crashed.length);
+      assert.match(appended, new RegExp(` — GUARD_HEAD — run-id=[0-9a-f-]+ phase=implement attempt=2 seq=${head.seq} `));
+      assert.match(appended, / — implement — PARTIAL — run-id=[0-9a-f-]+ attempt=2 /);
+      const refused = new RegExp(` — ARTIFACT_FAILED — run-id=[0-9a-f-]+ phase=implement attempt=2 guard=autopilot cannot authorize reopening: record-${head.seq} is REOPEN_AUTHORIZED`);
+      assert.match(appended, refused);
+      assert.match(linesWith(appended, ' — HALTED — ')[0], /autopilot cannot authorize reopening/);
+      assert.doesNotMatch(appended, / — (?:GUARD_CHECKED|PHASE_ACCEPTED|PHASE_PARTIAL) — /);
+      // Every later restart halts at the startup check, before anything is reserved or spawned.
+      const before = statusOf(run);
+      assert.equal((await drive(run, partialEnv(), noDispatch)).code, 1);
+      appended = statusOf(run).slice(before.length);
+      assert.match(appended, refused);
+      for (const event of ['ATTEMPT_RESERVED', 'SPAWNED', 'GUARD_HEAD', 'GUARD_CHECKED']) {
+        assert.equal(linesWith(appended, ` — ${event} — `).length, 0, event);
+      }
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('compares the guard head when a review attempt is interrupted, and halts on a change', async () => {
+    const run = makeRun();
+    let nativeStop;
+    try {
+      // The review child forges a guard record, records PARTIAL_REVIEWED, then lingers until it is stopped.
+      const driving = drive(run, { ...partialEnv('correction-reopen-forgery'), FAKE_HARNESS_HOLD: 'review' },
+        { registerNativeStop: ({ stop }) => { nativeStop = stop; } });
+      const forged = await waitFor(() => / — review — PARTIAL_REVIEWED — /.test(statusOf(run)), 60000);
+      nativeStop?.();
+      const { code } = await driving;
+      assert.equal(forged, true, 'the review child never recorded PARTIAL_REVIEWED');
+      assert.equal(code, 1);
+      const status = statusOf(run);
+      const [interrupted] = linesWith(status, ' — INTERRUPTED — ');
+      const [failed] = linesWith(status, ' — ARTIFACT_FAILED — ');
+      const halted = linesWith(status, ' — HALTED — ');
+      assert.match(interrupted, /phase=review attempt=1 source=native-stop child-killed=true/);
+      assert.match(failed, /phase=review attempt=1 guard=guard history rewritten: the correction guard head changed during review/);
+      assert.equal(halted.length, 1, status);
+      assert.match(halted[0], /phase=review attempt=1: guard history rewritten: the correction guard head changed during review/);
+      assert.ok(status.indexOf(interrupted) < status.indexOf(failed) && status.indexOf(failed) < status.indexOf(halted[0]));
+      assert.doesNotMatch(status, / — (?:PHASE_ACCEPTED|PHASE_PARTIAL) — [^\n]*phase=review /);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('never accepts a STOPPED final as PHASE_ACCEPTED, neither from its own attempt nor from a resumed one', async () => {
+    const run = makeRun();
+    try {
+      const env = { FAKE_HARNESS_MODE_IMPLEMENT: 'correction-final-stopped' };
+      // The child claims DONE for a run whose final cycle it stopped: the guard verifies PARTIAL (UNAPPROVED).
+      const first = await drive(run, env);
+      assert.equal(first.code, 1, first.err);
+      let status = statusOf(run);
+      assert.match(status, / — implement — DONE — /);
+      assert.match(status, / — GUARD_CHECKED — run-id=[0-9a-f-]+ phase=implement attempt=1 /);
+      assert.match(status, / — ARTIFACT_FAILED — run-id=[0-9a-f-]+ phase=implement attempt=1 correction-outcome=child recorded DONE but the verified correction outcome is PARTIAL \(UNAPPROVED\)/);
+      assert.match(linesWith(status, ' — HALTED — ')[0], /child recorded DONE but the verified correction outcome is PARTIAL \(UNAPPROVED\)/);
+      // A resumed attempt cannot carry an earlier attempt's STOPPED final: only an approved final is ever
+      // retained, so the handoff does not verify whatever the child records.
+      const second = await drive(run, env);
+      assert.equal(second.code, 1, second.err);
+      status = statusOf(run);
+      assert.match(status, / — implement — PARTIAL — run-id=[0-9a-f-]+ attempt=2 /);
+      assert.match(status, / — ARTIFACT_FAILED — run-id=[0-9a-f-]+ phase=implement attempt=2 reviewer-evidence=[^\n]*final reviewer gate correlation mismatch/);
+      assert.match(linesWith(status, ' — HALTED — ').at(-1), /attempt=2: reviewer evidence rejected/);
+      assert.doesNotMatch(status, / — (?:PHASE_ACCEPTED|PHASE_PARTIAL) — [^\n]*phase=implement/);
+      assert.doesNotMatch(status, /SPAWNED[^\n]*phase=review/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('records PHASE_PARTIAL for an honest PARTIAL whose final cycle the same attempt stopped, and exits 3 after review', async () => {
+    const run = makeRun();
+    const runId = '88888888-8888-4888-8888-888888888888';
+    try {
+      const result = await drive(run, {
+        FAKE_HARNESS_MODE_IMPLEMENT: 'correction-final-stopped', FAKE_HARNESS_FINAL_STOPPED_MARK: 'PARTIAL',
+        FAKE_HARNESS_MODE_REVIEW: 'correction-partial',
+      }, { runId });
+      assert.equal(result.code, 3, result.err);
+      const status = statusOf(run);
+      assert.match(status, new RegExp(` — implement — PARTIAL — run-id=${runId} attempt=1 `));
+      assert.match(status, new RegExp(` — GUARD_CHECKED — run-id=${runId} phase=implement attempt=1 `));
+      assert.match(status, new RegExp(` — CONDUCTOR — PHASE_PARTIAL — run-id=${runId} phase=implement attempt=1 child-event=PARTIAL\n`));
+      assert.match(status, new RegExp(` — CONDUCTOR — PHASE_PARTIAL — run-id=${runId} phase=review attempt=1 child-event=PARTIAL_REVIEWED\n`));
+      assert.doesNotMatch(status, / — PHASE_ACCEPTED — [^\n]*phase=(?:implement|review) /);
+      assert.doesNotMatch(status, /READY_FOR_PR|HALTED|ARTIFACT_FAILED/);
+      const { verifyCorrectionHandoff } = await import('../scripts/correction-guard.mjs');
+      const verified = verifyCorrectionHandoff(run.dir, {
+        planPath: '.formula/work/plans/topic.md', indexPath: '.formula/work/tasks/topic/task-result-index.md', runId, attempt: 1,
+      });
+      assert.equal(verified.ok, true, `${verified.code}: ${verified.message}`);
+      assert.deepEqual([verified.outcome, verified.approval, verified.summary.final.status], ['PARTIAL', 'UNAPPROVED', 'STOPPED']);
+      assert.deepEqual([verified.summary.stopped, verified.summary.blocked], [[], []]);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('halts an implement child that records both DONE and PARTIAL', async () => {
+    const run = makeRun();
+    try {
+      const result = await drive(run, { FAKE_HARNESS_MODE: 'done', FAKE_HARNESS_ALSO_MARK: 'implement:PARTIAL' });
+      assert.equal(result.code, 1, result.err);
+      const status = statusOf(run);
+      assert.match(status, / — implement — PARTIAL — run-id=[0-9a-f-]+ attempt=1 /);
+      assert.match(status, / — ARTIFACT_FAILED — run-id=[0-9a-f-]+ phase=implement attempt=1 correction-outcome=child recorded both DONE and PARTIAL/);
+      assert.doesNotMatch(status, / — (?:PHASE_ACCEPTED|PHASE_PARTIAL) — [^\n]*phase=implement/);
+      assert.doesNotMatch(status, /SPAWNED[^\n]*phase=review/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('halts when the implement child rewrites the correction guard history', async () => {
+    const run = makeRun();
+    try {
+      const result = await drive(run, { FAKE_HARNESS_MODE_IMPLEMENT: 'correction-history-rewrite' });
+      assert.equal(result.code, 1, result.err);
+      const status = statusOf(run);
+      assert.match(status, / — CONDUCTOR — ARTIFACT_FAILED — run-id=[0-9a-f-]+ phase=implement attempt=1 guard=guard history rewritten: INTEGRITY: /);
+      assert.match(linesWith(status, ' — HALTED — ')[0], /phase=implement attempt=1: guard history rewritten/);
+      assert.equal(linesWith(status, ' — GUARD_CHECKED — ').length, 0);
+      assert.doesNotMatch(status, /PHASE_ACCEPTED[^\n]*phase=implement/);
+      assert.doesNotMatch(status, /SPAWNED[^\n]*phase=review/);
+    } finally { rmSync(run.dir, { recursive: true, force: true }); }
+  });
+
+  it('detects on restart a crash between the implement child exit and GUARD_CHECKED, before anything else', async () => {
+    const run = makeRun();
+    try {
+      assert.equal((await drive(run, { FAKE_HARNESS_MODE: 'done' })).code, 0);
+      const { readCorrectionHead } = await import('../scripts/correction-guard.mjs');
+      const head = readCorrectionHead(run.dir, { plan: '.formula/work/plans/topic.md' });
+      // The conductor died right after the child's DONE: no GUARD_CHECKED, no acceptance, nothing later.
+      // Its recorded head is record n, which the child then rewrote in place as another valid envelope.
+      const status = statusOf(run);
+      const crashed = status.slice(0, status.indexOf('\n', status.indexOf(' — implement — DONE — ')) + 1)
+        .replace(/( — GUARD_HEAD — run-id=[0-9a-f-]+ phase=implement attempt=1 )seq=0 digest=none$/m, `$1seq=${head.seq} digest=${head.digest}`);
+      assert.match(crashed, new RegExp(`GUARD_HEAD — [^\\n]* seq=${head.seq} digest=${head.digest}\\n`));
+      writeFileSync(run.statusFile, crashed);
+      const noNewAttempt = (appended) => {
+        for (const event of ['ATTEMPT_RESERVED', 'SPAWNED', 'BASELINE', 'GUARD_HEAD', 'GUARD_CHECKED', 'PHASE_ACCEPTED']) {
+          assert.equal(linesWith(appended, ` — ${event} — `).length, 0, event);
+        }
+      };
+      // A source change outside any authorized writer window is drift, which only that window exempts.
+      writeFileSync(join(run.dir, 'drifted.txt'), 'changed after the child exited\n');
+      assert.equal((await drive(run, { FAKE_HARNESS_MODE: 'done' })).code, 1);
+      const drifted = statusOf(run).slice(crashed.length);
+      assert.match(drifted, / — ARTIFACT_FAILED — run-id=[0-9a-f-]+ phase=implement attempt=1 guard=correction guard rejected: INTEGRITY: source drift outside an authorized writer dispatch/);
+      noNewAttempt(drifted);
+      rmSync(join(run.dir, 'drifted.txt'));
+      writeFileSync(run.statusFile, crashed);
+      const recordPath = join(run.taskDir, 'correction', `record-${head.seq}.json`);
+      const envelope = JSON.parse(readFileSync(recordPath, 'utf8'));
+      envelope.actor.runId = 'rewritten-run';
+      writeFileSync(recordPath, `${JSON.stringify(envelope)}\n`);
+      assert.equal(readCorrectionHead(run.dir, { plan: '.formula/work/plans/topic.md' }).ok, true, 'the chain itself still replays');
+
+      const restarted = await drive(run, { FAKE_HARNESS_MODE: 'done' });
+      assert.equal(restarted.code, 1);
+      const after = statusOf(run);
+      assert.ok(after.startsWith(crashed));
+      const appended = after.slice(crashed.length);
+      assert.match(appended, new RegExp(` — CONDUCTOR — ARTIFACT_FAILED — run-id=[0-9a-f-]+ phase=implement attempt=1 guard=guard history rewritten: record-${head.seq} no longer has the digest`));
+      assert.match(linesWith(appended, ' — HALTED — ')[0], /guard history rewritten/);
+      noNewAttempt(appended);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
 
@@ -3544,7 +3940,7 @@ if (process.argv[2] === '--version') {
       writeFileSync(indexPath, original.replace(block, bullets));
       const before = linesWith(statusOf(run), ' — SPAWNED — ').length;
       assert.equal((await drive(run)).code, 1);
-      assert.match(statusOf(run), /resume reviewer evidence rejected: required v2 task result receipts are missing/);
+      assert.match(statusOf(run), /resume reviewer evidence rejected: [^\n]*required v2 task result receipts are missing/);
       assert.equal(linesWith(statusOf(run), ' — SPAWNED — ').length, before);
     } finally { rmSync(run.dir, { recursive: true, force: true }); }
   });
@@ -3555,7 +3951,7 @@ if (process.argv[2] === '--version') {
       const env = {
         FAKE_HARNESS_MODE_IMPLEMENT: 'task-resume',
         FAKE_HARNESS_PLAN_TEXT: '# Plan\n' + [1, 2, 3].map((id) =>
-          `\n## Task ${id} — integration\n\n- **Surface:** \`scripts\`\n- **Test command:** \`npm test\`\n- **Complexity:** \`integration\`\n- **Success criteria:** SC1, SC2\n`).join(''),
+          `\n## Task ${id} — integration\n\n- **Surface:** \`scripts\`\n- **Test command:** \`npm test\`\n- **Complexity:** \`integration\`\n- **Dependencies:** none\n- **Success criteria:** SC1, SC2\n`).join(''),
       };
       assert.equal((await drive(run, env)).code, 1);
       assert.doesNotMatch(statusOf(run), /PHASE_ACCEPTED[^\n]*phase=implement/);
@@ -4566,6 +4962,16 @@ describe('autopilot main(argv)', () => {
     assert.equal(code, 1);
     assert.match(err, /usage/i);
     assert.match(err, /autopilot\.mjs/);
+  });
+
+  it('lists every exit code in the usage text', async () => {
+    const { code, err } = await captured([]);
+    assert.equal(code, 1);
+    assert.match(err, /exit codes:/i);
+    assert.match(err, /\b0 READY_FOR_PR\b/);
+    assert.match(err, /\b1 refused or halted\b/);
+    assert.match(err, /\b3 verified partial outcome \(unapproved\)/);
+    assert.match(err, /\b25 migrate refusal\b/);
   });
 
   for (const argv of [['--resume-input'], ['--unknown'], ['one.md', 'two.md']]) {

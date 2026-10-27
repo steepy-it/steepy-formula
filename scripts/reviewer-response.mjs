@@ -7,6 +7,7 @@ import { migrateRefusal } from './formula/core/markdown-hub.mjs';
 import { openWorkPathFd, readWorkPath, parseWorkPath, writeWorkPath } from './work-paths.mjs';
 import { decodeReviewerResponse } from '../adapters/reviewer-response.mjs';
 import { reviewPhaseContext } from './autopilot-context.mjs';
+import { parseCorrectionSummaryBlock } from './correction-state.mjs';
 import { assertSafeRelPath } from './sanitize.mjs';
 import { writeAllSync } from './write-all.mjs';
 import { inspectTaskResult, verifyTaskResults } from './task-results.mjs';
@@ -226,11 +227,20 @@ export function setReviewReference(root, { indexPath, state, previousState = nul
   return { indexPath, state, changed: true };
 }
 
+// The lineage executions a partial handoff's route names for its omitted (stopped) tasks.
+function omittedExecutions(route) {
+  return (route.omitted ?? []).filter(({ execution }) => execution !== null).map(({ task, execution }) => ({ task, state: execution }));
+}
+
+// A partial handoff (the route of an index carrying a correction summary block) approves only its
+// delivered tasks; an omitted task's reviewer gate is unknown. Its omissions join the digest only when
+// present, so a complete run keeps its digest, and the summary's outcome never does: the block is
+// projected PENDING before the final review begins and terminal after it.
 function handoffDetails(root, planPath, indexPath, finalState) {
   const plan = readWorkPath(root, planPath, { encoding: 'utf8' });
   const index = readWorkPath(root, indexPath, { encoding: 'utf8' });
   const route = reviewPhaseContext(plan, index);
-  const executions = verifyTaskResults(root, { indexPath, expectedTasks: route.tasks });
+  const executions = verifyTaskResults(root, { indexPath, expectedTasks: route.tasks, omittedExecutions: omittedExecutions(route) });
   const projection = executions.entries;
   const refs = new Map();
   for (const line of index.split(/\r?\n/)) {
@@ -261,7 +271,7 @@ function handoffDetails(root, planPath, indexPath, finalState) {
   refs.delete('final');
   if (refs.size) throw new Error('unknown task reviewer gate');
   return { proofs, digest: hash(JSON.stringify({ plan: boundPlanText(plan, indexPath), tasks: route.tasks,
-    results: projection, finalState, proofs, executions: executions.digest })) };
+    results: projection, finalState, proofs, executions: executions.digest, ...(route.omitted?.length ? { omitted: route.omitted } : {}) })) };
 }
 function assertAttemptManifest(root, indexPath, identity) {
   const dir = indexPath.slice(0, indexPath.lastIndexOf('/'));
@@ -293,16 +303,21 @@ export function captureRetainedApproval(root, { planPath, indexPath, runId, atte
   return Object.freeze({ state, runId: baseline.config.runId, attempt: baseline.config.attempt, digest: hash(JSON.stringify(evidence)) });
 }
 
+// A run whose correction summary reports its final cycle STOPPED hands off its final review as an
+// accepted ISSUES_FOUND or a BLOCKED result, stored and unchanged since, never an approval: the result
+// is UNAPPROVED. Every other run requires the approved final review.
 export function verifyImplementReviews(root, { planPath, indexPath, runId, attempt, retainedApproval = null }) {
   const index = readWorkPath(root, indexPath, { encoding: 'utf8' });
-  const { tasks } = reviewPhaseContext(readWorkPath(root, planPath, { encoding: 'utf8' }), index);
+  const route = reviewPhaseContext(readWorkPath(root, planPath, { encoding: 'utf8' }), index);
+  const { tasks } = route;
+  const finalStopped = parseCorrectionSummaryBlock(index.replace(/\r\n?/g, '\n'))?.final?.status === 'STOPPED';
   const matches = [...index.matchAll(/^Reviewer gate final: (\S+)$/gm)];
   if (matches.length !== 1) throw new Error('missing or ambiguous final reviewer gate');
   const state = matches[0][1];
   const baseline = baselineFor(root, state);
   if (baseline.config.task !== 'final' || baseline.config.plan !== planPath || baseline.config.index !== indexPath) throw new Error('final reviewer gate correlation mismatch');
   assertAttemptManifest(root, indexPath, { runId, attempt });
-  const executionProof = verifyTaskResults(root, { indexPath, expectedTasks: tasks, required: true });
+  const executionProof = verifyTaskResults(root, { indexPath, expectedTasks: tasks, required: true, omittedExecutions: omittedExecutions(route) });
   for (const execution of executionProof.executions) {
     if (execution.config.attempt > attempt) throw new Error('task result is from a future attempt');
     assertAttemptManifest(root, indexPath, execution.config);
@@ -319,6 +334,13 @@ export function verifyImplementReviews(root, { planPath, indexPath, runId, attem
     assertAttemptManifest(root, indexPath, proof.config);
   }
   const result = inspectReview(root, state);
+  if (finalStopped) {
+    // A drifted review comes back BLOCKED without its observation: only the stored result counts.
+    if (!Object.hasOwn(result, 'observation') || !(result.status === 'ISSUES_FOUND' && result.accepted || result.status === 'BLOCKED')) {
+      throw new Error('a stopped final reviewer gate must hold its stored ISSUES_FOUND or BLOCKED review');
+    }
+    return { state, runId, attempt, status: 'UNAPPROVED', ...(sameAttempt ? {} : { retainedApproval }) };
+  }
   if (!result.accepted || result.status !== 'APPROVED') throw new Error('final reviewer gate is not approved');
   return { state, runId, attempt, status: 'APPROVED', ...(sameAttempt ? {} : { retainedApproval }) };
 }

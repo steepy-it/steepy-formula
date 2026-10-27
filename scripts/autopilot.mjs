@@ -20,8 +20,15 @@
 // no-push, stop-before-PR` (single literal), `harness: claude|codex|opencode`,
 // `log-mode: safe|exact`, gear 3, non-empty verdict — and an empty, case-
 // drifted, or unknown value refuses the run before any spawn or write.
+//
+// Exit codes (`main` and `runConductor` resolve to them):
+//   0   READY_FOR_PR: the run completed and review stopped before bump/PR
+//   1   refused or halted
+//   3   verified partial outcome (unapproved): implement handed off a correction run the guard verifies
+//       PARTIAL and review recorded PARTIAL_REVIEWED; the run stops before READY_FOR_PR
+//   25  migrate refusal, checked before any output or write
 import { spawn, spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
   constants as FS_CONSTANTS,
@@ -43,7 +50,11 @@ import { homedir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { verifyImplementReviews, captureRetainedApproval } from './reviewer-response.mjs';
+import { captureRetainedApproval } from './reviewer-response.mjs';
+import {
+  CORRECTION_GUARD_CODES, checkCorrectionDrift, readCorrectionHead, verifyCorrectionHandoff, verifyCorrectionRun,
+} from './correction-guard.mjs';
+import { CORRECTION_RECORD_KINDS } from './correction-state.mjs';
 import { headlessCommand } from '../adapters/headless.mjs';
 import { decodeHeadlessEvent } from '../adapters/headless-events.mjs';
 import { resolveProviderFromModel, tierModelsForProvider } from '../adapters/model-mappings.mjs';
@@ -259,6 +270,16 @@ const COMPLETION_EVENT = Object.freeze({
   implement: 'DONE',
   review: 'READY_FOR_PR',
 });
+
+// The status event a phase records for a verified partial outcome: implement hands off a correction run
+// the guard verifies PARTIAL, and review reviews that partial delivery. Neither is a completion event:
+// the conductor records it as PHASE_PARTIAL, never as PHASE_ACCEPTED, and plan has none.
+const PARTIAL_EVENT = Object.freeze({ implement: 'PARTIAL', review: 'PARTIAL_REVIEWED' });
+
+// The exit code of a run that ended on a verified partial outcome, and the exit-code table the usage
+// text prints.
+const PARTIAL_EXIT = 3;
+const EXIT_CODE_TABLE = '0 READY_FOR_PR, 1 refused or halted, 3 verified partial outcome (unapproved), 25 migrate refusal';
 
 const STATUS_FILE_NAME = 'autopilot-status.md';
 const LOCK_DIRECTORY_NAME = '.gear-3-autopilot.lock';
@@ -522,7 +543,8 @@ function statusWorkflowFields(record) {
   return {
     runId: identity?.runId ?? noteRunId(record.note),
     kind,
-    scope: record.event === 'PHASE_ACCEPTED' && !acceptedIdentity(record)
+    scope: (record.event === 'PHASE_ACCEPTED' && !acceptedIdentity(record))
+      || (record.event === 'PHASE_PARTIAL' && !partialIdentity(record))
       ? null : identity?.phase ?? (PHASES.includes(record.actor) ? record.actor : null),
     attempt: identity?.attempt ?? null,
     ...(baseline === null ? {} : { baseline }),
@@ -565,6 +587,41 @@ function acceptedIdentity(record) {
   const match = record.note.match(/^run-id=([^\s]+) phase=(plan|implement|review) attempt=([1-9]\d*) child-event=(DONE|READY_FOR_PR)$/);
   if (!match || match[4] !== COMPLETION_EVENT[match[2]]) return null;
   return correlatedIdentity(record.note, match[2]);
+}
+
+// The identity of an exact conductor PHASE_PARTIAL record, as acceptedIdentity reads PHASE_ACCEPTED.
+function partialIdentity(record) {
+  if (record.actor !== 'CONDUCTOR' || record.event !== 'PHASE_PARTIAL') return null;
+  const match = record.note.match(/^run-id=([^\s]+) phase=(implement|review) attempt=([1-9]\d*) child-event=(PARTIAL|PARTIAL_REVIEWED)$/);
+  if (!match || match[4] !== PARTIAL_EVENT[match[2]]) return null;
+  return correlatedIdentity(record.note, match[2]);
+}
+
+// The conductor's phase outcomes in status order: a PHASE_ACCEPTED or PHASE_PARTIAL counts only after the
+// SPAWNED of the attempt it names, exactly as replay counts PHASE_ACCEPTED. `partial` tells them apart.
+function phaseOutcomes(statusText) {
+  const spawns = [];
+  const outcomes = [];
+  for (const record of normalizeAutopilotStatus(statusText)) {
+    const spawn = spawnedIdentity(record);
+    if (spawn !== null) {
+      spawns.push(spawn);
+      continue;
+    }
+    const accepted = acceptedIdentity(record);
+    const identity = accepted ?? partialIdentity(record);
+    if (identity !== null && spawns.some((started) => started.runId === identity.runId
+      && started.phase === identity.phase && started.attempt === identity.attempt)) {
+      outcomes.push({ ...identity, partial: accepted === null });
+    }
+  }
+  return outcomes;
+}
+
+// True when the status file records a correlated conductor PHASE_PARTIAL for `phase`: a verified partial
+// outcome that ends the phase without completing it.
+export function phasePartial(statusText, phase) {
+  return phaseOutcomes(statusText).some((outcome) => outcome.phase === phase && outcome.partial);
 }
 
 function validateStatusProtocol(statusText) {
@@ -675,8 +732,9 @@ export function phaseCompleted(statusText, phase, expectedIdentity = null) {
   return workflowScopeCompleted(replayAutopilotStatus(statusText), phase, normalizedIdentity);
 }
 
-// Child evidence is necessary for this attempt, but never resume authority.
-function childCompleted(statusText, phase, identity) {
+// Child evidence is necessary for this attempt, but never resume authority: whether the child of this
+// attempt recorded the correlated marker `event` after its spawn.
+function childMarked(statusText, phase, identity, event) {
   const records = normalizeAutopilotStatus(statusText);
   const spawnIndex = records.findIndex((record) => {
     const spawn = spawnedIdentity(record);
@@ -684,9 +742,115 @@ function childCompleted(statusText, phase, identity) {
   });
   return spawnIndex !== -1 && records.slice(spawnIndex + 1).some((record) => {
     const child = correlatedIdentity(record.note, record.actor, { child: true });
-    return record.actor === phase && record.event === COMPLETION_EVENT[phase]
+    return record.actor === phase && record.event === event
       && child?.runId === identity.runId && child.attempt === identity.attempt;
   });
+}
+
+// The verified correction outcome, and its approval, each implement marker requires of the guard handoff.
+const MARKER_OUTCOME = Object.freeze({
+  DONE: Object.freeze({ outcome: 'COMPLETE', approval: 'APPROVED' }),
+  PARTIAL: Object.freeze({ outcome: 'PARTIAL', approval: 'UNAPPROVED' }),
+});
+
+// The final reviewer gate the task result index names, or null.
+function activeFinalGate(cwd, indexPath) {
+  return readWorkPath(cwd, indexPath, { encoding: 'utf8' }).match(/^Reviewer gate final: (\S+)$/m)?.[1] ?? null;
+}
+
+// --- correction guard integrity ------------------------------------------------------------------
+
+// The guard head of a status note: `seq=<n> digest=<hex|none>`, seq 0 exactly when the run has no record.
+function guardHeadNote(head) {
+  return `seq=${head.seq} digest=${head.digest ?? 'none'}`;
+}
+
+// The head a conductor GUARD_HEAD record of an implement attempt carries, or null when it is malformed.
+function recordedGuardHead(record) {
+  if (record.actor !== 'CONDUCTOR' || record.event !== 'GUARD_HEAD') return null;
+  const match = record.note.match(/^run-id=([^\s]+) phase=implement attempt=([1-9]\d*) seq=(0|[1-9]\d*) digest=([0-9a-f]{64}|none)$/);
+  const identity = match === null ? null : correlatedIdentity(record.note, 'implement');
+  if (identity === null || (match[3] === '0') !== (match[4] === 'none')) return null;
+  return { ...identity, seq: Number(match[3]), digest: match[4] === 'none' ? null : match[4] };
+}
+
+function correctionRecordPath(specName, seq) {
+  return `.formula/work/tasks/${specName}/correction/record-${seq}.json`;
+}
+
+// The correction run's history against `recorded`, the head read before an implement child ran: the full
+// replay must succeed, record n must keep its digest (the hash chain then proves the whole prefix
+// unchanged), and no record after n may authorize a reopening, which only a human grants. On an
+// autopilot-drive run no record at all may: the guard's reopen refuses every autopilot actor and a run has
+// one drive, so a reopen anywhere in its history is forged, even one an earlier attempt handed over.
+// Returns the current head, or the reason the history fails.
+function guardHistoryVerdict(cwd, specName, recorded) {
+  const plan = `.formula/work/plans/${specName}.md`;
+  const head = readCorrectionHead(cwd, { plan });
+  if (!head.ok) return { ok: false, reason: `guard history rewritten: ${head.code}: ${head.message}` };
+  try {
+    if (head.seq < recorded.seq) {
+      return { ok: false, reason: `guard history rewritten: the run has ${head.seq} records, not the ${recorded.seq} recorded before the child ran` };
+    }
+    if (recorded.seq > 0) {
+      const bytes = readWorkPath(cwd, correctionRecordPath(specName, recorded.seq), { expect: 'work-output', family: 'correction-record' });
+      if (createHash('sha256').update(bytes).digest('hex') !== recorded.digest) {
+        return { ok: false, reason: `guard history rewritten: record-${recorded.seq} no longer has the digest recorded before the child ran` };
+      }
+    }
+    const envelopeAt = (seq) => JSON.parse(readWorkPath(cwd, correctionRecordPath(specName, seq),
+      { expect: 'work-output', family: 'correction-record', encoding: 'utf8' }));
+    const autopilotDrive = head.seq > 0 && envelopeAt(1)?.record?.drive === 'autopilot';
+    for (let seq = autopilotDrive ? 1 : recorded.seq + 1; seq <= head.seq; seq += 1) {
+      const envelope = envelopeAt(seq);
+      if (envelope?.record?.kind === CORRECTION_RECORD_KINDS.REOPEN_AUTHORIZED) {
+        return { ok: false, reason: `autopilot cannot authorize reopening: record-${seq} is ${CORRECTION_RECORD_KINDS.REOPEN_AUTHORIZED}` };
+      }
+    }
+  } catch (error) {
+    return { ok: false, reason: `guard history rewritten: ${error.message}` };
+  }
+  return { ok: true, head: { seq: head.seq, digest: head.digest } };
+}
+
+// Check (a) once an implement child exited 0: its history verdict, then the full read-only verification
+// (no halt, no drift), which must succeed.
+function guardCheck(cwd, specName, recorded) {
+  const verdict = guardHistoryVerdict(cwd, specName, recorded);
+  if (!verdict.ok) return verdict;
+  const verified = verifyCorrectionRun(cwd, { plan: `.formula/work/plans/${specName}.md` });
+  if (!verified.ok) return { ok: false, reason: `correction guard rejected: ${verified.code}: ${verified.message}` };
+  return verdict;
+}
+
+// Check (a) at startup, for an attempt that never reached it. The history verdict is the same; the
+// verification differs in two ways only. A run its child never opened has no history to verify. An attempt
+// interrupted inside its authorized writer window legitimately leaves source changes the guard has not
+// recorded yet, so that window, and only that window, is exempt from the drift check; a halted run is not.
+function startupGuardCheck(cwd, specName, recorded) {
+  const verdict = guardHistoryVerdict(cwd, specName, recorded);
+  if (!verdict.ok || verdict.head.seq === 0) return verdict;
+  const plan = `.formula/work/plans/${specName}.md`;
+  const verified = verifyCorrectionRun(cwd, { plan });
+  if (verified.ok) return verdict;
+  if (verified.code === CORRECTION_GUARD_CODES.INTEGRITY
+    && checkCorrectionDrift(cwd, { plan, authorizedWriterWindow: true }).ok) return verdict;
+  return { ok: false, reason: `correction guard rejected: ${verified.code}: ${verified.message}` };
+}
+
+// The head recorded before the latest implement spawn when no GUARD_CHECKED follows that spawn (its child
+// failed, or the conductor stopped before check (a)), else null.
+function uncheckedGuardHead(statusText) {
+  const records = normalizeAutopilotStatus(statusText);
+  const spawnIndex = records.findLastIndex((record) => spawnedIdentity(record)?.phase === 'implement');
+  if (spawnIndex === -1) return null;
+  const spawn = spawnedIdentity(records[spawnIndex]);
+  const same = (identity) => identity?.runId === spawn.runId && identity.attempt === spawn.attempt;
+  const recorded = records.slice(0, spawnIndex).map(recordedGuardHead).findLast(same);
+  if (recorded === undefined) return null;
+  const checked = records.slice(spawnIndex + 1).some((record) => record.actor === 'CONDUCTOR'
+    && record.event === 'GUARD_CHECKED' && same(correlatedIdentity(record.note, 'implement')));
+  return checked ? null : recorded;
 }
 
 // The confined primitives fail closed on every hostile filesystem state; only
@@ -1900,9 +2064,12 @@ function physicalRelative(cwd, absPath) {
 
 // Drives `plan → implement → review` as fresh headless sessions and resolves to
 // the process exit code (0 = the run reached READY_FOR_PR, 1 = refused or
-// halted, 25 = refused in the migrate state: the repository still carries a
-// Markdown hub). The conductor only ever reads the children's DONE / BLOCKED /
-// READY_FOR_PR lines: it never pushes, bumps a version, or opens a PR.
+// halted, 3 = verified partial outcome, unapproved: implement handed off a
+// guard-verified PARTIAL correction run and review recorded PARTIAL_REVIEWED,
+// 25 = refused in the migrate state: the repository still carries a Markdown
+// hub). The conductor only ever reads the children's DONE / PARTIAL / BLOCKED /
+// PARTIAL_REVIEWED / READY_FOR_PR lines: it never pushes, bumps a version, or
+// opens a PR.
 export async function runConductor(specPath, opts = {}) {
   const cwd = realpathSync(opts.cwd ?? process.cwd());
   let absSpec = resolve(cwd, specPath);
@@ -2060,6 +2227,9 @@ export async function runConductor(specPath, opts = {}) {
     }
   }
   if (result === 0) console.log(`autopilot: ${PHASES.join(' → ')} complete — READY_FOR_PR; status: ${join(runDir, STATUS_FILE_NAME)}`);
+  if (result === PARTIAL_EXIT) {
+    console.log(`autopilot: ${PHASES.join(' → ')} complete — PARTIAL (unapproved); status: ${join(runDir, STATUS_FILE_NAME)}`);
+  }
   return result;
 }
 
@@ -2070,6 +2240,8 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
   const providerVersionFor = opts.providerVersionFor ?? detectProviderRuntimeVersion;
   const runId = opts.runId ?? randomUUID();
   const specName = basename(absSpec, '.md');
+  const planPath = `.formula/work/plans/${specName}.md`;
+  const resultIndexPath = `.formula/work/tasks/${specName}/task-result-index.md`;
   const emittedDegradations = new Set();
   const recordedUsage = new Set();
   const usageDegradations = new Set();
@@ -2091,6 +2263,17 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
   // skipped: a completion marker after a gap (a hand-edited status file, a
   // forged line surviving into the next run) is distrusted and its phase re-run.
   const statusBeforeRun = readStatus(cwd, statusPath);
+  // Before anything else: an implement attempt whose guard head was never checked (its child failed, or
+  // the conductor stopped between the child's exit and GUARD_CHECKED) is checked now.
+  const unchecked = uncheckedGuardHead(statusBeforeRun);
+  if (unchecked !== null) {
+    const verdict = startupGuardCheck(cwd, specName, unchecked);
+    if (!verdict.ok) {
+      const uncheckedIdentity = `run-id=${unchecked.runId} phase=implement attempt=${unchecked.attempt}`;
+      appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${uncheckedIdentity} guard=${verdict.reason}`);
+      return halt(`${uncheckedIdentity}: ${verdict.reason}`);
+    }
+  }
   const replayBeforeRun = replayAutopilotStatus(statusBeforeRun);
   let taskResultVersion;
   try {
@@ -2104,29 +2287,44 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
     .map((record) => correlatedIdentity(record.note, 'implement'))
     .filter((identity) => identity?.phase === 'implement');
   const retainedForAttempt = (identity) => {
-    const retained = captureRetainedApproval(cwd, { planPath: `.formula/work/plans/${specName}.md`,
-      indexPath: `.formula/work/tasks/${specName}/task-result-index.md`, runId: identity.runId, attempt: identity.attempt });
+    const retained = captureRetainedApproval(cwd, { planPath, indexPath: resultIndexPath,
+      runId: identity.runId, attempt: identity.attempt });
     if (retained && !priorImplementSpawns.some((origin) => origin.runId === retained.runId && origin.attempt === retained.attempt)) {
       throw new Error('retained approval has no conductor-owned prior dispatch');
     }
     return retained;
   };
+  // A phase ends on its conductor outcome: PHASE_ACCEPTED, or for implement and review a verified
+  // PHASE_PARTIAL, which never completes the phase but is never re-run either.
+  const outcomes = phaseOutcomes(statusBeforeRun);
+  const latestOutcome = (phase) => outcomes.filter((outcome) => outcome.phase === phase).at(-1) ?? null;
   let completedPrefix = 0;
   while (
     completedPrefix < PHASES.length
-    && workflowScopeCompleted(replayBeforeRun, PHASES[completedPrefix])
+    && (workflowScopeCompleted(replayBeforeRun, PHASES[completedPrefix])
+      || latestOutcome(PHASES[completedPrefix])?.partial === true)
   ) {
     completedPrefix += 1;
   }
 
+  // A partial delivery (implement ended PHASE_PARTIAL) can only be reviewed as partial: never READY_FOR_PR.
+  let partialDelivery = completedPrefix >= 2 && latestOutcome('implement')?.partial === true;
+  if (completedPrefix === 3 && latestOutcome('review')?.partial !== partialDelivery) {
+    return halt(partialDelivery ? 'resume: partial delivery cannot reach READY_FOR_PR'
+      : `resume: ${PARTIAL_EVENT.review} after a complete implementation`);
+  }
+
   if (completedPrefix === 2) {
     try {
-      const accepted = normalizeAutopilotStatus(statusBeforeRun).map(acceptedIdentity)
-        .filter((identity) => identity?.phase === 'implement').at(-1);
-      if (!accepted) throw new Error('missing accepted implement identity');
-      verifyImplementReviews(cwd, { planPath: `.formula/work/plans/${specName}.md`,
-        indexPath: `.formula/work/tasks/${specName}/task-result-index.md`, runId: accepted.runId, attempt: accepted.attempt,
-        retainedApproval: retainedForAttempt(accepted) });
+      const ended = latestOutcome('implement');
+      if (!ended) throw new Error('missing implement outcome identity');
+      const handoff = verifyCorrectionHandoff(cwd, { planPath, indexPath: resultIndexPath, runId: ended.runId,
+        attempt: ended.attempt, retainedApproval: retainedForAttempt(ended) });
+      if (!handoff.ok) throw new Error(handoff.message);
+      const required = MARKER_OUTCOME[partialDelivery ? PARTIAL_EVENT.implement : COMPLETION_EVENT.implement];
+      if (handoff.outcome !== required.outcome || handoff.approval !== required.approval) {
+        throw new Error(`the implementation ended ${partialDelivery ? 'PHASE_PARTIAL' : 'PHASE_ACCEPTED'} but the verified correction outcome is ${handoff.outcome} (${handoff.approval})`);
+      }
     } catch (error) { return halt(`resume reviewer evidence rejected: ${error.message}`); }
   }
 
@@ -2359,6 +2557,36 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
       }
     }
 
+    // The correction guard head before the child runs. Implement records it (GUARD_HEAD): check (a) proves,
+    // once the child exits, that it only appended to this history. Review hands nothing to the guard, so its
+    // head must be the same after every review attempt.
+    let guardHead = null;
+    if (phase === 'implement' || phase === 'review') {
+      const head = readCorrectionHead(cwd, { plan: planPath });
+      if (!head.ok) {
+        const reason = `guard history rewritten: ${head.code}: ${head.message}`;
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} guard=${reason}`);
+        return halt(`${identity}: ${reason}`);
+      }
+      guardHead = { seq: head.seq, digest: head.digest };
+      if (phase === 'implement') {
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'GUARD_HEAD', `${identity} ${guardHeadNote(guardHead)}`);
+      }
+    }
+    // After a review attempt, however it ended: a changed (or unreadable) guard head is ARTIFACT_FAILED and
+    // halts the run. Returns whether it halted.
+    const reviewHeadChanged = () => {
+      if (phase !== 'review') return false;
+      const head = readCorrectionHead(cwd, { plan: planPath });
+      if (head.ok && head.seq === guardHead.seq && head.digest === guardHead.digest) return false;
+      const reason = head.ok
+        ? `guard history rewritten: the correction guard head changed during review (${guardHeadNote(guardHead)} became ${guardHeadNote(head)})`
+        : `guard history rewritten: ${head.code}: ${head.message}`;
+      appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} guard=${reason}`);
+      halt(`${identity}: ${reason}`);
+      return true;
+    };
+
     const statusOffset = readStatus(cwd, statusPath).length;
 
     const result = await runChild({
@@ -2411,6 +2639,8 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
           `${identity} source=${reason} child-killed=true`,
         );
         console.error(`autopilot: ${line}`);
+        // An interrupted review attempt is held to the same guard head before the interruption halts.
+        if (reviewHeadChanged()) return;
         halt(`${identity} interrupted by ${reason}; child killed`);
       },
       onDegradation: reportDegradation,
@@ -2448,6 +2678,7 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
       const errorCode = result.error.code ? `${result.error.code}: ` : '';
       return halt(`${identity}: ${errorCode}${result.error.message}`);
     }
+    if (reviewHeadChanged()) return 1;
 
     const phaseStatus = readStatus(cwd, statusPath).slice(statusOffset);
     const marker = haltMarker(phaseStatus, phase);
@@ -2462,28 +2693,74 @@ async function driveLocked(contract, absSpec, runDir, statusPath, opts) {
     if (marker) {
       return halt(`${phase}: child recorded ${marker.event}: ${marker.note}`);
     }
-    if (!childCompleted(phaseStatus, phase, { runId, phase, attempt })) {
+    const childIdentity = { runId, phase, attempt };
+    const completed = childMarked(phaseStatus, phase, childIdentity, COMPLETION_EVENT[phase]);
+    const partial = Object.hasOwn(PARTIAL_EVENT, phase)
+      && childMarked(phaseStatus, phase, childIdentity, PARTIAL_EVENT[phase]);
+    if (!completed && !partial) {
+      let expected = COMPLETION_EVENT[phase];
+      if (phase === 'implement') expected = `${COMPLETION_EVENT[phase]} or ${PARTIAL_EVENT[phase]}`;
+      if (phase === 'review' && partialDelivery) expected = PARTIAL_EVENT[phase];
       return halt(
-        `${identity}: phase exited 0 without recording its completion marker (${COMPLETION_EVENT[phase]}); see ${readableName} (aggregate ${aggregateName})`,
+        `${identity}: phase exited 0 without recording its completion marker (${expected}); see ${readableName} (aggregate ${aggregateName})`,
       );
     }
+    if (phase === 'review') {
+      // A partial delivery is reviewed PARTIAL_REVIEWED and never READY_FOR_PR; a complete one the reverse.
+      if (partialDelivery && completed) return halt(`${identity}: partial delivery cannot reach ${COMPLETION_EVENT.review}`);
+      if (!partialDelivery && partial) return halt(`${identity}: ${PARTIAL_EVENT.review} after a complete implementation`);
+      if (partialDelivery) {
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'PHASE_PARTIAL', `${identity} child-event=${PARTIAL_EVENT.review}`);
+        continue;
+      }
+    }
     if (phase === 'implement') {
+      // (a) The child only appended to the guard history it was handed, and the run verifies.
+      const checked = guardCheck(cwd, specName, guardHead);
+      if (!checked.ok) {
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} guard=${checked.reason}`);
+        return halt(`${identity}: ${checked.reason}`);
+      }
+      appendStatus(cwd, statusPath, 'CONDUCTOR', 'GUARD_CHECKED', `${identity} ${guardHeadNote(checked.head)}`);
+      // (b) Exactly one marker, and the verified handoff outcome it requires: DONE only for a COMPLETE,
+      // approved run, PARTIAL only for a PARTIAL, unapproved one.
+      if (completed && partial) {
+        const reason = `child recorded both ${COMPLETION_EVENT.implement} and ${PARTIAL_EVENT.implement}`;
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} correction-outcome=${reason}`);
+        return halt(`${identity}: ${reason}`);
+      }
+      const childEvent = completed ? COMPLETION_EVENT.implement : PARTIAL_EVENT.implement;
+      let handoff;
       try {
-        const reviewReceipt = verifyImplementReviews(cwd, {
-          planPath: `.formula/work/plans/${specName}.md`,
-          indexPath: `.formula/work/tasks/${specName}/task-result-index.md`, runId, attempt, retainedApproval,
-        });
-        if (reviewReceipt.retainedApproval) appendStatus(cwd, statusPath, 'CONDUCTOR', 'REVIEW_APPROVAL_REUSED',
-          `${identity} origin-run-id=${retainedApproval.runId} origin-attempt=${retainedApproval.attempt} state=${retainedApproval.state} digest=${retainedApproval.digest}`);
+        handoff = verifyCorrectionHandoff(cwd, { planPath, indexPath: resultIndexPath, runId, attempt, retainedApproval });
       } catch (error) {
-        appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} reviewer-evidence=${error.message}`);
-        return halt(`${identity}: reviewer evidence rejected: ${error.message}`);
+        handoff = { ok: false, message: error.message };
+      }
+      if (!handoff.ok) {
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} reviewer-evidence=${handoff.message}`);
+        return halt(`${identity}: reviewer evidence rejected: ${handoff.message}`);
+      }
+      const required = MARKER_OUTCOME[childEvent];
+      if (handoff.outcome !== required.outcome || handoff.approval !== required.approval) {
+        const reason = `child recorded ${childEvent} but the verified correction outcome is ${handoff.outcome} (${handoff.approval})`;
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'ARTIFACT_FAILED', `${identity} correction-outcome=${reason}`);
+        return halt(`${identity}: ${reason}`);
+      }
+      // A retained earlier approval was reused exactly when the verified index still names its final gate.
+      if (retainedApproval !== null && activeFinalGate(cwd, resultIndexPath) === retainedApproval.state) {
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'REVIEW_APPROVAL_REUSED',
+          `${identity} origin-run-id=${retainedApproval.runId} origin-attempt=${retainedApproval.attempt} state=${retainedApproval.state} digest=${retainedApproval.digest}`);
+      }
+      if (partial) {
+        appendStatus(cwd, statusPath, 'CONDUCTOR', 'PHASE_PARTIAL', `${identity} child-event=${PARTIAL_EVENT.implement}`);
+        partialDelivery = true;
+        continue;
       }
     }
     appendStatus(cwd, statusPath, 'CONDUCTOR', 'PHASE_ACCEPTED', `${identity} child-event=${COMPLETION_EVENT[phase]}`);
   }
 
-  return 0;
+  return partialDelivery ? PARTIAL_EXIT : 0;
 }
 
 export async function main(argv = process.argv.slice(2), opts = {}) {
@@ -2498,6 +2775,7 @@ export async function main(argv = process.argv.slice(2), opts = {}) {
   } catch (err) {
     console.error(`autopilot: ${err.message}`);
     console.error('usage: node scripts/autopilot.mjs <spec-path> [--resume-input <exact-path>]...');
+    console.error(`exit codes: ${EXIT_CODE_TABLE}`);
     return 1;
   }
   // The migrate state (G5, P7): the CLI refuses right after parse, before its own spec

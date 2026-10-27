@@ -278,6 +278,87 @@ test('manifest grammar admits exactly the conductor and protocol context names, 
   }
 });
 
+test('manifest grammar admits the prescribed retry, diagnosis and indexed final names', () => {
+  const ctx = (name) => `.formula/work/tasks/${RUN}/context/${name}`;
+  for (const name of ['task-1-retry-1.json', 'task-12-retry-3.json', 'task-2-diagnosis-1.json', 'task-3-diagnosis-10.json', 'final-review-1.json', 'final-review-12.json', 'final-diagnosis-1.json', 'final-diagnosis-7.json']) {
+    const parsed = classifyWorkPath(ctx(name));
+    assert.equal(parsed.type, 'work-output', name);
+    assert.equal(parsed.family, 'manifest', name);
+  }
+  for (const name of ['task-0-retry-1.json', 'task-1-retry-0.json', 'task-1-retry-01.json', 'task-1-retry.json', 'task-1-retry-1.jsonx', 'task-1-diagnosis-0.json', 'task-01-diagnosis-1.json', 'task-1-diagnosis-1-2.json', 'final-review-0.json', 'final-review-01.json', 'final-diagnosis-0.json', 'final-diagnosis.json', 'final-diagnosis-1.json.bak', 'final-retry-1.json']) {
+    assert.throws(() => classifyWorkPath(ctx(name)), /work path/u, name);
+  }
+});
+
+test('correction grammar classifies every artifact family and rejects near misses', () => {
+  const dir = `.formula/work/tasks/${RUN}/correction`;
+  const cases = [
+    ['record-1.json', 'correction-record'],
+    ['record-12.json', 'correction-record'],
+    ['task-1-cycle-1-baseline.json', 'correction-candidate'],
+    ['final-cycle-2-baseline.json', 'correction-candidate'],
+    ['task-3-cycle-1-iteration-2-candidate.json', 'correction-candidate'],
+    ['final-cycle-1-iteration-1-candidate.json', 'correction-candidate'],
+    ['task-1-cycle-1-iteration-1-check-1-evidence.md', 'evidence'],
+    ['final-cycle-3-iteration-2-check-4-evidence.md', 'evidence'],
+    ['task-1-cycle-1-iteration-1-defects.json', 'correction-defects'],
+    ['final-cycle-1-iteration-2-diagnosis.json', 'correction-diagnosis'],
+    ['task-2-cycle-1-retry-1.json', 'correction-retry'],
+    ['final-cycle-2-retry-3.json', 'correction-retry'],
+    ['task-2-cycle-1-reopen.json', 'correction-reopen'],
+    ['final-cycle-4-reopen.json', 'correction-reopen'],
+  ];
+  for (const [name, family] of cases) {
+    const parsed = classifyWorkPath(`${dir}/${name}`);
+    assert.equal(parsed.type, 'work-output', name);
+    assert.equal(parsed.family, family, name);
+  }
+  const rejected = [
+    `${dir}/task-0-cycle-1-baseline.json`,
+    `${dir}/task-1-cycle-0-baseline.json`,
+    `${dir}/task-1-cycle-1-iteration-01-candidate.json`,
+    `${dir}/final-cycle-1-retry-0.json`,
+    `${dir}/x.json`,
+    `${dir}/nested/record-1.json`,
+    `${dir}/Task-1-cycle-1-reopen.json`,
+    `${dir}/record-0.json`,
+    `${dir}/task-1-cycle-1-iteration-1-check-0-evidence.md`,
+    `${dir}/task-1-cycle-1-iteration-1-defects.md`,
+    `${dir}/task-1-cycle-1-reopen.json.bak`,
+    `.formula/work/tasks/${RUN}/correction`,
+    `.formula/work/tasks/${RUN}/correction/`,
+  ];
+  for (const path of rejected) {
+    assert.throws(() => classifyWorkPath(path), /work path/u, path);
+  }
+  assert.throws(
+    () => classifyWorkPath(`${dir}/x.json`),
+    /unrecognized work artifact/u,
+  );
+  const evidence = `${dir}/task-1-cycle-1-iteration-1-check-2-evidence.md`;
+  assert.equal(parseWorkPath(evidence, 'work-output', 'evidence').family, 'evidence');
+});
+
+test('a final-scope task review names its own defects artifact with the task-reviewer role component', () => {
+  const dir = `.formula/work/tasks/${RUN}/correction`;
+  for (const name of [
+    'final-cycle-1-iteration-2-task-reviewer-defects.json',
+    'final-cycle-1-iteration-2-defects.json',
+    'task-1-cycle-1-iteration-1-defects.json',
+  ]) {
+    assert.equal(parseWorkPath(`${dir}/${name}`, 'work-output', 'correction-defects').family, 'correction-defects', name);
+  }
+  for (const name of [
+    'task-1-cycle-1-iteration-1-task-reviewer-defects.json',
+    'final-cycle-1-iteration-2-final-reviewer-defects.json',
+    'final-cycle-1-iteration-2-task-reviewer.json',
+    'final-cycle-1-iteration-2-task-reviewer-defects.md',
+    'final-cycle-1-iteration-2-task-reviewer-task-reviewer-defects.json',
+  ]) {
+    assert.throws(() => classifyWorkPath(`${dir}/${name}`), /work path/u, name);
+  }
+});
+
 test('loop grammar admits only the dated run directory and closed Gear-4 artifact families', () => {
   for (const [family, path, type] of LOOP_FAMILIES) {
     const parsed = classifyWorkPath(path);
