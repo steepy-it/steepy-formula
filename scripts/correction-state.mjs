@@ -181,7 +181,11 @@ const COUNT_KEYS = Object.freeze(['reserved', 'diagnosis']);
 const COMPARISON_KEYS = Object.freeze(['defect', 'previous', 'current', 'verdict']);
 const CANDIDATE_KEYS = Object.freeze(['iteration', 'observation', 'snapshot']);
 const BLOCKED_KEYS = Object.freeze(['task', 'causes']);
-const FINAL_SUMMARY_KEYS = Object.freeze(['cycle', 'status', 'reason', 'iterations', 'approvedObservation']);
+// What a stopped cycle reports beyond its reason and counts; a final that did not stop reports them empty.
+const STOP_DETAIL_KEYS = Object.freeze(['unresolvedDefects', 'comparison', 'bestCandidate', 'nextRemedy']);
+const FINAL_SUMMARY_KEYS = Object.freeze([
+  'cycle', 'status', 'reason', 'iterations', 'approvedObservation', ...STOP_DETAIL_KEYS,
+]);
 const CYCLE_SUMMARY_KEYS = Object.freeze([
   'scope', 'cycle', 'predecessor', 'status', 'reason', 'reserved', 'diagnosis',
 ]);
@@ -1962,25 +1966,60 @@ function execution(state, cycle) {
   return entry.dispatches.find((dispatch) => dispatch.role === 'writer').target;
 }
 
-// What a later phase needs about a stopped task: why its latest cycle stopped, what it spent, the
-// defects left unresolved and how they compared, its best candidate, and the remedy to try next.
-function stoppedSummary(state, task, cycle) {
+// The remedy a stopped cycle requires next, in rank order: the note of an explicit stop, the latest
+// controller or human decision on the cycle; else its valid diagnosis recommendation; else its latest
+// admitted remedy; else null.
+function remedyOf(cycle) {
+  if (EXPLICIT_STOPS.has(cycle.stopReason) && isText(cycle.stopNote)) return cycle.stopNote;
+  if (cycle.diagnosis?.valid) return cycle.diagnosis.recommendation;
+  return cycle.admittedRemedies.at(-1) ?? null;
+}
+
+// What a later phase needs about a stopped cycle, task or final: the defects its latest outcome left
+// unresolved and how they compared, its best-ranked candidate, and the remedy it requires next.
+function stopDetails(cycle) {
   const outcome = latestOutcome(cycle);
   const comparison = outcome?.comparison?.defects ?? [];
-  let nextRemedy = cycle.admittedRemedies.at(-1) ?? null;
-  if (cycle.diagnosis?.valid) nextRemedy = cycle.diagnosis.recommendation;
   return {
-    task,
-    cycle: cycle.cycle,
-    reason: cycle.stopReason,
-    iterations: { reserved: cycle.reserved, diagnosis: diagnosisCount(cycle) },
     unresolvedDefects: [...new Set((outcome?.defects ?? []).map((defect) => defect.id))],
     comparison: comparison.map(({ id, previous, current, result }) => ({
       defect: id, previous, current, verdict: result,
     })),
     bestCandidate: candidateSnapshot(rank(cycle)[0]),
+    nextRemedy: remedyOf(cycle),
+  };
+}
+
+// A stopped task: why its latest cycle stopped, what it spent, its stop details, and the execution it
+// retains.
+function stoppedSummary(state, task, cycle) {
+  const { unresolvedDefects, comparison, bestCandidate, nextRemedy } = stopDetails(cycle);
+  return {
+    task,
+    cycle: cycle.cycle,
+    reason: cycle.stopReason,
+    iterations: { reserved: cycle.reserved, diagnosis: diagnosisCount(cycle) },
+    unresolvedDefects,
+    comparison,
+    bestCandidate,
     execution: execution(state, cycle),
     nextRemedy,
+  };
+}
+
+// The latest final cycle: its status, reason, counts and approved observation, and the stop details of
+// a STOPPED final, empty otherwise. A final never retains an execution: isolation is task-local.
+function finalSummary(final) {
+  if (final === null) return null;
+  const details = final.status === 'STOPPED' ? stopDetails(final)
+    : { unresolvedDefects: [], comparison: [], bestCandidate: null, nextRemedy: null };
+  return {
+    cycle: final.cycle,
+    status: final.status,
+    reason: final.stopReason,
+    iterations: { reserved: final.reserved, diagnosis: diagnosisCount(final) },
+    approvedObservation: final.approvedObservation,
+    ...details,
   };
 }
 
@@ -2030,13 +2069,7 @@ function summarize(state) {
       .map((entry) => stoppedSummary(state, entry.task, latestCycle(state, `task-${entry.task}`))),
     blocked: tasksWith('blocked').map((entry) => ({ task: entry.task, causes: statuses.get(entry.task).causes })),
     criteria: classifyCriteria(state, statuses, final, terminal),
-    final: final === null ? null : {
-      cycle: final.cycle,
-      status: final.status,
-      reason: final.stopReason,
-      iterations: { reserved: final.reserved, diagnosis: diagnosisCount(final) },
-      approvedObservation: final.approvedObservation,
-    },
+    final: finalSummary(final),
     cycles: state.cycleOrder.map((key) => {
       const cycle = state.cycles[key];
       return {
@@ -2081,11 +2114,9 @@ function checkCounts(value, label) {
   expect(isCount(value.reserved) && isCount(value.diagnosis), `${label} must count reserved and diagnosis iterations`);
 }
 
-function checkStoppedSummary(entry, label) {
-  closedObject(entry, STOPPED_SUMMARY_KEYS, label);
-  expect(isTaskId(entry.task) && isPositiveInteger(entry.cycle) && typeof entry.reason === 'string',
-    `${label} must name its task, cycle and reason`);
-  checkCounts(entry.iterations, `${label}.iterations`);
+// The stop details of a stopped cycle; a cycle that did not stop (only a final can be listed so) carries
+// no unresolved defect, comparison, best candidate or next remedy.
+function checkStopDetails(entry, label, stopped) {
   expect(Array.isArray(entry.unresolvedDefects) && entry.unresolvedDefects.every((id) => typeof id === 'string'),
     `${label}.unresolvedDefects must be defect ids`);
   expect(Array.isArray(entry.comparison), `${label}.comparison must be an array`);
@@ -2094,12 +2125,26 @@ function checkStoppedSummary(entry, label) {
     expect(typeof item.defect === 'string' && isOptionalMetric(item.previous) && isOptionalMetric(item.current)
       && COMPARISON_RESULTS.has(item.verdict), `${label}.comparison[${index}] must be a defect comparison`);
   }
+  expect(isOptionalText(entry.nextRemedy), `${label}.nextRemedy must be a string or null`);
+  if (!stopped) {
+    expect(entry.unresolvedDefects.length === 0 && entry.comparison.length === 0 && entry.bestCandidate === null
+      && entry.nextRemedy === null,
+    `${label} carries unresolvedDefects, comparison, bestCandidate and nextRemedy only when STOPPED`);
+    return;
+  }
   closedObject(entry.bestCandidate, CANDIDATE_KEYS, `${label}.bestCandidate`);
   const { iteration, observation, snapshot } = entry.bestCandidate;
   expect(isCount(iteration) && isHex64(observation) && (snapshot === null || isDigestReference(snapshot)),
     `${label}.bestCandidate must be { iteration, observation, snapshot }`);
-  expect(isOptionalText(entry.execution) && isOptionalText(entry.nextRemedy),
-    `${label}.execution and nextRemedy must be strings or null`);
+}
+
+function checkStoppedSummary(entry, label) {
+  closedObject(entry, STOPPED_SUMMARY_KEYS, label);
+  expect(isTaskId(entry.task) && isPositiveInteger(entry.cycle) && typeof entry.reason === 'string',
+    `${label} must name its task, cycle and reason`);
+  checkCounts(entry.iterations, `${label}.iterations`);
+  checkStopDetails(entry, label, true);
+  expect(isOptionalText(entry.execution), `${label}.execution must be a string or null`);
 }
 
 // The summary's closed shape: every key known and present at every level, with typed values.
@@ -2129,6 +2174,7 @@ function checkSummary(summary) {
     expect(isPositiveInteger(cycle) && CYCLE_STATUSES.has(status) && isOptionalText(reason)
       && (approvedObservation === null || isHex64(approvedObservation)), 'final must describe the latest final cycle');
     checkCounts(iterations, 'final.iterations');
+    checkStopDetails(summary.final, 'final', status === 'STOPPED');
   }
   expect(Array.isArray(summary.cycles), 'cycles must be an array');
   for (const [index, entry] of summary.cycles.entries()) {
@@ -2230,7 +2276,7 @@ export function parseCorrectionSummaryBlock(text) {
 // The run's deep-frozen summary: its outcome (PENDING before terminal, COMPLETE only when every task and
 // the latest final cycle are approved, PARTIAL at any other terminal, HALTED for a halted run), whose
 // approval is APPROVED only when COMPLETE, the completed, stopped and blocked tasks, each criterion's
-// status, the final cycle, every cycle, and the halt.
+// status, the final cycle (with its stop details when it stopped), every cycle, and the halt.
 export function summarizeCorrectionRun(state) {
   assertState(state, 'summarizeCorrectionRun');
   if (state.run === null) throw new TypeError('summarizeCorrectionRun: the run was never opened');

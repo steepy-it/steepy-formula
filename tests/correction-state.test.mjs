@@ -3087,7 +3087,7 @@ test('summary of a PARTIAL run: the stopped task, its blocked dependents, and ev
     criteria: { SC1: 'failed', SC2: 'blocked', SC3: 'blocked', SC4: 'satisfied' },
     final: {
       cycle: 1, status: 'APPROVED', reason: STOP.APPROVED, iterations: { reserved: 1, diagnosis: 0 },
-      approvedObservation: OBSERVATION,
+      approvedObservation: OBSERVATION, unresolvedDefects: [], comparison: [], bestCandidate: null, nextRemedy: null,
     },
     cycles: [
       { scope: 'task-1', cycle: 1, predecessor: null, status: 'STOPPED', reason: STOP.STAGNATED, reserved: 2, diagnosis: 0 },
@@ -3109,7 +3109,7 @@ test('summary of a COMPLETE run: every task and the rerun final approved', () =>
   assert.deepEqual(summary.criteria, { SC1: 'satisfied', SC2: 'satisfied', SC3: 'satisfied', SC4: 'satisfied' });
   assert.deepEqual(summary.final, {
     cycle: 2, status: 'APPROVED', reason: STOP.APPROVED, iterations: { reserved: 1, diagnosis: 0 },
-    approvedObservation: OBSERVATION,
+    approvedObservation: OBSERVATION, unresolvedDefects: [], comparison: [], bestCandidate: null, nextRemedy: null,
   });
   assert.deepEqual(summary.cycles.map(({ scope, cycle, predecessor, status }) => [scope, cycle, predecessor, status]), [
     ['task-1', 1, null, 'STOPPED'], ['task-4', 1, null, 'APPROVED'], ['final', 1, null, 'APPROVED'],
@@ -3155,23 +3155,26 @@ test('summary criteria: a final stopped at terminal fails every criterion it did
   assert.deepEqual(open.criteria, { SC1: 'failed', SC2: 'blocked', SC3: 'blocked' });
   assert.deepEqual(open.final, {
     cycle: 1, status: 'OPEN', reason: null, iterations: { reserved: 0, diagnosis: 0 }, approvedObservation: null,
+    unresolvedDefects: [], comparison: [], bestCandidate: null, nextRemedy: null,
   });
 });
 
 test('summary of a stopped task: the next remedy, the autopilot execution and the diagnosis count', () => {
-  // A valid diagnosis recommendation outranks the admitted remedies.
+  // An explicit stop's note outranks a valid diagnosis recommendation: it is the latest decision on the cycle.
   const diagnosedStop = chain(diagnosingAtTwo(), [diagnosed(2), stopped(STOP.RETRY_EVIDENCE_MISSING), isolationRecorded()]);
   const [entry] = summarizeCorrectionRun(diagnosedStop).stopped;
   assert.deepEqual(entry, {
     task: '1', cycle: 1, reason: STOP.RETRY_EVIDENCE_MISSING, iterations: { reserved: 2, diagnosis: 1 },
     unresolvedDefects: [], comparison: [], bestCandidate: { iteration: 0, observation: OBSERVATION, snapshot: null },
-    execution: null, nextRemedy: diagnosed(2).recommendation,
+    execution: null, nextRemedy: stopped(STOP.RETRY_EVIDENCE_MISSING).note,
   });
+  // Without an explicit stop, an admitted remedy or a valid recommendation there is no next remedy.
   const inconclusive = chain(diagnosingAtTwo(), [diagnosed(2, false)]);
+  assert.equal(summarizeCorrectionRun(inconclusive).stopped[0].reason, STOP.DIAGNOSIS_INCONCLUSIVE);
   assert.equal(summarizeCorrectionRun(inconclusive).stopped[0].nextRemedy, null);
-  // Without anything admitted or recommended there is no next remedy.
+  // An explicit stop with nothing admitted or recommended still reports its note as the next remedy.
   const bare = chain(closureRun(), [taskOpened('1'), stopped(STOP.HUMAN_INTERRUPTED)]);
-  assert.equal(summarizeCorrectionRun(bare).stopped[0].nextRemedy, null);
+  assert.equal(summarizeCorrectionRun(bare).stopped[0].nextRemedy, stopped(STOP.HUMAN_INTERRUPTED).note);
   // An autopilot run whose stopped task proved baseline-equal isolation retains none of its executions.
   const autopilot = partialRunRecords().map((record) => {
     if (record.kind === 'RUN_OPENED') return { ...record, drive: 'autopilot' };
@@ -3454,4 +3457,139 @@ test('summary execution: a no-change best candidate is recorded baseline-equal a
     { proven: true, mode: 'baseline-equal' });
   const isolated = apply(unchanged, isolationRecorded());
   assert.equal(executionOf(isolated), null);
+});
+
+// --- final-review fix: what a stopped final and an explicit stop report ---------------------------
+
+// The summary fields of a cycle's best-ranked candidate.
+function bestOf(cycle) {
+  const { iteration, observation, candidate } = rankCandidates(cycle)[0];
+  return { iteration, observation, snapshot: candidate };
+}
+
+// The partial final (task 4 delivered) fails its coherence gate at 3, a correction of task 4 improves it
+// to 2, and the next correction stays at 2: the final stops STAGNATED after two admitted remedies.
+function stagnatedFinal() {
+  const correction = (iteration, metric) => [
+    admitted(finalRetryRequest({
+      iteration, evidence: checkEvidence(iteration - 1, 'coherence-gate', 'final'), remedy: REMEDIES[iteration],
+    })),
+    reserved(iteration, 'correction', null, 'final'),
+    authorized(iteration, 'writer', { ownerTask: '4', affectedCriteria: ['SC4'] }, 'final'),
+    writerRecorded(iteration, 'DONE', {}, 'final'),
+    checksRecorded(iteration, { 'coherence-gate': FAILED(metric) }, {}, 'final', 1, FINAL_CHECK_IDS),
+  ];
+  return chain(partialFinal(), [
+    reserved(1, 'initial', null, 'final'), authorized(1, 'final-reviewer', {}, 'final'),
+    checksRecorded(1, { 'coherence-gate': FAILED(3) }, { observation: OBSERVATION }, 'final', 1, FINAL_CHECK_IDS),
+    ...correction(2, 2), ...correction(3, 2),
+  ]);
+}
+
+test('summary of a stopped final: its unresolved defects, best candidate and an explicit stop\'s note', () => {
+  const delivered = chain(closureRun(), [
+    ...approvalRecords('1'), ...approvalRecords('2'), ...approvalRecords('3'), ...approvalRecords('4'),
+  ]);
+  const [interruptedFinal, withDefect] = stoppedFinals(apply(delivered, closureFinal(['1', '2', '3', '4'])));
+  const baseline = { iteration: 0, observation: OBSERVATION, snapshot: null };
+  assert.deepEqual(summarizeCorrectionRun(withDefect).final, {
+    cycle: 1, status: 'STOPPED', reason: STOP.RETRY_EVIDENCE_MISSING, iterations: { reserved: 1, diagnosis: 0 },
+    approvedObservation: null, unresolvedDefects: ['SC4/review/missing-note'], comparison: [], bestCandidate: baseline,
+    nextRemedy: stopped(STOP.RETRY_EVIDENCE_MISSING).note,
+  });
+  assert.deepEqual(summarizeCorrectionRun(interruptedFinal).final, {
+    cycle: 1, status: 'STOPPED', reason: STOP.HUMAN_INTERRUPTED, iterations: { reserved: 1, diagnosis: 0 },
+    approvedObservation: null, unresolvedDefects: [], comparison: [], bestCandidate: baseline,
+    nextRemedy: stopped(STOP.HUMAN_INTERRUPTED).note,
+  });
+  for (const state of [interruptedFinal, withDefect]) {
+    const summary = summarizeCorrectionRun(state);
+    assert.deepEqual(summary.final.bestCandidate, bestOf(state.cycles['final#1']));
+    assert.deepEqual(parseCorrectionSummaryBlock(formatCorrectionSummaryBlock(summary)), summary);
+  }
+});
+
+test('summary of a final stopped STAGNATED: its comparison, best-ranked candidate and latest admitted remedy', () => {
+  const state = stagnatedFinal();
+  assert.equal(nextCorrectionStep(state).action, 'terminal');
+  const summary = summarizeCorrectionRun(state);
+  assert.deepEqual([summary.outcome, summary.approval], ['PARTIAL', 'UNAPPROVED']);
+  // The correction at iteration 2 ranks first: verified, the lowest gate metric, the earlier of the two at 2.
+  assert.deepEqual(bestOf(state.cycles['final#1']),
+    { iteration: 2, observation: CANDIDATE(2), snapshot: writerRecorded(2, 'DONE', {}, 'final').candidate });
+  assert.deepEqual(summary.final, {
+    cycle: 1, status: 'STOPPED', reason: STOP.STAGNATED, iterations: { reserved: 3, diagnosis: 0 },
+    approvedObservation: null,
+    unresolvedDefects: ['SC4/coherence-gate/command-failed'],
+    comparison: [{ defect: 'SC4/coherence-gate/command-failed', previous: 2, current: 2, verdict: 'stagnant' }],
+    bestCandidate: bestOf(state.cycles['final#1']),
+    nextRemedy: REMEDIES[3],
+  });
+  assert.deepEqual(parseCorrectionSummaryBlock(formatCorrectionSummaryBlock(summary)), summary);
+});
+
+test('summary nextRemedy: an explicit stop\'s note, then a valid recommendation, then the latest admitted remedy', () => {
+  const note = 'split task 1: the reservation guard and the dispatch guard need separate plans';
+  // Slot 2 diagnosed validly, slot 3's retry admitted: the cycle has a recommendation and an admitted remedy.
+  const recommendedAndAdmitted = chain(diagnosingAtTwo(), [
+    diagnosed(2), admitted(retryRequest({ iteration: 3, evidence: { ...DIAGNOSIS_ARTIFACT } })),
+  ]);
+  const cycle = recommendedAndAdmitted.cycles['task-1#1'];
+  assert.equal(cycle.diagnosis.valid, true);
+  assert.deepEqual(cycle.admittedRemedies, [retryRequest().remedy]);
+  for (const reason of [STOP.RETRY_EVIDENCE_MISSING, STOP.HUMAN_INTERRUPTED]) {
+    const state = apply(recommendedAndAdmitted, stopped(reason, 'task-1', 1, { note }));
+    assert.equal(summarizeCorrectionRun(state).stopped[0].nextRemedy, note, reason);
+  }
+  // The same cycle exhausted without an explicit stop reports its recommendation.
+  const exhausted = chain(recommendedAndAdmitted, [
+    reserved(3, 'correction'), authorized(3, 'writer'), [interrupted(3), { ref: ref(7) }],
+  ]);
+  assert.equal(exhausted.cycles['task-1#1'].stopReason, STOP.EXHAUSTED);
+  assert.equal(summarizeCorrectionRun(exhausted).stopped[0].nextRemedy, diagnosed(2).recommendation);
+  // An explicit stop after an admitted remedy alone still reports its note; a stagnant stop the remedy.
+  const admittedOnly = chain(awaitingRetry(), [admitted(retryRequest())]);
+  assert.equal(summarizeCorrectionRun(apply(admittedOnly, stopped(STOP.HUMAN_INTERRUPTED, 'task-1', 1, { note })))
+    .stopped[0].nextRemedy, note);
+  assert.equal(summarizeCorrectionRun(partialTerminal()).stopped[0].nextRemedy, retryRequest().remedy);
+});
+
+test('the final\'s stop fields are empty unless it STOPPED, and the summary block refuses any other pairing', () => {
+  const approved = summarizeCorrectionRun(partialTerminal());
+  const open = summarizeCorrectionRun(partialFinal());
+  const stagnated = summarizeCorrectionRun(stagnatedFinal());
+  for (const summary of [approved, open]) {
+    assert.deepEqual(
+      [summary.final.unresolvedDefects, summary.final.comparison, summary.final.bestCandidate, summary.final.nextRemedy],
+      [[], [], null, null], summary.final.status);
+  }
+  for (const summary of [approved, open, stagnated]) {
+    assert.deepEqual(parseCorrectionSummaryBlock(formatCorrectionSummaryBlock(summary)), summary);
+  }
+  const edited = (summary, edit) => {
+    const value = structuredClone(summary);
+    edit(value.final);
+    return value;
+  };
+  const cases = [
+    edited(stagnated, (final) => { final.bestCandidate = null; }),
+    edited(stagnated, (final) => { final.bestCandidate = { iteration: 2, observation: 'x', snapshot: null }; }),
+    edited(stagnated, (final) => { final.bestCandidate.cost = 1; }),
+    edited(stagnated, (final) => { final.comparison[0].verdict = 'better'; }),
+    edited(stagnated, (final) => { final.unresolvedDefects = [7]; }),
+    edited(stagnated, (final) => { final.nextRemedy = 7; }),
+    edited(stagnated, (final) => { delete final.nextRemedy; }),
+    edited(approved, (final) => { final.bestCandidate = structuredClone(stagnated.final.bestCandidate); }),
+    edited(approved, (final) => { final.unresolvedDefects = ['SC4/review/missing-note']; }),
+    edited(approved, (final) => { final.comparison = structuredClone(stagnated.final.comparison); }),
+    edited(open, (final) => { final.nextRemedy = REMEDIES[3]; }),
+  ];
+  for (const [index, summary] of cases.entries()) {
+    assert.throws(() => formatCorrectionSummaryBlock(summary), { name: 'TypeError', message: /final/u }, `format ${index}`);
+    assert.throws(() => parseCorrectionSummaryBlock(block(JSON.stringify(summary, null, 2))),
+      (error) => error.constructor === Error && /final/u.test(error.message), `parse ${index}`);
+  }
+  // A final's next remedy cannot forge a marker either.
+  const forged = edited(stagnated, (final) => { final.nextRemedy = `${BLOCK_CLOSE} injected`; });
+  assert.throws(() => formatCorrectionSummaryBlock(forged), { name: 'TypeError', message: /marker/u });
 });

@@ -514,8 +514,12 @@ const partialPlan = '# Plan\n\n## Task 4\n- **Surface:** scripts\n- **Complexity
   + '## Task 5\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC2\n\n'
   + '## Task 6\n- **Surface:** scripts\n- **Complexity:** mechanical\n- **Dependencies:** 5\n- **Success criteria:** SC3\n';
 // The correction summary of the partial run: Task 4 completed, Task 5 stopped retaining `execution`, Task 6
-// blocked by it, and the final in `finalStatus` (null while the final cycle is due).
+// blocked by it, and the final in `finalStatus` (null while the final cycle is due). A STOPPED final carries its
+// stop details, here those of an interruption before any outcome.
 function partialSummary(outcome, execution, finalStatus = outcome === 'PENDING' ? null : 'APPROVED') {
+  const stopDetails = finalStatus === 'STOPPED'
+    ? { unresolvedDefects: [], comparison: [], bestCandidate: { iteration: 0, observation: 'b'.repeat(64), snapshot: null }, nextRemedy: 'paused by the user' }
+    : { unresolvedDefects: [], comparison: [], bestCandidate: null, nextRemedy: null };
   return {
     version: 1, outcome, approval: 'UNAPPROVED', planDigest: 'a'.repeat(64), completed: ['4'],
     stopped: [{ task: '5', cycle: 1, reason: 'HUMAN_INTERRUPTED', iterations: { reserved: 1, diagnosis: 0 }, unresolvedDefects: [],
@@ -523,7 +527,7 @@ function partialSummary(outcome, execution, finalStatus = outcome === 'PENDING' 
     blocked: [{ task: '6', causes: ['5'] }],
     criteria: outcome === 'PENDING' ? { SC2: 'failed', SC3: 'blocked' } : { SC1: finalStatus === 'APPROVED' ? 'satisfied' : 'failed', SC2: 'failed', SC3: 'blocked' },
     final: finalStatus === null ? null : { cycle: 1, status: finalStatus, reason: finalStatus === 'APPROVED' ? 'APPROVED' : 'HUMAN_INTERRUPTED',
-      iterations: { reserved: 1, diagnosis: 0 }, approvedObservation: finalStatus === 'APPROVED' ? 'b'.repeat(64) : null },
+      iterations: { reserved: 1, diagnosis: 0 }, approvedObservation: finalStatus === 'APPROVED' ? 'b'.repeat(64) : null, ...stopDetails },
     cycles: [], halt: null,
   };
 }

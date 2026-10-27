@@ -791,9 +791,10 @@ test('project creates an absent index and refuses a malformed summary block with
 test('project refuses a summary whose recorded text would forge a summary marker', () => withRepo(PLAN_TWO, (repo) => {
   const { root, put, bytes } = repo;
   const evidence = interruptedRun(root);
-  put(retryPath(1), `${JSON.stringify(retryRequest(evidence, { remedy: `${OPEN_MARKER} parse with a streaming reader` }))}\n`);
+  put(retryPath(1), `${JSON.stringify(retryRequest(evidence))}\n`);
   assert.equal(admitCorrectionRetry(root, manual({ request: retryPath(1) })).ok, true);
-  stopCorrectionCycle(root, manual({ scope: 'task-1', reason: 'HUMAN_INTERRUPTED', note: 'paused by the user' }));
+  // The explicit stop's note, not the admitted remedy, is the summary's next remedy: it carries the marker.
+  stopCorrectionCycle(root, manual({ scope: 'task-1', reason: 'HUMAN_INTERRUPTED', note: `${OPEN_MARKER} paused by the user` }));
   appendEnvelope(repo, {
     kind: 'ISOLATION_RECORDED', scope: 'task-1', cycle: 1, mode: 'baseline-equal', observation: observeSource(root).digest,
   });

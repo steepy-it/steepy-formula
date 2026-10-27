@@ -1699,7 +1699,8 @@ function correctionSummary(overrides = {}) {
     }],
     blocked: [{ task: '3', causes: ['2'] }],
     criteria: outcome === 'PENDING' ? { SC2: 'failed', SC3: 'blocked', SC4: 'failed' } : { SC1: 'satisfied', SC2: 'failed', SC3: 'blocked', SC4: 'failed' },
-    final: { cycle: 1, status: 'APPROVED', reason: 'APPROVED', iterations: { reserved: 1, diagnosis: 0 }, approvedObservation: 'b'.repeat(64) },
+    final: { cycle: 1, status: 'APPROVED', reason: 'APPROVED', iterations: { reserved: 1, diagnosis: 0 }, approvedObservation: 'b'.repeat(64),
+      unresolvedDefects: [], comparison: [], bestCandidate: null, nextRemedy: null },
     cycles: [], halt: null, ...overrides,
   };
 }
