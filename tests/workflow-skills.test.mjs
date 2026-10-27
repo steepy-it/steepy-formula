@@ -3599,3 +3599,70 @@ test('architecture scopes automatic export guarantees to configured callers', ()
   assert.match(text, /shipped CLI does not configure one today|shipped CLI[^.]*export: none/i, 'CLI does not claim automatic export');
   assert.doesNotMatch(text, /RPO\s*=\s*0\s+by construction/i, 'optional automatic exports do not establish an unconditional zero-loss guarantee');
 });
+
+// Task 15: partial outcomes in plan, review, brainstorm and docs/workflow.md.
+test('plan: Dependencies grammar is mandatory, exact and verified by --verify-plan in both drives', () => {
+  const text = readFileSync(join(skillsDir, 'plan', 'SKILL.md'), 'utf8');
+  const step3 = sectionBetween(text, '### Step 3', '### Step 4').replace(/\s+/g, ' ');
+  assert.match(step3, /\*\*Dependencies:\*\*/, 'Step 3 keeps the Dependencies token');
+  assert.match(step3, /exactly one per task, `none` or the earlier task numbers in increasing order separated by `, ` \(for example `1, 3`\)/,
+    'Step 3 states the exact Dependencies grammar');
+  assert.match(step3, /Implement rejects a missing, duplicate, malformed, unknown, self or forward value before any dispatch, and no plan without the field is accepted/,
+    'Step 3 states that implement rejects every invalid Dependencies value');
+  const step45 = sectionBetween(text, '### Step 4.5', '### Step 5').replace(/\s+/g, ' ');
+  assert.match(step45, /3\.\s+\*\*Dependency ordering\*\*[^]*?exactly one `\*\*Dependencies:\*\*` per task, `none` or the earlier task numbers in increasing order separated by `, `/,
+    'Step 4.5 check 3 states the same grammar');
+  const step5 = sectionBetween(text, '### Step 5', '### Step 6');
+  assert.match(step5, /node <engine-root>\/scripts\/autopilot-context\.mjs --verify-plan --repo-root \. --plan <plan-path>/,
+    'Step 5 runs --verify-plan on the plan path in both drives');
+  assert.match(step5, /\*\*Both drives:\*\*[^]*?`plan OK`[^]*?manual drive[^]*?before the human gate[^]*?autopilot[^]*?before (appending )?`DONE`/,
+    'Step 5 requires plan OK in manual drive before the human gate and in autopilot before DONE');
+});
+
+test('review: a PARTIAL correction summary is mapped, reported unapproved, and never reaches READY_FOR_PR or the bump/PR offer', () => {
+  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const step2 = sectionBetween(text, '### Step 2', '### Step 3').replace(/\s+/g, ' ');
+  assert.match(step2, /`steepy-correction-summary`/, 'Step 2 names the correction summary block');
+  assert.match(step2, /`PARTIAL`[^]*?every original criterion[^]*?satisfied, failed or blocked/,
+    'a PARTIAL outcome maps every original criterion to satisfied, failed or blocked');
+  assert.match(step2, /A clean review of delivered work never satisfies a blocked requirement/,
+    'delivered work never satisfies a blocked requirement');
+  const step4 = sectionBetween(text, '### Step 4', '### Step 5').replace(/\s+/g, ' ');
+  assert.match(step4, /explicitly unapproved[^]*?completed, stopped and blocked (task )?IDs[^]*?best candidates[^]*?next remedies/,
+    'Step 4 records the partial delivery as explicitly unapproved with IDs, candidates and remedies');
+  assert.match(step4, / — review — PARTIAL_REVIEWED — run-id=<conductor-supplied> attempt=<positive supplied> <one-line verdict>[^]*?instead of `READY_FOR_PR`/,
+    'autopilot appends PARTIAL_REVIEWED instead of READY_FOR_PR');
+  assert.match(step4, /manual drive[^]*?suppress Step 5 entirely[^]*?no bump, no PR[^]*?reopening needs explicit authorization in a new implement session[^]*?Resume and reopening/,
+    'manual drive suppresses Step 5 and points to the implement reopening rules');
+  const step5 = sectionBetween(text, '### Step 5', '## Model Selection').replace(/\s+/g, ' ');
+  assert.match(step5, /never a `PARTIAL` implementation/, 'Step 5 excludes a PARTIAL implementation');
+});
+
+test('brainstorm: the autopilot launch report names the verified partial outcome beside READY_FOR_PR', () => {
+  const text = readFileSync(join(skillsDir, 'brainstorm', 'SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(text, /stop-before-PR \(`READY_FOR_PR`\)/, 'the READY_FOR_PR boundary wording stays');
+  assert.match(text, /A verified partial delivery ends instead at `PARTIAL_REVIEWED`, with conductor exit 3, and is explicitly unapproved/,
+    'the launch report states the partial outcome');
+});
+
+test('docs/workflow.md: Gear-3 evidence-driven correction documents the shipped facts', () => {
+  const docs = readFileSync(join(root, 'docs', 'workflow.md'), 'utf8');
+  const section = sectionBetween(docs, '### Gear-3 evidence-driven correction', '## Autopilot live observability').replace(/\s+/g, ' ');
+  assert.ok(section.length > 500, 'the section exists under the Gear 3 chain');
+  assert.ok(docs.indexOf('## Gear 3: the workflow chain') < docs.indexOf('### Gear-3 evidence-driven correction'),
+    'the section sits under the Gear 3 heading');
+  assert.match(section, /Three iterations per task cycle and per final-review cycle/, 'allowance');
+  assert.match(section, /at most one read-only diagnosis per cycle, charged to the same allowance/i, 'single diagnosis');
+  assert.match(section, /no separate fix or retry allowance/, 'no separate allowance');
+  assert.match(section, /stagnation/i, 'stagnation');
+  assert.match(section, /exactly one `\*\*Dependencies:\*\*`/, 'mandatory dependencies');
+  assert.match(section, /dependency-blocked/, 'continuation past a stopped task');
+  assert.match(section, /conductor exit 3/, 'exit 3');
+  for (const marker of ['PARTIAL', 'PARTIAL_REVIEWED', 'PHASE_PARTIAL']) {
+    assert.ok(section.includes(`\`${marker}\``), `${marker} marker documented`);
+  }
+  assert.match(section, /never `READY_FOR_PR`/, 'partial never READY_FOR_PR');
+  assert.match(section, /Resume and reopening/, 'resume and reopen');
+  assert.match(section, /Autopilot never reopens/, 'autopilot never reopens');
+  assert.match(section, /No time, token or cost limit/, 'no time, token or cost limit');
+});

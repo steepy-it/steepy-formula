@@ -327,6 +327,11 @@ manual regular review the active source is the required criteria-only artifact.
 Run the surface test command and preserve its **real, verbatim output** on disk; do not copy that
 unbounded transcript into model context.
 
+**Partial delivery.** The task-result index may carry a `steepy-correction-summary` block. When its
+outcome is `PARTIAL`, map every original criterion to satisfied, failed or blocked, from the summary
+plus your own verification. A clean review of delivered work never satisfies a blocked requirement.
+A `COMPLETE` outcome, or an index without the block, changes nothing here.
+
 **Inline deterministic collection.** Resolve the current output path from the accepted primary
 artifact, never by directory discovery:
 
@@ -510,6 +515,11 @@ applicable gate is green, consume the READY loop ledger into
 terminal-review lifecycle. A Gear-4 interruption or proof mismatch leaves the primary `READY`.
 Regular review instead follows the ordered index/report publication below.
 
+**Partial outcome (summary outcome `PARTIAL`).** Record the delivery as explicitly unapproved
+partial delivery, never as success: list the completed, stopped and blocked task IDs, the best
+candidates and the next remedies from the summary, and the criterion map from Step 2. The report
+and its lifecycle otherwise follow the publication below.
+
 **Regular Gear 3 publication and resume.** Create a fresh report only at an absent canonical path;
 an existing report requires its exact resume capability, never an overwrite or most-recent fallback.
 Start its workflow header before the title as:
@@ -547,6 +557,11 @@ onDemand: none
 
 **Human action:** inspect the evidence and choose the version-bump/PR action in Step 5.
 
+**Partial outcome, manual drive:** replace that human action with: inspect the evidence; this
+partial delivery is unapproved. In this case suppress Step 5 entirely (no bump, no PR). Tell the human that
+reopening needs explicit authorization in a new implement session, under the implement skill's
+"Resume and reopening" rules.
+
 **Gear-4 negative terminal outcome:** replace that human action with: inspect the evidence; there is
 no release or PR offer for this outcome. Suppress Step 5 completely. A new goal contract, ratified
 by a human for Gear 4, is required for another run; neither this review nor the consumed ledger grants more
@@ -562,9 +577,14 @@ above, append
 CHANGELOG edit, no PR, no Step 5 question. The run's artifacts and this report stay on disk for a
 human to pick up Step 5 later, in an interactive session.
 
+**Autopilot, partial outcome:** when the summary outcome is `PARTIAL`, append
+`<ISO timestamp> — review — PARTIAL_REVIEWED — run-id=<conductor-supplied> attempt=<positive supplied> <one-line verdict>`
+instead of `READY_FOR_PR`, to the same status file, then end the session: the conductor exits 3 and
+the delivery stays unapproved. Never write `READY_FOR_PR` for it, and never reopen a stopped scope.
+
 ### Step 5 — Offer a pull request
 
-This step applies to regular review and a successfully proven Gear-4 `GOAL_REACHED` only. A Gear-4
+This step applies to regular review of a `COMPLETE` implementation (never a `PARTIAL` implementation) and a successfully proven Gear-4 `GOAL_REACHED` only. A Gear-4
 negative outcome has already stopped at Step 4 with no release/PR offer and a requirement for a new
 goal contract before another run.
 
