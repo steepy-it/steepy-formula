@@ -3337,6 +3337,11 @@ test('implement: a failed iteration continues only by an admitted retry or the o
   // M-6: the evidence-missing stop also carries a remedy the bound plan cannot admit.
   assert.match(prose, /or the remedy is one the bound plan cannot admit \(such as a plan split\), stop the cycle/,
     'the RETRY_EVIDENCE_MISSING stop covers a remedy the bound plan cannot admit');
+  // Final-review fix B: since fix A the summary projects an explicit stop's note as the scope's nextRemedy.
+  assert.doesNotMatch(prose, /because the projected summary does not/,
+    'the stop note is no longer claimed to be missing from the projected summary');
+  assert.match(prose, /the stop note carries such a remedy, and the projected summary reports it as that scope's `nextRemedy`, ahead of any diagnosis recommendation or admitted remedy/,
+    'the projected summary reports an explicit stop note as the scope nextRemedy, ranked first');
 });
 
 test('implement: a controller tells an unopened run from a resumed one, and Step 1 resolves outside the source tree in Gear 3', () => {
@@ -3356,7 +3361,14 @@ test('implement: task-local stops prove isolation and continue; exit 3 and sourc
   assert.match(discipline, /A task-local stop continues with the next runnable independent task, and dependency-blocked tasks are never dispatched/,
     'a task-local stop continues; dependency-blocked tasks are never dispatched');
   assert.doesNotMatch(discipline, /unresolved \*\*BLOCKED\*\*/, 'an unresolved BLOCKED is no longer a run stop');
+  // Final-review fix B (I-1 route c): the manual human question at a PARTIAL terminal step.
+  assert.match(discipline, /In manual drive, a `PARTIAL` terminal step adds one genuine human question before publication: reopen a stopped scope or publish \(Step 5\)/,
+    'the execution discipline names the reopen-or-publish question of a manual PARTIAL terminal step');
   const prose = flatText(guardStep());
+  assert.match(prose, /without commit authorization the user commits only after Step 5 publication/,
+    'an uncommitted run is committed only after publication, so no commit drifts the source before a reopen');
+  assert.doesNotMatch(prose, /the user commits only after the Step 5 guard verification/,
+    'the user no longer commits between the guard verification and the reopen-or-publish answer');
   assert.match(prose, /After a task-local stop, run `--action prove-isolation --scope task-N`/, 'a task-local stop proves isolation');
   assert.match(prose, /Exit 3 from any guard action halts the whole run: report it and never continue/, 'exit 3 halts the whole run');
   assert.match(prose, /source change outside an authorized writer dispatch[^.]*halts the whole run \(exit 3\) by design/,
@@ -3435,8 +3447,26 @@ test('implement: Step 5 verifies the terminal guard handoff and states a PARTIAL
   assert.match(prose, /unapproved partial delivery/, 'a PARTIAL outcome is unapproved partial delivery');
   assert.match(prose, /completed, stopped and blocked task IDs, the failed criteria, the best candidates and the next remedies/,
     'a PARTIAL outcome lists IDs, failed criteria, best candidates and next remedies');
-  assert.match(prose, /the next remedies \(a reopen needs a remedy different from these\), and any plan split recorded in the ledger/,
-    'a PARTIAL outcome also lists a ledger-recorded plan split, which the summary does not carry');
+  // Final-review fix B (I-2): the shipped `final` entry of a stopped final cycle is reported too.
+  assert.match(prose, /a stopped final cycle's unresolved defects, best candidate and next remedy \(the summary's `final`\)/,
+    'a PARTIAL outcome also reports a stopped final cycle\'s unresolved defects, best candidate and next remedy');
+  assert.doesNotMatch(prose, /a reopen needs a remedy different from these/,
+    'a reported next remedy taken from an explicit stop note may be adopted by a reopen, so it is not excluded');
+  assert.match(prose, /An explicit stop's note, such as a plan split, is reported as that scope's next remedy/,
+    'an explicit stop note (a plan split) is the reported next remedy, now carried by the summary');
+  // Final-review fix B (I-1 route c): the manual reopen-or-publish question precedes publication.
+  const question = prose.indexOf('**Reopen or publish (manual drive, `PARTIAL`).**');
+  const publication = prose.indexOf('Only after every task gate succeeds');
+  assert.ok(question !== -1 && publication !== -1 && question < publication,
+    'the manual PARTIAL reopen-or-publish question comes before the publication writes');
+  assert.match(prose, /never proceed on silence/, 'the reopen-or-publish question never proceeds on silence');
+  assert.match(prose, /run `--action reopen --authorization <that path>` under "Resume and reopening" \(Step 2\.7\), then continue from `next` in this session/,
+    'a reopen answer runs the guard reopen and continues from next in the same session');
+  assert.match(prose, /after a task reopen, the reopened cycle and any task it unblocks run, then the final review reruns once without a final-scope reopen; after a `final review` reopen, the reopened final cycle runs; either way this step runs again at the new `terminal`/,
+    'after a task reopen the final review reruns once on its own, and Step 5 runs again at the new terminal');
+  assert.match(prose, /and, in manual drive, the human chose to publish/, 'a manual PARTIAL records publication proof only after the human chose to publish');
+  assert.match(prose, /Publish READY then CONSUMED in that order for both outcomes \(a manual-drive `PARTIAL` only once the human chose to publish\)/,
+    'a manual PARTIAL publishes only once the human chose to publish');
   assert.ok(prose.includes('Run the `review` skill in a new session'), 'the review handoff envelope is unchanged');
 });
 
@@ -3475,7 +3505,8 @@ test('implement: reopening is manual-only with a verbatim authorization, and res
   assert.match(prose, /A captured execution resumes through `task-results\.mjs`[^.]*then `record-writer`, without a new reservation/,
     'a captured execution resumes through task-results then record-writer');
   assert.ok(prose.includes('`--action stop --scope <scope> --reason HUMAN_INTERRUPTED --note <text>`'), 'an explicit user interruption is a HUMAN_INTERRUPTED stop');
-  assert.match(prose, /Reopening a stopped scope happens only in manual drive/, 'reopening is manual-only');
+  // Final-review fix B: the manual-only rule is now the one-route sentence (see the same-route lock below).
+  assert.match(prose, /Reopening a stopped scope has one route: in manual drive/, 'reopening is manual-only, through one route');
   assert.match(prose, /explicit words naming the scope, plus a new remedy, are written verbatim to `\.formula\/work\/tasks\/<plan-basename>\/correction\/<scope>-cycle-<c>-reopen\.json`/,
     'the human authorization is written verbatim to the reopen artifact');
   assert.match(prose, /then `--action reopen --authorization [^`]+` must succeed/, 'reopen must succeed before the scope reopens');
@@ -3483,10 +3514,18 @@ test('implement: reopening is manual-only with a verbatim authorization, and res
   // I-1: the guard's reopen acceptance rules (correction-state.mjs authorizeReopen).
   assert.match(prose, /The human's words must name the scope literally, as `Task <N>` for `task-<N>` or `final review` for `final`/,
     'the reopen statement names the scope literally as Task <N> or final review');
-  assert.match(prose, /The remedy must be new to the scope:[^.]*never the summary's `nextRemedy`/,
-    'the reopen remedy is new to the scope, never the summary nextRemedy');
+  // Final-review fix B addendum 1: the shipped scopeRemedies set, which never holds an explicit stop's note.
+  assert.match(prose, /The remedy must be new to the scope: never a remedy already admitted in its cycles, never a diagnosis `remedy` or `recommendation` of its cycles, and never an earlier reopen remedy of that scope/,
+    'the reopen remedy is never an admitted remedy, a diagnosis remedy or recommendation, or an earlier reopen remedy of the scope');
+  assert.match(prose, /An explicit stop's note \(`RETRY_EVIDENCE_MISSING` or `HUMAN_INTERRUPTED`\)[^.]*is not one of these remedies and may be adopted as the reopen remedy unless its text repeats one of them/,
+    'an explicit stop note may be adopted as the reopen remedy, unless its text repeats a refused remedy');
+  assert.doesNotMatch(prose, /never the summary's `nextRemedy`/,
+    'the summary nextRemedy is not always refused: an explicit stop note ranks first there and may be adopted');
   assert.match(prose, /ask the human again; never rewrite their words/, 'words that fail the rules are asked again, never rewritten');
-  assert.match(prose, /Only a stopped scope with no open cycle is reopened/, 'only a stopped scope with no open cycle is reopened');
+  // Final-review fix B: authorizeReopen refuses while any cycle of the run, not only the scope's, is open.
+  assert.match(prose, /Only a stopped scope is reopened, and the guard refuses while any cycle of the run is open/,
+    'the guard refuses a reopen while any cycle of the run is open');
+  assert.doesNotMatch(prose, /Only a stopped scope with no open cycle is reopened/, 'the scope-only open-cycle wording is gone');
   assert.match(prose, /A dependency-blocked task never ran and is never reopened: reopen the stopped task that blocks it/,
     'a blocked task is completed by reopening its stopped cause');
 });
@@ -3632,10 +3671,36 @@ test('review: a PARTIAL correction summary is mapped, reported unapproved, and n
     'Step 4 records the partial delivery as explicitly unapproved with IDs, candidates and remedies');
   assert.match(step4, / — review — PARTIAL_REVIEWED — run-id=<conductor-supplied> attempt=<positive supplied> <one-line verdict>[^]*?instead of `READY_FOR_PR`/,
     'autopilot appends PARTIAL_REVIEWED instead of READY_FOR_PR');
-  assert.match(step4, /manual drive[^]*?suppress Step 5 entirely[^]*?no bump, no PR[^]*?reopening needs explicit authorization in a new implement session[^]*?Resume and reopening/,
+  // Final-review fix B (I-1 route c): a reviewed partial is final; the reopen route lies before publication.
+  assert.match(step4, /manual drive[^]*?suppress Step 5 entirely[^]*?no bump, no PR[^]*?Resume and reopening/,
     'manual drive suppresses Step 5 and points to the implement reopening rules');
+  assert.doesNotMatch(step4, /reopening needs explicit authorization in a new implement session/,
+    'a published partial is never reopened in a new implement session');
+  assert.match(step4, /Start that work with the `brainstorm` skill \(invoke it the way your harness invokes skills\); this review never reopens a scope/,
+    'further work on a reviewed partial starts a new chain, named harness-neutrally');
+  // Final-review fix B (I-2): the shipped `final` entry of a stopped final cycle is reported too.
+  assert.match(step4, /a stopped final cycle's unresolved defects, best candidate and next remedy \(the summary's `final`\)/,
+    'Step 4 reports a stopped final cycle\'s unresolved defects, best candidate and next remedy');
+  // Final-review fix B (routed): the generic READY_FOR_PR paragraph is conditional on a non-PARTIAL outcome.
+  assert.match(step4, /\*\*Autopilot:\*\* If `drive: autopilot` is present in the verdict contract \(Step 0\) and the summary outcome is not `PARTIAL`, stop here/,
+    'the generic Autopilot READY_FOR_PR paragraph applies only to a non-PARTIAL outcome');
   const step5 = sectionBetween(text, '### Step 5', '## Model Selection').replace(/\s+/g, ' ');
   assert.match(step5, /never a `PARTIAL` implementation/, 'Step 5 excludes a PARTIAL implementation');
+});
+
+// Final-review fix B (I-1): review's Gear-3 context resolves write outside the source tree, because a
+// root context.json/context.md is source to the correction guard and drifts its observation.
+test('review: Gear-3 context resolves in Step 1 and the Step 3 sanity resolve carry --out outside the source tree', () => {
+  const text = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const step1 = sectionBetween(text, '### Step 1', '### Step 2');
+  const graphBullet = flatText(step1.match(/- \*\*`graph` mode:\*\*[\s\S]*?(?=\n- \*\*)/)?.[0] ?? '');
+  assert.match(graphBullet, /in Gear 3 add `--out <dir>` outside the source tree, with `<dir>` under `\.formula\/work\/tasks\/<plan-basename>\/` or a temporary directory, here and in the `--target` fallback below/,
+    'the Step 1 graph-mode resolve carries --out in Gear 3, for both the --path and the --target form');
+  const step3 = flatText(sectionBetween(text, '### Step 3', '### Step 4'));
+  assert.match(step3, /In Gear 3 that resolve also writes outside the source tree, as in Step 1: `steepy-formula context resolve --path <p>\.\.\. --out <dir>` \(or the `--target` form with `--out <dir>`\)/,
+    'the Step 3 sanity resolve carries --out in Gear 3');
+  assert.match(step3, /Without `--out` it writes `context\.json` and `context\.md` into the working directory, which the correction guard counts as source changes/,
+    'Step 3 states why a resolve without --out is refused in Gear 3');
 });
 
 test('brainstorm: the autopilot launch report names the verified partial outcome beside READY_FOR_PR', () => {
@@ -3665,4 +3730,65 @@ test('docs/workflow.md: Gear-3 evidence-driven correction documents the shipped 
   assert.match(section, /Resume and reopening/, 'resume and reopen');
   assert.match(section, /Autopilot never reopens/, 'autopilot never reopens');
   assert.match(section, /No time, token or cost limit/, 'no time, token or cost limit');
+  // Final-review fix B addendum 1: the docs state the shipped reopen-remedy rule.
+  assert.match(section, /never an admitted remedy, a diagnosis remedy or recommendation, or an earlier reopen remedy of that scope, though an explicit stop's note may be adopted/,
+    'the docs state the shipped reopen-remedy rule, including the adoptable explicit stop note');
+  assert.match(section, /The guard refuses while any cycle of the run is open/, 'the docs state the run-wide open-cycle refusal');
+});
+
+// Final-review fix B (I-1 route c): implement's lifecycle, review's manual partial guidance and the
+// workflow docs name one and the same reopen route, and the same finality of a published partial.
+const REOPEN_ROUTE = 'Reopening a stopped scope has one route: in manual drive, when the guard reports `terminal` with a '
+  + '`PARTIAL` outcome, implement asks the human, before it publishes the index READY and the plan CONSUMED, whether '
+  + 'to reopen a stopped scope and continue in the same session or to publish the partial.';
+const PARTIAL_FINAL = 'Once published (plan CONSUMED, index READY) and reviewed, a partial is final: further work on its '
+  + 'stopped or blocked tasks needs a new `brainstorm` and `plan`.';
+
+test('reopen route: implement, review and docs/workflow.md name the same single reopen route and the finality of a published partial', () => {
+  const implement = implementText('SKILL.md');
+  const review = readFileSync(join(skillsDir, 'review', 'SKILL.md'), 'utf8');
+  const docs = readFileSync(join(root, 'docs', 'workflow.md'), 'utf8');
+  const carriers = [
+    ['implement "Resume and reopening"', sectionBetween(implement, '#### Resume and reopening', '### Step 3')],
+    ['implement Step 5', sectionBetween(implement, '### Step 5 — Hand off', '## Model Selection')],
+    ['review Step 4 manual partial', sectionBetween(review, '**Partial outcome, manual drive:**', '**Gear-4 negative terminal outcome:**')],
+    ['docs/workflow.md "Resume and reopen"', docs.split('\n').find((line) => line.startsWith('- **Resume and reopen.**')) ?? ''],
+  ];
+  for (const [name, section] of carriers) {
+    const prose = flatText(section);
+    assert.ok(prose.includes(REOPEN_ROUTE), `${name} names the single reopen route before publication`);
+    assert.ok(prose.includes(PARTIAL_FINAL), `${name} states that a published and reviewed partial is final`);
+  }
+  const step4 = flatText(sectionBetween(implement, '### Step 4', '### Step 5'));
+  assert.match(step4, /That reopen is offered only at the Step 5 reopen-or-publish question/,
+    'Step 4 routes the reopen of a stopped or blocked deliverable to the Step 5 question');
+  const resume = flatText(carriers[0][1]);
+  assert.match(resume, /Autopilot never reopens: it hands the request back to the human, and its partial is published, so further work needs a new `brainstorm` and `plan`/,
+    'autopilot never reopens, and its published partial needs a new chain');
+});
+
+// Final-review fix B (routed): every child that may resolve context during a Gear-3 run learns the --out duty
+// inside its own prompt, so no child writes context.json/context.md into the source tree.
+const PROMPT_OUT_DUTY = 'During a Gear-3 correction run, any `steepy-formula context resolve` you run writes outside the '
+  + 'source tree: add `--out <dir>` with `<dir>` under `.formula/work/tasks/<plan-basename>/` or a temporary directory. '
+  + 'Without `--out` it writes `context.json` and `context.md` into the working directory, which the correction guard '
+  + 'counts as source changes.';
+
+test('implement prompts: the implementer, both reviewers and the diagnostic carry the Gear-3 context-resolve --out duty in their prompt', () => {
+  for (const file of ['implementer-prompt.md', 'task-reviewer-prompt.md', 'final-review-prompt.md', 'diagnosis-prompt.md']) {
+    const prose = flatText(implementText(file));
+    const prompt = prose.indexOf('prompt: |');
+    const duty = prose.indexOf(PROMPT_OUT_DUTY);
+    assert.ok(duty !== -1, `${file} carries the Gear-3 context-resolve --out duty`);
+    assert.ok(prompt !== -1 && duty > prompt, `${file} states the --out duty inside the dispatched prompt`);
+  }
+});
+
+// Final-review fix B addendum 2: before terminal the summary classifies only the criteria already decided.
+test('docs/architecture.md: the correction-state summary classifies every criterion only at terminal', () => {
+  const architecture = readFileSync(join(root, 'docs', 'architecture.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(architecture.includes('the criteria (at terminal every criterion as satisfied, failed or blocked; before terminal only the criteria already decided)'),
+    'the correction-state row scopes the full criterion classification to terminal');
+  assert.ok(!architecture.includes('stopped root causes), every criterion as satisfied, failed or blocked,'),
+    'the row no longer claims every criterion is classified before terminal');
 });

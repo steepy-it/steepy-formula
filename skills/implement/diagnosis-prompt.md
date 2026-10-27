@@ -45,6 +45,11 @@ Subagent (diagnostic):
     may be read normally. In manual drive use only the role-local direct inputs above, never enumerate
     or infer another `.formula/work/**` input, and record the no-manifest degradation.
 
+    During a Gear-3 correction run, any `steepy-formula context resolve` you run writes outside the
+    source tree: add `--out <dir>` with `<dir>` under `.formula/work/tasks/<plan-basename>/` or a
+    temporary directory. Without `--out` it writes `context.json` and `context.md` into the working
+    directory, which the correction guard counts as source changes.
+
     The diagnosis is read-only. The diagnostic never edits source, stages or commits; writing the authorized
     diagnosis artifact is required and excluded from `changed-paths`. In manual drive, `changed-paths`
     must always be the literal `none`. The gate never infers or repairs status, artifact, or signals.

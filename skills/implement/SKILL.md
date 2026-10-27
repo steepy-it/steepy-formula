@@ -132,7 +132,7 @@ reviewers and hands the result to the `review` phase.
 
 ## Execution discipline
 
-Keep between-task updates brief: which task finished and what comes next (e.g. "Task 2 approved, moving to Task 3") — the ledger and the tool results carry the record. Never ask "should I continue?" between tasks; execute the accepted input straight through. The only reasons to stop mid-run are a whole-run halt (guard integrity or unauthorized mutation), a genuine human question in manual drive, a direct Gear-2 decomposition stop, or the guard's terminal step (Gear 2, which runs no guard: all tasks complete). A task-local stop continues with the next runnable independent task, and dependency-blocked tasks are never dispatched.
+Keep between-task updates brief: which task finished and what comes next (e.g. "Task 2 approved, moving to Task 3") — the ledger and the tool results carry the record. Never ask "should I continue?" between tasks; execute the accepted input straight through. The only reasons to stop mid-run are a whole-run halt (guard integrity or unauthorized mutation), a genuine human question in manual drive, a direct Gear-2 decomposition stop, or the guard's terminal step (Gear 2, which runs no guard: all tasks complete). In manual drive, a `PARTIAL` terminal step adds one genuine human question before publication: reopen a stopped scope or publish (Step 5). A task-local stop continues with the next runnable independent task, and dependency-blocked tasks are never dispatched.
 
 ## Checklist
 
@@ -485,8 +485,9 @@ single diagnosis with `--kind diagnosis --reason missing-retry-evidence|comparis
 with no task/subagent tool, run it as a dedicated inline read-only pass with the degradation recorded
 in the ledger — and record it with `--action record-diagnosis --scope <scope> --iteration <i>` (the
 diagnostic's response on stdin, on both drives). When no evidence supports a retry and the diagnosis is spent, or the remedy is one the bound plan cannot admit (such as a plan split), stop the cycle
-with `--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <text>`; the stop note and
-the ledger carry such a remedy, because the projected summary does not.
+with `--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <text>`; the stop note carries
+such a remedy, and the projected summary reports it as that scope's `nextRemedy`, ahead of any diagnosis
+recommendation or admitted remedy.
 Stagnation, exhaustion, an unavailable comparison and an inconclusive diagnosis are the guard's decision: it stops the cycle itself, and the controller never overrides that stop.
 
 **Task-local stop and integrity halt.** After a task-local stop, run `--action prove-isolation --scope task-N`:
@@ -504,7 +505,7 @@ answered question and reviewer redispatch spends one of the three iterations. No
 untracked files outside `.formula/work/`) at every mutating action and accepts a change only inside
 an authorized writer window: after the writer's `authorize`, recorded by `record-writer`. Any source change outside an authorized writer dispatch — including re-running `open` after editing files, a commit after `record-writer`, or recording an interruption after a crashed writer left changes — halts the whole run (exit 3) by design.
 Authorized task commits therefore land inside the writer dispatch; without commit authorization the
-user commits only after the Step 5 guard verification. During a Gear-3 correction run, context resolution (by the controller or any dispatched agent, Step 1 included) writes its output outside the source tree:
+user commits only after Step 5 publication, because a commit before it would halt a reopen chosen at Step 5. During a Gear-3 correction run, context resolution (by the controller or any dispatched agent, Step 1 included) writes its output outside the source tree:
 run `steepy-formula context resolve --path <p>... --out <dir>` (or the `--target` form with `--out <dir>`)
 with `<dir>` under `.formula/work/tasks/<plan-basename>/` or a temporary directory, and state that
 in every dispatch. Without `--out`, the resolve writes `context.json` and `context.md` into the
@@ -521,18 +522,25 @@ its record is the evidence a `tool-failure` retry cites. A captured execution re
 on a manual drive a returned four-field writer response feeds `record-writer` the same way.
 An explicit user interruption is recorded with `--action stop --scope <scope> --reason HUMAN_INTERRUPTED --note <text>`.
 
-Reopening a stopped scope happens only in manual drive: the human's explicit words naming the scope, plus a new remedy, are written verbatim to `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-reopen.json`,
+Reopening a stopped scope has one route: in manual drive, when the guard reports `terminal` with a
+`PARTIAL` outcome, implement asks the human, before it publishes the index READY and the plan
+CONSUMED, whether to reopen a stopped scope and continue in the same session or to publish the
+partial. That is the Step 5 reopen-or-publish question: a reopen asked for mid-run waits for it, and
+an implement resume before publication reaches the same question. To reopen, the human's explicit words naming the scope, plus a new remedy, are written verbatim to `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-reopen.json`,
 where `<c>` is the stopped cycle, as strict JSON
 `{ "version": 1, "scope": "<task-N|final>", "statement": "<the human's exact words>", "remedy": "<the new remedy>" }`;
 then `--action reopen --authorization <that path>` must succeed before the scope runs again, in a
 linked cycle with a fresh allowance. The guard accepts the authorization only under these rules:
 
 - The human's words must name the scope literally, as `Task <N>` for `task-<N>` or `final review` for `final` (case-sensitive; `Task 1` is not followed by a digit, and `task-1` does not count).
-- The remedy must be new to the scope: never a remedy already admitted in its cycles, never the diagnosis `remedy` or `recommendation`, never an earlier reopen remedy, and therefore never the summary's `nextRemedy`.
-- Only a stopped scope with no open cycle is reopened, and only once until its reopened cycle opens. A dependency-blocked task never ran and is never reopened: reopen the stopped task that blocks it (`blocked[].causes` in the summary). Once that cause is approved, the blocked task becomes runnable on its own.
+- The remedy must be new to the scope: never a remedy already admitted in its cycles, never a diagnosis `remedy` or `recommendation` of its cycles, and never an earlier reopen remedy of that scope (compared case-insensitively, ignoring surrounding and repeated whitespace). An explicit stop's note (`RETRY_EVIDENCE_MISSING` or `HUMAN_INTERRUPTED`), such as the remedy the human stated when interrupting, is not one of these remedies and may be adopted as the reopen remedy unless its text repeats one of them. The summary's `nextRemedy` can therefore be adopted when it is such a note, and never when it is a diagnosis recommendation or an admitted remedy.
+- Only a stopped scope is reopened, and the guard refuses while any cycle of the run is open; a scope is reopened only once until its reopened cycle opens. A dependency-blocked task never ran and is never reopened: reopen the stopped task that blocks it (`blocked[].causes` in the summary). Once that cause is approved, the blocked task becomes runnable on its own.
 
 When the human's words do not satisfy these rules, ask the human again; never rewrite their words.
-Autopilot never reopens: it hands the request back to the human.
+Once published (plan CONSUMED, index READY) and reviewed, a partial is final: further work on its
+stopped or blocked tasks needs a new `brainstorm` and `plan`. A verified CONSUMED/READY pair is a
+no-op for implement (Step 0), so no later implement session reopens it.
+Autopilot never reopens: it hands the request back to the human, and its partial is published, so further work needs a new `brainstorm` and `plan`.
 
 ### Step 3 — Per-task loop (sequential; one implementer in flight)
 
@@ -652,7 +660,7 @@ iteration follows `next`. A final fix names its approved owner task and affected
 admitted by a retry request citing the final review. For an integration or design owner task, the guard
 requires that task's approved review in the same iteration before the final review
 (`--role task-reviewer --owner-task <n>`, defects `correction/final-cycle-<c>-iteration-<i>-task-reviewer-defects.json`).
-A stopped or blocked deliverable is never completed this way; it needs a reopen — of the stopped task itself, or for a blocked task, of the stopped task that blocks it.
+A stopped or blocked deliverable is never completed this way; it needs a reopen — of the stopped task itself, or for a blocked task, of the stopped task that blocks it. That reopen is offered only at the Step 5 reopen-or-publish question.
 
 After the last task, capture the aggregate branch change at `.formula/work/tasks/<plan-basename>/branch-diff.txt`
 as the unmodified aggregate `git diff` and materialize the criteria-only `success-criteria.md` artifact:
@@ -690,7 +698,8 @@ implementation and deterministic gates. Gear 2 does not invoke or hand off to `r
 implementer self-review and these deterministic gates are its terminal assurance.
 
 **Gear 3 only.** Only after the guard reports `terminal` — the whole-branch review approved, or a
-PARTIAL outcome — and the handoff verifications below succeed, tell the user the next step is the `review` skill
+PARTIAL outcome — and the handoff verifications below succeed (for a manual-drive PARTIAL, also only
+after the human chose to publish, below), tell the user the next step is the `review` skill
 (invoke it the way your harness invokes skills). Run the `review` skill in a new session:
 this phase's context does not serve review, and every turn of the review phase would pay to
 carry it forward.
@@ -739,12 +748,28 @@ node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan .formula/wo
 and exit 3 means corrupt evidence or a dispatch the guard never authorized, which halts the run. It
 reports the outcome and its approval: `COMPLETE` is `APPROVED`; `PARTIAL` is always `UNAPPROVED`.
 State a PARTIAL outcome explicitly as unapproved partial delivery, listing from the projected summary
-the completed, stopped and blocked task IDs, the failed criteria, the best candidates and the next remedies (a reopen needs a remedy different from these), and any plan split recorded in the ledger.
-Never present it as success.
+the completed, stopped and blocked task IDs, the failed criteria, the best candidates and the next remedies
+of the stopped tasks, and a stopped final cycle's unresolved defects, best candidate and next remedy
+(the summary's `final`). An explicit stop's note, such as a plan split, is reported as that scope's next
+remedy. Never present it as success.
+
+**Reopen or publish (manual drive, `PARTIAL`).** Reopening a stopped scope has one route: in manual
+drive, when the guard reports `terminal` with a `PARTIAL` outcome, implement asks the human, before it
+publishes the index READY and the plan CONSUMED, whether to reopen a stopped scope and continue in the
+same session or to publish the partial. Ask it as one explicit question right after the statement
+above, before recording anything for publication; never proceed on silence. To reopen, the human
+answers in their own words, naming the scope literally with a remedy new to that scope: write the
+authorization and run `--action reopen --authorization <that path>` under "Resume and reopening"
+(Step 2.7), then continue from `next` in this session — after a task reopen, the reopened cycle and
+any task it unblocks run, then the final review reruns once without a final-scope reopen; after a
+`final review` reopen, the reopened final cycle runs; either way this step runs again at the new
+`terminal`. To publish, continue below. Once published (plan CONSUMED, index READY) and reviewed, a
+partial is final: further work on its stopped or blocked tasks needs a new `brainstorm` and `plan`.
+Autopilot never asks: it publishes the partial.
 
 Only after every task gate succeeds, the whole-branch review approves, and this handoff verification
 succeeds — or, for a PARTIAL outcome, after the guard reaches `terminal` and both handoff verifications
-succeed, with no approval to record — record that approval and verification bound to the exact input/output content, supporting
+succeed, with no approval to record, and, in manual drive, the human chose to publish — record that approval and verification bound to the exact input/output content, supporting
 criteria/diff identities, and current branch/HEAD or uncommitted diff identity in the index before READY.
 Then first atomically replace the index to `status: READY`; then atomically replace the accepted
 plan to `status: CONSUMED` with `consumed-by` equal to the task-result index. Before publication the
@@ -755,8 +780,8 @@ CONSUMED/READY pair is a no-op, never another implementation or review dispatch.
 or an impossible pair fails closed. Do not follow supporting paths as implicit read capabilities;
 if the recorded proof cannot establish a current handoff, stop for the exact missing scope.
 
-Publish READY then CONSUMED in that order for both outcomes, and hand off to `review` with the
-unchanged envelope above.
+Publish READY then CONSUMED in that order for both outcomes (a manual-drive `PARTIAL` only once the
+human chose to publish), and hand off to `review` with the unchanged envelope above.
 
 **Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the final DONE or PARTIAL status marker.
 

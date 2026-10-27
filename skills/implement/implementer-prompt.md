@@ -49,6 +49,11 @@ Subagent (<surface>-agent):
     ordinary repository source normally as needed, and record the no-manifest degradation. Never
     enumerate `.formula/work/**`, infer another work artifact, or widen the orchestrator's capability.
 
+    During a Gear-3 correction run, any `steepy-formula context resolve` you run writes outside the
+    source tree: add `--out <dir>` with `<dir>` under `.formula/work/tasks/<plan-basename>/` or a
+    temporary directory. Without `--out` it writes `context.json` and `context.md` into the working
+    directory, which the correction guard counts as source changes.
+
     ## Before you begin
     If anything is ambiguous, write the concrete question to [REPORT_FILE] and return
     `status: NEEDS_CONTEXT`; do not guess and do not put the question in the response.

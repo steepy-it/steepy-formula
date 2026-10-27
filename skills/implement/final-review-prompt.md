@@ -52,6 +52,11 @@ Subagent (reviewer):
     metadata; validate the supporting paths and canonical criteria `Source`/`Heading` attribution
     without opening the plan or source spec.
 
+    During a Gear-3 correction run, any `steepy-formula context resolve` you run writes outside the
+    source tree: add `--out <dir>` with `<dir>` under `.formula/work/tasks/<plan-basename>/` or a
+    temporary directory. Without `--out` it writes `context.json` and `context.md` into the working
+    directory, which the correction guard counts as source changes.
+
     Read the aggregate diff once. Check that task interfaces compose, no task undoes another, all
     success criteria are met, and no cross-cutting problem escaped the task gates.
 

@@ -47,6 +47,11 @@ Subagent (reviewer):
     code task may be read normally. In manual drive use only the same four role-local direct inputs,
     never enumerate or infer another `.formula/work/**` input, and record the no-manifest degradation.
 
+    During a Gear-3 correction run, any `steepy-formula context resolve` you run writes outside the
+    source tree: add `--out <dir>` with `<dir>` under `.formula/work/tasks/<plan-basename>/` or a
+    temporary directory. Without `--out` it writes `context.json` and `context.md` into the working
+    directory, which the correction guard counts as source changes.
+
     Read the diff file once. The implementer report contains unverified claims: verify them against
     the diff. The review is read-only with respect to application code and other repository sources.
     Writing the authorized review, issue and defects artifacts is required and excluded from `changed-paths`.
