@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.1.0 (2026-10-27)
+
+- Run every Gear-3 task and the whole-branch review as a guarded correction cycle: three iterations per cycle, at most one read-only diagnosis, and retries admitted only with evidence from the previous attempt.
+- Stop a cycle on stagnation, an unavailable comparison or exhaustion, keep its best-ranked candidate, and continue with independent tasks while dependent tasks stay blocked.
+- Report a run that cannot finish every task as an explicitly unapproved `PARTIAL` outcome listing completed, stopped and blocked tasks, unresolved defects and next remedies; autopilot ends it at `PARTIAL_REVIEWED` with exit code 3, never `READY_FOR_PR`.
+- Reopen a stopped task or final review only through an explicit human authorization in manual drive, before the partial result is published.
+- Require exactly one `**Dependencies:**` line per plan task (`none` or earlier task numbers in increasing order); plans without it are rejected.
+- Halt the whole run on corrupted correction records or on source changes outside an authorized writer.
+
 ## v1.0.0 (2026-10-22)
 
 First public release.
