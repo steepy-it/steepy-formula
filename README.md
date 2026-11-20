@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/logo-stacked-dark.svg">
-    <img alt="steepy-formula" src="assets/logo-stacked-light.svg" width="365">
+    <img alt="steepy-formula" src="assets/logo-stacked-light.svg" width="369">
   </picture>
 </p>
 
