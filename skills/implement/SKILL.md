@@ -132,7 +132,7 @@ reviewers and hands the result to the `review` phase.
 
 ## Execution discipline
 
-Keep between-task updates brief: which task finished and what comes next (e.g. "Task 2 approved, moving to Task 3") — the ledger and the tool results carry the record. Never ask "should I continue?" between tasks; execute the accepted input straight through. The only reasons to stop mid-run are an unresolved **BLOCKED** status, a genuine **NEEDS_CONTEXT** question from an implementer, a direct Gear-2 spec that requires decomposition, or all tasks complete.
+Keep between-task updates brief: which task finished and what comes next (e.g. "Task 2 approved, moving to Task 3") — the ledger and the tool results carry the record. Never ask "should I continue?" between tasks; execute the accepted input straight through. The only reasons to stop mid-run are a whole-run halt (guard integrity or unauthorized mutation), a genuine human question in manual drive, a direct Gear-2 decomposition stop, or the guard's terminal step (Gear 2, which runs no guard: all tasks complete). In manual drive, a `PARTIAL` terminal step adds one genuine human question before publication: reopen a stopped scope or publish (Step 5). A task-local stop continues with the next runnable independent task, and dependency-blocked tasks are never dispatched.
 
 ## Checklist
 
@@ -142,6 +142,7 @@ Keep between-task updates brief: which task finished and what comes next (e.g. "
 - [ ] Ask once: confirm the working branch (if on `main`/`master`) and commit-after-each-task authorization — or read both from the autopilot contract (Step 2)
 - [ ] Verify the Gear-3 task-result handoff parses before claiming completion; close Gear 2 locally after its deterministic gates (Step 5)
 - [ ] Pre-flight: scan the accepted spec or plan once for internal conflicts, batching only plan-backed conflicts to the user (Step 2.5)
+- [ ] Gear 3 only: open the correction guard before Task 1 and run every cycle, dispatch, stop, resume and reopen through it (Step 2.7)
 - [ ] Per task (sequential): brief → dispatch `<surface>-agent` (`implementer-prompt.md`) → diff → review (`task-reviewer-prompt.md`, gear 3 + non-mechanical only) → fix loop → mark complete
 - [ ] After the last task: whole-branch review (`final-review-prompt.md`, gear 3 only) → fix loop
 - [ ] Gear 3 only: hand off to the `review` skill with only criteria + task-results + branch-diff
@@ -296,7 +297,7 @@ phase manifest):
 
 - **`graph` mode:** resolve the hub context from the canonical graph — run
   `steepy-formula context resolve --path <p>...` over the accepted plan's or direct spec's exact
-  paths (exit 0 emits `context.json` + `context.md`). The resolved context supplies each task's
+  paths (exit 0 emits `context.json` + `context.md`; in Gear 3 add `--out <dir>` outside the source tree, per Step 2.7). The resolved context supplies each task's
   owning **surface**,
   its Rules — the standards the implementers follow — its Terms, and the surface test
   command from its Check item's `ext_v1_command` extension property (fall back to the
@@ -404,11 +405,150 @@ net for conflicts that surface during implementation.
 
 **Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` — do not ask the batched question.
 
+### Step 2.7 — Gear-3 correction guard (both drives)
+
+**Gear 3 only.** Gear 2 runs no guard and is unchanged. In Gear 3, in both drives, every writer,
+reviewer and diagnostic dispatch runs inside the deterministic correction guard. Every guard call
+has this form and prints exactly one JSON line:
+
+```sh
+node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan <plan-path> --action <action> [options]
+```
+
+On an autopilot drive every mutating action and `verify-handoff` add
+`--run-id <supplied-run-id> --attempt <supplied-attempt>`; a manual drive passes neither, the
+read-only `next` and `verify` never take them, and `reopen` takes them on no drive. The guard records
+under `.formula/work/tasks/<plan-basename>/correction/` are machine-replay state derived from the plan
+basename. They are not model read capabilities and need no new handoff role: never preload them or
+enumerate that directory, and a child receives only the exact paths its dispatch names here (a
+reviewer's defects output, a diagnostic's evidence and output).
+
+**Open before any dispatch.** Before Task 1, run:
+
+```sh
+node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan <plan-path> --action open --drive <manual|autopilot>
+```
+
+A rejected plan stops before any dispatch with the parser message. There is no fallback: the user re-runs the `plan` skill (invoke it the way your harness invokes skills).
+On resume, run `--action next` first: `next: null` with head `seq: 0` means the run was never opened — run `open`; any other step resumes from it.
+
+**The loop.** `next` decides the step: run `--action next`, perform exactly the step it names, then
+ask again. `open-cycle` opens each scope: `--action open-cycle --scope <task-N|final>`, a task once
+its dependencies are approved, the final once every task concluded. A mechanical task's cycle skips
+review unless opened with `--review-opt-in`; `--rubric-criteria SC1,SC2` names the scope criteria a
+reviewer also scores on the rubric. `reserve` runs before every dispatch:
+`--action reserve --scope <scope> --iteration <i> --kind initial|correction|diagnosis` spends the
+iteration's slot before its first dispatch. `authorize` binds each dispatch to its exact target:
+`--action authorize --scope <scope> --iteration <i> --role <role> --target <target>`, with
+`--role writer|task-reviewer|final-reviewer|diagnostic`. The writer's target is its execution state
+prefix `.formula/work/tasks/<plan-basename>/task-N-execution-E` (autopilot) or its report
+`.formula/work/tasks/<plan-basename>/task-N-report.md` (manual); a reviewer's is its review guard
+state prefix `.formula/work/tasks/<plan-basename>/<scope>-review-guard-attempt-<attempt>-iteration-<iteration>`
+(autopilot; the owner task's review inside a final-scope iteration uses its task's prefix
+`task-<n>-review-guard-…` under guard `--scope final`) or its review artifact `task-N-review.md` or
+`final-review.md` in that directory (manual); the diagnostic's is `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-iteration-<i>-diagnosis.json`.
+
+For each iteration: record the writer (`--action record-writer --scope <scope> --iteration <i>`,
+adding `--execution <state>` on autopilot; on a manual drive the writer's exact four-field response
+goes on stdin), run `--action verify-check --scope <scope> --iteration <i>` (each surface test plus the
+built-in coherence gate), dispatch the reviewer, and record the review with the defects artifact:
+`--action record-review --scope <scope> --iteration <i> --role task-reviewer|final-reviewer --defects <defects-path>`,
+adding `--review-state <prefix>` on autopilot; on a manual drive the reviewer's exact response goes
+on stdin. The defects artifact is `correction/<scope>-cycle-<c>-iteration-<i>-defects.json` in the
+task directory; the owner task's review inside a final-scope iteration uses
+`correction/final-cycle-<c>-iteration-<i>-task-reviewer-defects.json` and adds `--owner-task <n>`.
+Fill each reviewer prompt's `[DEFECTS_FILE]` slot with that exact path. `next` names steps, not
+actions: `record` maps to the role's `record-writer`, `record-review` or `record-diagnosis`, and
+`checks` to `verify-check`. The final cycle's first iteration has no writer and authorizes its
+reviewer before `verify-check`, so follow `next`, never a fixed order. The guard approves a cycle only when its writer succeeded, every check
+passed, every required review approved with no blocking defect and a full rubric, and all observed
+one tree.
+
+**On failure.** An iteration that concludes without approval leaves `next` at `retry-or-diagnosis`.
+Either write the retry request at `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-retry-<i>.json`,
+where `<i>` is the next iteration — strict JSON with exactly the twelve keys `version` (`1`), `scope`,
+`cycle`, `iteration`, `kind`, `target`, `observedFailure`, `evidence`, `hypothesis`, `remedy` (never
+one already admitted), `difference` and `confirmingCheck` — then run
+`--action admit-retry --request <that path>` and reserve the iteration as `--kind correction`.
+`target` is a bound criterion ID or a check ID of the cycle — `surface-test` and `coherence-gate` in a task cycle, `surface-test-<k>` and `coherence-gate` in the final cycle —
+and `confirmingCheck` is one of those check IDs, `review` or `rubric`. `evidence` is a
+`{ "path", "digest" }` reference (the lowercase SHA-256 of the cited bytes) from the latest concluded
+iteration: after a writer, checks, review or interruption conclusion, either the printed `ref` of the action that recorded it
+or one of that iteration's evidence files (the writer's task report or execution result and report,
+the failed checks' evidence, the review, issues and defects artifacts, plus on autopilot the review
+guard's baseline and original); an interruption offers only its `ref`; after a diagnosis, the diagnosis artifact.
+`kind` is `defect` or `tool-failure`, and a `tool-failure` retry cites only interruption, writer-failure or review-failure evidence:
+never check evidence, an APPROVED or ISSUES_FOUND review, or the diagnosis artifact. Or reserve the
+single diagnosis with `--kind diagnosis --reason missing-retry-evidence|comparison-unavailable`
+(`next` itself demands `comparison-unavailable` when two outcomes cannot be compared), authorize the
+`diagnostic`, dispatch `diagnosis-prompt.md` (`model: standard`, `most-capable` for a design task) — in autopilot through its manifest; in manual drive pass the prompt's manual fallback inputs directly (the brief or criteria, the exact evidence paths of the concluded iteration, the diff, the standards, and `[DIAGNOSIS_FILE]` set to the authorized diagnostic target) and record the no-manifest degradation;
+with no task/subagent tool, run it as a dedicated inline read-only pass with the degradation recorded
+in the ledger — and record it with `--action record-diagnosis --scope <scope> --iteration <i>` (the
+diagnostic's response on stdin, on both drives). When no evidence supports a retry and the diagnosis is spent, or the remedy is one the bound plan cannot admit (such as a plan split), stop the cycle
+with `--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <text>`; the stop note carries
+such a remedy, and the projected summary reports it as that scope's `nextRemedy`, ahead of any diagnosis
+recommendation or admitted remedy.
+Stagnation, exhaustion, an unavailable comparison and an inconclusive diagnosis are the guard's decision: it stops the cycle itself, and the controller never overrides that stop.
+
+**Task-local stop and integrity halt.** After a task-local stop, run `--action prove-isolation --scope task-N`:
+the guard proves the source is the cycle's opening tree (`baseline-equal`) or its verified best
+candidate (`retained-best`), and an unprovable isolation halts the run. Then continue with the next
+runnable independent task; a dependency-blocked task is never dispatched, and after a task-local stop the next execution builds on the retained execution or on the pre-cycle lineage tip (the parent rule in `task-results-protocol.md`).
+Exit 3 from any guard action halts the whole run: report it and never continue, with no further
+dispatch, evidence repair or workaround.
+
+**Allowances.** Three iterations per task cycle and per final-review cycle. At most one diagnosis,
+charged to the same allowance. There is no separate fix or retry allowance: every fix, retry,
+answered question and reviewer redispatch spends one of the three iterations. No time, token or cost limit applies: token and cost stay observational, never a stop reason.
+
+**Source discipline.** The guard observes the source (branch, HEAD, index, tracked and non-ignored
+untracked files outside `.formula/work/`) at every mutating action and accepts a change only inside
+an authorized writer window: after the writer's `authorize`, recorded by `record-writer`. Any source change outside an authorized writer dispatch — including re-running `open` after editing files, a commit after `record-writer`, or recording an interruption after a crashed writer left changes — halts the whole run (exit 3) by design.
+Authorized task commits therefore land inside the writer dispatch; without commit authorization the
+user commits only after Step 5 publication, because a commit before it would halt a reopen chosen at Step 5. During a Gear-3 correction run, context resolution (by the controller or any dispatched agent, Step 1 included) writes its output outside the source tree:
+run `steepy-formula context resolve --path <p>... --out <dir>` (or the `--target` form with `--out <dir>`)
+with `<dir>` under `.formula/work/tasks/<plan-basename>/` or a temporary directory, and state that
+in every dispatch. Without `--out`, the resolve writes `context.json` and `context.md` into the
+working directory.
+
+**Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the correlated guard
+arguments, the diagnosis manifests and the `PARTIAL` status marker.
+
+#### Resume and reopening
+
+Resume never resets counters and never redispatches captured work: it replays the guard history and
+continues from `next`, never re-running `open`. A reserved dispatch whose execution is uncertain stays spent: record it with `--action record-interruption --scope <scope> --iteration <i> --reason <text>`;
+its record is the evidence a `tool-failure` retry cites. A captured execution resumes through `task-results.mjs` (`--action inspect`, then `--action resume`) and then `record-writer`, without a new reservation;
+on a manual drive a returned four-field writer response feeds `record-writer` the same way.
+An explicit user interruption is recorded with `--action stop --scope <scope> --reason HUMAN_INTERRUPTED --note <text>`.
+
+Reopening a stopped scope has one route: in manual drive, when the guard reports `terminal` with a
+`PARTIAL` outcome, implement asks the human, before it publishes the index READY and the plan
+CONSUMED, whether to reopen a stopped scope and continue in the same session or to publish the
+partial. That is the Step 5 reopen-or-publish question: a reopen asked for mid-run waits for it,
+an implement resume before publication reaches the same question, and it comes before the handoff
+verifications, so a partial that delivered no task still reaches it, offering reopen only. To reopen, the human's explicit words naming the scope, plus a new remedy, are written verbatim to `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-reopen.json`,
+where `<c>` is the stopped cycle, as strict JSON
+`{ "version": 1, "scope": "<task-N|final>", "statement": "<the human's exact words>", "remedy": "<the new remedy>" }`;
+then `--action reopen --authorization <that path>` must succeed before the scope runs again, in a
+linked cycle with a fresh allowance. The guard accepts the authorization only under these rules:
+
+- The human's words must name the scope literally, as `Task <N>` for `task-<N>` or `final review` for `final` (case-sensitive; `Task 1` is not followed by a digit, and `task-1` does not count).
+- The remedy must be new to the scope: never a remedy already admitted in its cycles, never a diagnosis `remedy` or `recommendation` of its cycles, and never an earlier reopen remedy of that scope (compared case-insensitively, ignoring surrounding and repeated whitespace). An explicit stop's note (`RETRY_EVIDENCE_MISSING` or `HUMAN_INTERRUPTED`), such as the remedy the human stated when interrupting, is not one of these remedies and may be adopted as the reopen remedy unless its text repeats one of them. The summary's `nextRemedy` can therefore be adopted when it is such a note, and never when it is a diagnosis recommendation or an admitted remedy.
+- Only a stopped scope is reopened, and the guard refuses while any cycle of the run is open; a scope is reopened only once until its reopened cycle opens. A dependency-blocked task never ran and is never reopened: reopen the stopped task that blocks it (`blocked[].causes` in the summary). Once that cause is approved, the blocked task becomes runnable on its own.
+
+When the human's words do not satisfy these rules, ask the human again; never rewrite their words.
+Once published (plan CONSUMED, index READY) and reviewed, a partial is final: further work on its
+stopped or blocked tasks needs a new `brainstorm` and `plan`. A verified CONSUMED/READY pair is a
+no-op for implement (Step 0), so no later implement session reopens it.
+Autopilot never reopens: it hands the request back to the human, and its partial is published, so further work needs a new `brainstorm` and `plan`.
+
 ### Step 3 — Per-task loop (sequential; one implementer in flight)
 
 For plan-backed work, execute each remaining task in plan order. For direct Gear-2 work, execute the
 single derived Task 1 from the accepted spec. Use `<entry-basename>` in task paths below; it is the
-plan basename for plan-backed work and the spec basename for direct Gear 2.
+plan basename for plan-backed work and the spec basename for direct Gear 2. In Gear 3, each task runs
+as its guard cycle (Step 2.7): open it when `next` names its scope. Each dispatch is preceded by `reserve` and `authorize` — one `reserve` per iteration before its first dispatch, and an `authorize` before each dispatch (the implementer, every fix or retry, every reviewer and the diagnostic).
 
 1. **Brief.** Materialize the task's complete contract at
    `.formula/work/tasks/<entry-basename>/task-N-brief.md`.
@@ -427,8 +567,8 @@ plan basename for plan-backed work and the spec basename for direct Gear 2.
    conversation history.
 2. **Implement.** If your harness provides a task/subagent tool and the registered `<surface>-agent`, dispatch that agent using `implementer-prompt.md`. In autopilot (`drive: autopilot`), create and validate the implementer manifest per `autopilot-protocol.md`, then pass only its path plus scalar dispatch controls. In manual drive, pass the brief path, owning standard, surface test command, report-file path, and commit-authorization flag directly and record this no-manifest degradation in the ledger — the owning standard is the resolved context's Rules for the task's surface (pass the Step 1 resolve output), and the surface test command is the brief's `Test command`, already sourced from the Check's `ext_v1_command` at plan time (direct Gear 2: at Step 1). Otherwise load the resolved context's Rules for the task's surface and implement the task inline under the same rigid TDD, then run the Step 3.4 review as a dedicated same-session pass at the end of the task; state the inline degradation in the ledger. Pick the model from the task's `Complexity` line: mechanical → cheap, integration → standard, design → most-capable. To override, record a one-line reason in the ledger. If the plan has no `Complexity` lines, classify the task yourself at dispatch; direct Gear 2 instead uses its mandatory `Feature complexity`. The implementer writes a **failing test** first (rigid TDD), then the minimum code, self-reviews, and reports.
 3. **Diff.** Capture the change to `.formula/work/tasks/<entry-basename>/task-N-diff.txt` — `git diff <base>..<head>` if commits are authorized, else `git diff` of the working tree.
-4. **Review** (**Gear 3 only** — skip in gears 1–2; rely on the implementer's self-review instead). Review only tasks that carry judgment; the task's `Complexity` line decides: `integration`/`design` → review, `mechanical` → skip (the Step 4 whole-branch review catches it). In manual drive, to override either way, record the reason in the ledger. Autopilot requires validated receipts for every integration/design task; mechanical tasks may still opt into review. When you do review, dispatch a fresh reviewer subagent using `task-reviewer-prompt.md`. In autopilot (`drive: autopilot`), create and validate its iteration manifest per `autopilot-protocol.md`; in manual drive pass the same four required artifacts directly and record the degradation. Fill the prompt's `[STANDARD_FILE]` and `[HUB_INDEX]` slots with the resolved context's Rules for the task's surface and its Surfaces/Components listing, both from the Step 1 `context.md`. The hub index is never eager: include it only as `onDemand`, and read it only for a named suspected ownership conflict whose reason is recorded. On **Issues Found**, require `task-N-issues.md`, then create and validate a fix manifest before dispatching the fix back to the same `<surface>-agent` (inline: apply the fix yourself). Regenerate the diff and re-review until **Status: Approved**. Fix loops remain sequential.
-5. **Mark complete.** Append one line to the ledger, recording the model tier used — or `session model` where the harness gives no per-dispatch choice — and any degradation exercised (inline implementation, same-session review pass): `Task N: complete (model: standard, review: 1 iteration, commits <base7>..<head7>)` if authorized, else `Task N: complete (model: cheap, review: skipped (mechanical), no commit)`. On a harness with no task tool the line records the degradation, e.g. `Task N: complete (session model, inline impl + same-session review, 1 iteration, no commit)`. Also append the compact validated implementer outcome to `.formula/work/tasks/<entry-basename>/task-result-index.md` using this exact bullet grammar (one line per task, in execution order):
+4. **Review** (**Gear 3 only** — skip in gears 1–2; rely on the implementer's self-review instead). Review only tasks that carry judgment; the task's `Complexity` line decides: `integration`/`design` → review, `mechanical` → skip (the Step 4 whole-branch review catches it). The guard fixes this at `open-cycle`: an integration/design cycle always reviews, and a mechanical task opts into review only with `--review-opt-in`, its reason recorded in the ledger. Autopilot requires validated receipts for every integration/design task; mechanical tasks may still opt into review. When you do review, dispatch a fresh reviewer subagent using `task-reviewer-prompt.md`. In autopilot (`drive: autopilot`), create and validate its iteration manifest per `autopilot-protocol.md`; in manual drive pass the same four required artifacts directly and record the degradation. Fill the prompt's `[STANDARD_FILE]` and `[HUB_INDEX]` slots with the resolved context's Rules for the task's surface and its Surfaces/Components listing, both from the Step 1 `context.md`, and its `[DEFECTS_FILE]` slot with the iteration's defects path (Step 2.7). The hub index is never eager: include it only as `onDemand`, and read it only for a named suspected ownership conflict whose reason is recorded. On **Issues Found**, require `task-N-issues.md`, then create and validate a fix manifest before dispatching the fix back to the same `<surface>-agent` (inline: apply the fix yourself); the fix is the next correction iteration, admitted by a retry request citing the review (Step 2.7). Regenerate the diff and re-review until the guard approves or stops the cycle. Fix loops remain sequential.
+5. **Mark complete.** Mark a task complete only when the guard approves its cycle (Gear 3); a stopped cycle is a task-local stop, never a completion. Append one line to the ledger, recording the model tier used — or `session model` where the harness gives no per-dispatch choice — and any degradation exercised (inline implementation, same-session review pass): `Task N: complete (model: standard, review: 1 iteration, commits <base7>..<head7>)` if authorized, else `Task N: complete (model: cheap, review: skipped (mechanical), no commit)`. On a harness with no task tool the line records the degradation, e.g. `Task N: complete (session model, inline impl + same-session review, 1 iteration, no commit)`. Also append the compact validated implementer outcome to `.formula/work/tasks/<entry-basename>/task-result-index.md` using this exact bullet grammar (one line per task, in execution order):
 
    `- Task <id>: <DONE|DONE_WITH_CONCERNS>; artifact: <sanitized repo-relative path>; changed-paths: <comma list or none>; signals: <short machine-readable IDs or none>`
 
@@ -445,7 +585,7 @@ plan basename for plan-backed work and the spec basename for direct Gear 2.
    transport degradation, a test reservation, or an unattributed DONE_WITH_CONCERNS. Missing or
    inconsistent attribution is a result-contract concern, not permission to infer a discovery.
 
-Handle implementer status: **DONE_WITH_CONCERNS** — read the concerns first; **NEEDS_CONTEXT** — provide it and re-dispatch; **BLOCKED** — give more context, re-dispatch on a more capable model (add `escalated: <from>→<to>` to the task's ledger line), or split the task. Never force the same model to retry unchanged.
+Handle implementer status: **DONE_WITH_CONCERNS** — read the concerns first; **NEEDS_CONTEXT** — provide it and re-dispatch; **BLOCKED** — give more context, re-dispatch on a more capable model (add `escalated: <from>→<to>` to the task's ledger line), or stop the cycle and record a plan split as the next remedy (the approved plan is bound; a split needs a new plan) (Gear 3; in Gear 2, which runs no guard, it is the decomposition stop). Never force the same model to retry unchanged. In Gear 3 every re-dispatch is an admitted retry that spends an iteration of the cycle (Step 2.7); a split is recorded with `--action stop --scope <scope> --reason RETRY_EVIDENCE_MISSING --note <the plan split it needs>` and in the ledger. In manual drive, a NEEDS_CONTEXT answered by the human is a retry whose remedy is the supplied context, and it consumes an iteration.
 
 **Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the no-human escalation and BLOCKED handling.
 
@@ -476,8 +616,10 @@ diff, report, or test transcript may be in the response. Implementer/fix statuse
 
 For manual drive, before trusting a child result, validate the four-field shape, status, sanitized repo-relative artifact
 path, and signals; also validate field order and comma-list-or-`none` changed paths.
-A malformed envelope is never trusted: autopilot records correlated `BLOCKED` and exits; manual drive
-records the explicit same-session/degraded handling in the ledger. The controller opens the artifact only when
+A malformed envelope is never trusted, and autopilot appends correlated `BLOCKED` only for a whole-run halt.
+In Gear 3 (both drives) the guard records a malformed child envelope as an `INVALID` writer or review that concludes the iteration (Step 2.7):
+retry it through an admitted `tool-failure` retry within the allowance where the receipt protocol
+permits, else the cycle stops task-locally. Manual drive records the explicit same-session/degraded handling in the ledger. The controller opens the artifact only when
 its action status requires the next decision; otherwise it passes the artifact reference to
 the next consumer. The ledger and task-result index record only the compact outcome and artifact reference,
 never full detail.
@@ -504,6 +646,23 @@ returns to or accumulates in the parent, and no prior task's body is copied into
 
 **Gear 3 only** — skip in gears 1–2.
 
+The whole-branch review is the final-review cycle of three iterations, and it runs even when tasks
+stopped: it reviews what was delivered. When `next` reports the final cycle, run
+`--action project --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md`
+before `--action open-cycle --scope final`, before any final-review baseline and before any reviewer dispatch:
+the final reviewer-response baseline parses the index, and a partial index must already declare its stopped and blocked tasks.
+Run `project` again at terminal. A stopped or blocked task has no task result in the index (no
+`- Task` line, no projected entry): the index omits exactly the tasks the summary declares. The final
+cycle's first iteration authorizes the `final-reviewer` (target: its review guard state prefix on
+autopilot, `final-review.md` on a manual drive), then runs `verify-check`, then dispatches the
+reviewer and records the review with `correction/final-cycle-<c>-iteration-<i>-defects.json`; a later
+iteration follows `next`. A final fix names its approved owner task and affected criteria:
+`--action authorize --scope final --iteration <i> --role writer --target <target> --owner-task <n> --affected-criteria SC1,SC2`,
+admitted by a retry request citing the final review. For an integration or design owner task, the guard
+requires that task's approved review in the same iteration before the final review
+(`--role task-reviewer --owner-task <n>`, defects `correction/final-cycle-<c>-iteration-<i>-task-reviewer-defects.json`).
+A stopped or blocked deliverable is never completed this way; it needs a reopen — of the stopped task itself, or for a blocked task, of the stopped task that blocks it. That reopen is offered only at the Step 5 reopen-or-publish question.
+
 After the last task, capture the aggregate branch change at `.formula/work/tasks/<plan-basename>/branch-diff.txt`
 as the unmodified aggregate `git diff` and materialize the criteria-only `success-criteria.md` artifact:
 give it canonical `Source`/`Heading` attribution (the repository-relative spec path and the exact source heading), then copy the approved success-criteria
@@ -512,10 +671,10 @@ source bytes must produce the same artifact bytes. Both serve this whole-branch 
 Dispatch a fresh reviewer subagent using `final-review-prompt.md` over the full implement diff (all tasks)
 and the criteria-only artifact. In autopilot (`drive: autopilot`), create and validate the final-review
 manifest per `autopilot-protocol.md`. In manual drive, pass those same inputs directly
-and record the no-manifest degradation. Fill the prompt's `[STANDARD_FILES]` slot with the resolved context's Rules from the Step 1 `context.md`. If your harness has no task tool, perform this whole-branch review
+and record the no-manifest degradation. Fill the prompt's `[STANDARD_FILES]` slot with the resolved context's Rules from the Step 1 `context.md`, and its `[DEFECTS_FILE]` slot with the final iteration's defects path. If your harness has no task tool, perform this whole-branch review
 yourself in a fresh dedicated pass over the same inputs, stating the degradation in the ledger. Fix any
 **Issues Found** with one fix dispatch carrying the complete list from `final-review-issues.md` (inline:
-apply the fixes yourself), then regenerate the aggregate diff and re-review until **Status: Approved**.
+apply the fixes yourself), then regenerate the aggregate diff and re-review until the guard approves or stops the final cycle.
 
 ### Step 5 — Hand off
 
@@ -539,7 +698,9 @@ with a DRAFT/mismatched index fails closed instead of redispatching or guessing.
 implementation and deterministic gates. Gear 2 does not invoke or hand off to `review`; its
 implementer self-review and these deterministic gates are its terminal assurance.
 
-**Gear 3 only.** Only after the whole-branch review approves, tell the user the next step is the `review` skill
+**Gear 3 only.** Only after the guard reports `terminal` — the whole-branch review approved, or a
+PARTIAL outcome — and the handoff verifications below succeed (for a manual-drive PARTIAL, also only
+after the human chose to publish, below), tell the user the next step is the `review` skill
 (invoke it the way your harness invokes skills). Run the `review` skill in a new session:
 this phase's context does not serve review, and every turn of the review phase would pay to
 carry it forward.
@@ -561,7 +722,48 @@ Do not hand review the full plan or source spec. Before emitting this envelope, 
 canonical header grammar, its three metadata paths, the criteria artifact's canonical `Source` and
 `Heading` attribution against that metadata, and that `branch-diff` is the unmodified aggregate diff.
 
-**Verify the handoff before claiming completion.** The review phase parses
+**Project at `terminal`, then decide.** After the guard reports `terminal`, first run its terminal
+projection (autopilot adds `--run-id <supplied-run-id> --attempt <supplied-attempt>`):
+
+```sh
+node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan .formula/work/plans/<plan-basename>.md --action project --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md
+```
+
+The terminal `next` reports the summary with its `outcome`, and `project` writes that summary into
+the index. In manual drive with a `PARTIAL` outcome, state the partial outcome and ask the
+reopen-or-publish question below right after `project`, before the two handoff verifications that
+follow: those verifications gate only publication, never the question. A `COMPLETE` outcome, and
+autopilot, go straight on to the verifications.
+
+State a PARTIAL outcome explicitly as unapproved partial delivery, listing from the projected summary
+the completed, stopped and blocked task IDs, the failed criteria, the best candidates and the next remedies
+of the stopped tasks, and a stopped final cycle's unresolved defects, best candidate and next remedy
+(the summary's `final`). An explicit stop's note, such as a plan split, is reported as that scope's next
+remedy. Never present it as success.
+
+**Reopen or publish (manual drive, `PARTIAL`).** Reopening a stopped scope has one route: in manual
+drive, when the guard reports `terminal` with a `PARTIAL` outcome, implement asks the human, before it
+publishes the index READY and the plan CONSUMED, whether to reopen a stopped scope and continue in the
+same session or to publish the partial. Ask it as one explicit question right after the statement
+above, before the handoff verifications and before recording anything for publication; never proceed
+on silence. To reopen, the human
+answers in their own words, naming the scope literally with a remedy new to that scope: write the
+authorization and run `--action reopen --authorization <that path>` under "Resume and reopening"
+(Step 2.7), then continue from `next` in this session — after a task reopen, the reopened cycle and
+any task it unblocks run, then the final review reruns once without a final-scope reopen; after a
+`final review` reopen, the reopened final cycle runs; either way this step runs again at the new
+`terminal`. To publish, continue below. When the summary lists no `completed` task, nothing was
+delivered: the index carries no task result, both handoff verifications refuse it (`task result index
+contains no reviewed task entries`), and publication is impossible. The question then offers reopen
+only and says so; if the human declines to reopen, stop without publishing — the plan stays `READY`
+and the index `DRAFT` — and tell the human that further work needs a new `brainstorm` and `plan` (an
+implement resume of this run reaches only the same reopen-only question). Once published (plan
+CONSUMED, index READY) and reviewed, a partial is final: further work on its stopped or blocked tasks
+needs a new `brainstorm` and `plan`. Autopilot never asks: it publishes the partial once its handoff
+verifies.
+
+**Verify the handoff before claiming completion.** For a manual-drive PARTIAL, run these
+verifications only once the human chose to publish. The review phase parses
 `task-result-index.md` against the plan before it can build anything. Manual-drive bullets must
 match the Step 3.5 grammar; autopilot uses the verified generated JSON receipt projection.
 Run the same parse here, where it is still fixable:
@@ -575,8 +777,21 @@ offending result: in manual drive correct that line and re-run; in autopilot
 inspect the exact receipt and regenerate the projection, never edit machine evidence to pass.
 Never proceed on a rejected handoff.
 
+After the guard reports `terminal` and `project` has run, also run the guard's handoff verification,
+in addition to the verification above (autopilot adds
+`--run-id <supplied-run-id> --attempt <supplied-attempt>`):
+
+```sh
+node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan .formula/work/plans/<plan-basename>.md --action verify-handoff --task-result-index .formula/work/tasks/<plan-basename>/task-result-index.md
+```
+
+`verify-handoff` is read-only: exit 1 means the run is not terminal or the handoff does not verify,
+and exit 3 means corrupt evidence or a dispatch the guard never authorized, which halts the run. It
+reports the outcome and its approval: `COMPLETE` is `APPROVED`; `PARTIAL` is always `UNAPPROVED`.
+
 Only after every task gate succeeds, the whole-branch review approves, and this handoff verification
-succeeds, record that approval and verification bound to the exact input/output content, supporting
+succeeds — or, for a PARTIAL outcome, after the guard reaches `terminal` and both handoff verifications
+succeed, with no approval to record, and, in manual drive, the human chose to publish — record that approval and verification bound to the exact input/output content, supporting
 criteria/diff identities, and current branch/HEAD or uncommitted diff identity in the index before READY.
 Then first atomically replace the index to `status: READY`; then atomically replace the accepted
 plan to `status: CONSUMED` with `consumed-by` equal to the task-result index. Before publication the
@@ -587,7 +802,10 @@ CONSUMED/READY pair is a no-op, never another implementation or review dispatch.
 or an impossible pair fails closed. Do not follow supporting paths as implicit read capabilities;
 if the recorded proof cannot establish a current handoff, stop for the exact missing scope.
 
-**Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the final DONE status marker.
+Publish READY then CONSUMED in that order for both outcomes (a manual-drive `PARTIAL` only once the
+human chose to publish), and hand off to `review` with the unchanged envelope above.
+
+**Autopilot:** when `drive: autopilot`, follow `autopilot-protocol.md` for the final DONE or PARTIAL status marker.
 
 ## Model Selection
 

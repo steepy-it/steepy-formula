@@ -342,11 +342,24 @@ export function projectTaskResults(root, { indexPath, states }) {
   if (after !== before) writeWorkPath(root, indexPath, after);
   return { indexPath, entries, changed: after !== before };
 }
-export function verifyTaskResults(root, { indexPath, expectedTasks, checkCurrent = true, required = true }) {
+function validateOmitted(value, indexPath) {
+  keys(value, ['task', 'state'], 'omitted task execution');
+  if (!taskNumber(value.task) || typeof value.state !== 'string') throw new Error('invalid omitted task execution');
+  pathFor(value.state, 'baseline');
+  if (dirname(value.state) !== dirname(indexPath)) throw new Error('omitted task execution outside index directory');
+  return value;
+}
+// `omittedExecutions` names the lineage execution of each task a partial handoff omits (a stopped task
+// that retained work). Each must lie on the verified lineage as its task's latest execution, and binds
+// its proof into the digest; without any, every output is the complete-run output.
+export function verifyTaskResults(root, { indexPath, expectedTasks, checkCurrent = true, required = true, omittedExecutions = [] }) {
   parseWorkPath(indexPath, 'work-output', 'task-result-index');
+  if (!Array.isArray(omittedExecutions)) throw new Error('invalid omitted task executions');
+  for (const value of omittedExecutions) validateOmitted(value, indexPath);
   const entries = parseTaskResultProjection(readWorkPath(root, indexPath, { encoding: 'utf8' }));
   if (entries === null) {
     if (required) throw new Error('required v2 task result receipts are missing');
+    if (omittedExecutions.length) throw new Error('omitted task executions need task results');
     return { entries: null, proofs: [], executions: [], digest: null };
   }
   if (!entries.length) throw new Error('task result receipts are empty');
@@ -362,19 +375,30 @@ export function verifyTaskResults(root, { indexPath, expectedTasks, checkCurrent
     if (hash(readWorkPath(root, proof.baseline.config.report)) !== proof.result.report.digest) throw new Error('task report drift');
     return proof;
   });
-  const latest = evidence.reduce((current, proof) => proof.baseline.sequence > current.baseline.sequence ? proof : current);
+  const tasks = [...entries.map((entry) => entry.task), ...omittedExecutions.map((value) => value.task)];
+  if (new Set(tasks).size !== tasks.length) throw new Error('omitted task executions overlap the task results');
+  const omittedEvidence = omittedExecutions.map((value) => {
+    const proof = readEvidence(root, value.state, cache);
+    if (proof.baseline.config.task !== value.task) throw new Error('omitted task execution correlation mismatch');
+    if (proof.result === null) throw new Error('omitted task execution has no recorded result');
+    return proof;
+  });
+  const latest = [...evidence, ...omittedEvidence].reduce((current, proof) => proof.baseline.sequence > current.baseline.sequence ? proof : current);
   const latestPerTask = new Map(latest.history.map((entry) => [entry.config.task, entry.state]));
-  if (latestPerTask.size !== entries.length || entries.some((entry) => latestPerTask.get(entry.task) !== entry.receipt)) throw new Error('task execution chain coverage mismatch');
+  if (latestPerTask.size !== tasks.length || entries.some((entry) => latestPerTask.get(entry.task) !== entry.receipt)
+    || omittedExecutions.some((value) => latestPerTask.get(value.task) !== value.state)) throw new Error('task execution chain coverage mismatch');
   if (checkCurrent && latest.result.after.digest !== observeSource(root).digest) throw new Error('latest task source snapshot drift');
   const proofs = evidence.map((proof, index) => ({ task: entries[index].task, state: entries[index].receipt, digest: proof.digest, sequence: proof.baseline.sequence, config: proof.baseline.config }));
   // The validated global chain includes superseded same-task executions. Expose
   // their provenance without changing the established latest-per-task proof digest.
   const executions = latest.history.map((entry) => ({ ...entry, digest: cache.get(entry.state).digest }));
-  return { entries, proofs, executions, digest: hash(JSON.stringify({ entries, proofs })) };
+  if (!omittedEvidence.length) return { entries, proofs, executions, digest: hash(JSON.stringify({ entries, proofs })) };
+  const omitted = omittedEvidence.map((proof, index) => ({ task: omittedExecutions[index].task, state: omittedExecutions[index].state, digest: proof.digest, sequence: proof.baseline.sequence, config: proof.baseline.config }));
+  return { entries, proofs, omitted, executions, digest: hash(JSON.stringify({ entries, proofs, omitted })) };
 }
 
 export function main(argv) {
-  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'action', 'state', 'run-id', 'attempt', 'task', 'execution', 'role', 'report', 'plan', 'previous-state', 'parent-state', 'format', 'task-result-index', 'states', 'expected-tasks'].map((name) => [name, { type: 'string' }])) });
+  const { values } = parseArgs({ args: argv, options: Object.fromEntries(['repo-root', 'action', 'state', 'run-id', 'attempt', 'task', 'execution', 'role', 'report', 'plan', 'previous-state', 'parent-state', 'format', 'task-result-index', 'states', 'expected-tasks', 'omitted-executions'].map((name) => [name, { type: 'string' }])) });
   const root = resolve(values['repo-root'] ?? '.');
   // The migrate state (G5): refused before any task-result read or write.
   const refusal = migrateRefusal(root);
@@ -389,7 +413,8 @@ export function main(argv) {
   else if (values.action === 'inspect') result = inspectTaskResult(root, values.state);
   else if (values.action === 'resume') result = resumeTaskResult(root, values.state);
   else if (values.action === 'project') result = projectTaskResults(root, { indexPath: values['task-result-index'], states: JSON.parse(values.states) });
-  else if (values.action === 'verify') result = verifyTaskResults(root, { indexPath: values['task-result-index'], expectedTasks: values['expected-tasks'] === undefined ? undefined : JSON.parse(values['expected-tasks']) });
+  else if (values.action === 'verify') result = verifyTaskResults(root, { indexPath: values['task-result-index'], expectedTasks: values['expected-tasks'] === undefined ? undefined : JSON.parse(values['expected-tasks']),
+    ...(values['omitted-executions'] === undefined ? {} : { omittedExecutions: JSON.parse(values['omitted-executions']) }) });
   else throw new Error('action must be begin, record, inspect, resume, project, or verify');
   console.log(JSON.stringify(result));
   return result.status === 'BLOCKED' || result.status === 'NEEDS_CONTEXT' ? 1 : 0;

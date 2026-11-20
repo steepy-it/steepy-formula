@@ -31,6 +31,17 @@ task directory: `<scope>-review-guard-attempt-<attempt>-iteration-<iteration>`. 
 prefix and run/attempt/task/iteration in the ledger **before** the baseline. On resume retain this
 identity.
 
+Every reviewer dispatch is a guard-authorized dispatch in the current iteration. Inside the guard
+iteration reserved for it (`SKILL.md` Step 2.7), authorize the reviewer for this exact prefix before
+its baseline, with the correction guard (`<engine-root>/scripts/correction-guard.mjs`):
+`--action authorize --scope <task-N-or-final> --iteration <i> --role <task-reviewer-or-final-reviewer> --target <prefix> --run-id <supplied-run-id> --attempt <supplied-attempt>`,
+where `<prefix>` is the full state path `.formula/work/tasks/<plan-basename>/<scope>-review-guard-attempt-<attempt>-iteration-<iteration>`
+and `<i>` is the guard iteration. The owner task's review inside a final-scope iteration adds
+`--owner-task <n>`. The prefix's `<scope>` is the reviewer-response scope, which is not always the
+guard's: the owner task's review inside a final-scope iteration uses the task prefix `task-<n>-review-guard-attempt-<attempt>-iteration-<iteration>` with reviewer-response `--task <n>`, while its guard calls use `--scope final --owner-task <n>`. Only the final cycle's first iteration authorizes its reviewer before the guard's
+`verify-check`; every other reviewer is authorized after it. Follow the guard's `next`. The source
+must not change between this authorization and the recorded review.
+
 ```sh
 node <engine-root>/scripts/reviewer-response.mjs --repo-root . --action begin --state <prefix> --run-id <supplied-run-id> --attempt <supplied-attempt> --iteration <iteration> --task <N-or-final> --report <exact-review-path> --issues <exact-issues-path>
 ```
@@ -69,12 +80,24 @@ Preserve the response verbatim. The helper first checks repository state indepen
 validates the three fields, status, exact role/status artifact binding, signals and the artifact,
 and independently derives the no-source-change fact. A `changed-paths` field, in text or JSON, is
 malformed and blocks. An Approved report alone never completes a task.
-Only an accepted APPROVED receipt permits completion; accepted ISSUES_FOUND routes to the fix.
-BLOCKED or NEEDS_CONTEXT follows the existing correlated BLOCKED handling.
+Only an accepted APPROVED receipt permits completion; accepted ISSUES_FOUND routes to the fix, the
+next guard iteration through an admitted retry.
 Empty responses, extra fields, unknown verdicts, wrong artifacts, and ambiguous data block
-immediately; nothing is repaired or retried. Report Markdown has no machine verdict grammar: the
+immediately; nothing is repaired. Report Markdown has no machine verdict grammar: the
 helper never infers approval by parsing a Status line.
-Append correlated BLOCKED and exit on any helper failure or negative terminal receipt.
+
+Record each review with the correction guard, whatever its status:
+`--action record-review --scope <task-N-or-final> --iteration <i> --role <task-reviewer-or-final-reviewer> --review-state <prefix> --defects <defects-path> --run-id <supplied-run-id> --attempt <supplied-attempt>`.
+The defects path is `.formula/work/tasks/<plan-basename>/correction/<scope>-cycle-<c>-iteration-<i>-defects.json`;
+the owner task's review inside a final-scope iteration uses
+`.formula/work/tasks/<plan-basename>/correction/final-cycle-<c>-iteration-<i>-task-reviewer-defects.json`
+and adds `--owner-task <n>`. A receipt without a valid response, a BLOCKED or NEEDS_CONTEXT
+receipt, or an invalid defects artifact is recorded as a failed review (`INVALID`, `BLOCKED` or
+`NEEDS_CONTEXT`) that concludes the iteration. A reviewer redispatch after a failure consumes a new iteration through an admitted `tool-failure` retry;
+never redispatch inside the same iteration. A dispatch that left no receipt to record is recorded
+with the guard's `--action record-interruption --scope <task-N-or-final> --iteration <i> --reason <text> --run-id <supplied-run-id> --attempt <supplied-attempt>`
+and stays spent. A review that changed the source, and any guard exit 3, halts the whole run: only
+then append correlated BLOCKED and exit.
 
 ## Bind receipts to the implementation handoff
 
@@ -106,15 +129,23 @@ metadata, and all other plan bytes remain bound. Changing them, task results, or
 invalidates the approval.
 All authorized code commits must precede this final baseline, because changing HEAD invalidates it.
 
-Before publishing implement DONE, invoke:
+Before publishing implement DONE or PARTIAL, invoke:
 
 ```sh
 node <engine-root>/scripts/reviewer-response.mjs --repo-root . --action verify-handoff --plan <exact-plan-path> --task-result-index <exact-index-path> --run-id <supplied-run-id> --attempt <supplied-attempt>
 ```
 
-The conductor repeats this check before PHASE_ACCEPTED and before a resumed review phase. It
-requires final approval with verified run/attempt provenance, validates each required task proof
+The conductor repeats this check before PHASE_ACCEPTED or PHASE_PARTIAL and before a resumed review
+phase. It requires an approved final review — or, when the projected summary reports the final cycle
+`STOPPED`, the final gate's stored ISSUES_FOUND or BLOCKED review, which verifies as
+`status: UNAPPROVED`: a verified partial, never success — with verified run/attempt
+provenance, validates each required task proof
 against its phase-attempt manifest, checks frozen artifacts, and checks the final Git snapshot.
+Partial verification uses the guard's `--action verify-handoff`: run
+`node <engine-root>/scripts/correction-guard.mjs --repo-root . --plan <exact-plan-path> --action verify-handoff --task-result-index <exact-index-path> --run-id <supplied-run-id> --attempt <supplied-attempt>`
+as well. It verifies the terminal outcome (`COMPLETE` and `APPROVED`, or `PARTIAL` and
+`UNAPPROVED`) and that every execution and reviewer gate the index names is a dispatch the guard
+authorized and recorded; anything else exits 3.
 Missing receipts, substituted results, and stale correlation halt even if the child writes DONE.
 Historical task snapshots are not compared to current code after later tasks: final review covers
 that aggregate state. Exact refs are capabilities; no guard-directory discovery is permitted.
@@ -139,7 +170,7 @@ the outcome from the retained response and observations. A stored accepted flag 
 receipt may resume the pending completion/fix transition; reconcile ledger/index entries first so
 already completed tasks remain complete.
 If final approval already exists from an earlier implementation attempt, retain its exact prefix,
-run ID and attempt. The resumed skill's verify-handoff command adds `--resume-final <exact-prefix>`
+run ID and attempt. Each of the resumed skill's two verify-handoff commands adds `--resume-final <exact-prefix>`
 while passing the new conductor-supplied run/attempt as usual. It revalidates the old approval and
 both attempt manifests without rewriting any receipt. The conductor independently captures that
 approval before dispatch, requires a matching prior conductor-owned SPAWNED identity, and checks

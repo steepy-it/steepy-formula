@@ -10,6 +10,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
+  buildDiagnosisManifest,
+  buildFinalDiagnosisManifest,
   buildFinalReviewManifest,
   buildFixManifest,
   buildImplementManifest,
@@ -30,6 +32,7 @@ import {
   validateContextManifest,
   writeContextManifest,
 } from '../scripts/autopilot-context.mjs';
+import { formatCorrectionSummaryBlock } from '../scripts/correction-state.mjs';
 import { phasePrompt } from '../scripts/autopilot.mjs';
 import { MIGRATE_REFUSAL_EXIT, MIGRATE_REFUSAL_MESSAGE } from '../scripts/formula/core/markdown-hub.mjs';
 import { writeProjectConfig } from '../scripts/formula/core/project-config.mjs';
@@ -519,7 +522,7 @@ test('the SC negative matrix keeps spec sequencing strict while task mappings ma
     ['out-of-order', 'SC2, SC1', '- SC2: second\n- SC1: first', /strictly (?:sequential|increasing)/i],
     ['leading zero', 'SC01', '- SC01: zero padded', /'SC01'.*no leading zeros/i],
   ]) {
-    const fixture = `# Fixture\n\n## Task 1 — probe\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** ${criteriaField}\n\n## Success criteria\n\n${criteriaSection}\n`;
+    const fixture = `# Fixture\n\n## Task 1 — probe\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** ${criteriaField}\n\n## Success criteria\n\n${criteriaSection}\n`;
     assert.throws(() => planPhaseContext(fixture), reason, `${label} must fail the plan-side parse`);
     writeFileSync(join(repoRoot, specPath), fixture);
     assert.throws(
@@ -529,7 +532,7 @@ test('the SC negative matrix keeps spec sequencing strict while task mappings ma
     );
     assert.equal(existsSync(join(repoRoot, outputPath)), false, `${label} must not partially write`);
   }
-  const gapFixture = '# Fixture\n\n## Task 1 — probe\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1, SC3\n\n## Success criteria\n\n- SC1: first\n- SC3: third\n';
+  const gapFixture = '# Fixture\n\n## Task 1 — probe\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1, SC3\n\n## Success criteria\n\n- SC1: first\n- SC3: third\n';
   assert.deepEqual(planPhaseContext(gapFixture).criterionIds, ['SC1', 'SC3']);
   writeFileSync(join(repoRoot, specPath), gapFixture);
   assert.throws(
@@ -560,8 +563,8 @@ test('markdown routing accepts canonical emphasis and rejects unsupported field 
     evidence: 'spec:Feature-complexity=design',
   });
 
-  const canonical = '# Plan\n\n## Task 1 — canonical\n\n- **Surface**: `scripts`\n- **Complexity**: integration\n- **Success criteria**: SC1, SC2\n';
-  const unsupported = '# Plan\n\n## Task 1 — unsupported\n\n- **Surface:** `scripts`\n- **Complexity:** integration\n- **Spec criteria:** SC1, SC2\n';
+  const canonical = '# Plan\n\n## Task 1 — canonical\n\n- **Surface**: `scripts`\n- **Complexity**: integration\n- **Dependencies**: none\n- **Success criteria**: SC1, SC2\n';
+  const unsupported = '# Plan\n\n## Task 1 — unsupported\n\n- **Surface:** `scripts`\n- **Complexity:** integration\n- **Dependencies:** none\n- **Spec criteria:** SC1, SC2\n';
   assert.deepEqual(planPhaseContext(canonical).criterionIds, ['SC1', 'SC2']);
   assert.throws(() => planPhaseContext(unsupported), /missing Success criteria/);
   assert.throws(() => planPhaseContext(canonical.replace('Surface', 'Owning surface')), /missing Surface/);
@@ -638,11 +641,11 @@ test('plan routing fails closed when task boundaries or criterion IDs are absent
     '# Plan\n\n### 1. No canonical task boundary\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n',
   ), /no Task headings/i);
   assert.throws(() => planPhaseContext(
-    '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** none\n',
+    '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** none\n',
   ), /missing success-criterion IDs/i);
   for (const heading of ['## Task zero', '## Task 0', '## Task -1', '## Task 1a']) {
     assert.throws(() => planPhaseContext(
-      `# Plan\n\n${heading}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n`,
+      `# Plan\n\n${heading}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n`,
     ), /invalid H2 Task heading/i, `${heading} must fail as a malformed canonical boundary`);
   }
   assert.throws(() => planPhaseContext(
@@ -654,11 +657,11 @@ test('plan routing fails closed when task boundaries or criterion IDs are absent
     ['non-increasing', ['## Task 3', '## Task 2'], /strictly increasing.*3.*2/i],
     ['unsafe', ['## Task 9007199254740992'], /safe integer/i],
   ]) {
-    const plan = `# Plan\n\n${taskHeadings.map((heading) => `${heading}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n`).join('\n')}`;
+    const plan = `# Plan\n\n${taskHeadings.map((heading) => `${heading}\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n`).join('\n')}`;
     assert.throws(() => planPhaseContext(plan), reason, `${label} task order must fail closed`);
   }
   for (const invalidHeading of ['## Task 0', '## Task 02', '## Task -1', '## Task x', '## Task 1a']) {
-    const mixed = `# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n\n${invalidHeading}\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Success criteria:** SC2\n`;
+    const mixed = `# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n${invalidHeading}\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Dependencies:** none\n- **Success criteria:** SC2\n`;
     assert.throws(
       () => planPhaseContext(mixed),
       /invalid H2 Task heading|positive safe integer/i,
@@ -668,7 +671,7 @@ test('plan routing fails closed when task boundaries or criterion IDs are absent
 });
 
 test('review routing accepts only the canonical task-result-index bullet grammar', () => {
-  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** `adapters`\n- **Complexity:** `integration`\n- **Success criteria:** SC2\n';
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 2\n\n- **Surface:** `adapters`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC2\n';
   const canonical = '# Results\n\n- Task 1: DONE; artifact: .formula/work/tasks/topic/task-1-report.md; changed-paths: none; signals: tdd:red-green\n- Task 2: DONE_WITH_CONCERNS; artifact: .formula/work/tasks/topic/task-2-report.md; changed-paths: adapters/example.mjs; signals: follow-up:telemetry\n';
   assert.deepEqual(reviewPhaseContext(plan, canonical).tasks.map(({ task }) => task), ['1', '2']);
   assert.deepEqual(
@@ -690,7 +693,7 @@ test('review routing accepts only the canonical task-result-index bullet grammar
 });
 
 test('review routing reads v2 receipt projections with literal steepysite paths', () => {
-  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** web\n- **Complexity:** integration\n- **Success criteria:** SC1\n';
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** web\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n';
   const entry = { task: '1', status: 'DONE', artifact: '.formula/work/tasks/topic/task-1-report.md',
     changedPaths: ['apps/web/app/admin/(protected)/generation/[id]/page.tsx', 'src/a,b;c è.ts'],
     signals: [], receipt: '.formula/work/tasks/topic/task-1-execution-1' };
@@ -704,7 +707,7 @@ test('review routing reads v2 receipt projections with literal steepysite paths'
 test('discovery signals survive the real review manifest boundary without loading per-task reports', (t) => {
   const repoRoot = materialize(t);
   const indexPath = '.formula/work/tasks/context-efficient/task-result-index.md';
-  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Success criteria:** SC3\n';
+  const plan = '# Plan\n\n## Task 1\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC3\n';
   for (const signals of [['discovery:unplanned', 'tdd:red-green'], ['review:same-session'], []]) {
     const entry = { task: '1', status: 'DONE_WITH_CONCERNS', artifact: '.formula/work/tasks/context-efficient/task-1-report.md',
       changedPaths: [], signals, receipt: '.formula/work/tasks/context-efficient/task-1-execution-1' };
@@ -737,12 +740,14 @@ test('SC6: the phase-controller tier is floored and capped at standard, named wi
     '',
     '- **Surface:** `scripts`',
     '- **Complexity:** `mechanical`',
+    '- **Dependencies:** none',
     '- **Success criteria:** SC1',
     '',
     '## Task 2 — redesign the tier ladder',
     '',
     '- **Surface:** `scripts`',
     '- **Complexity:** `design`',
+    '- **Dependencies:** none',
     '- **Success criteria:** SC2',
     '',
   ].join('\n');
@@ -869,7 +874,7 @@ test('comparative fixture retains required facts with lower eager input and prom
 
 test('a plan task id stops at the id, whatever separator the heading uses next', () => {
   for (const heading of ['## Task 1 — dash', '## Task 1: colon', '## Task 1', '## Task 1) paren', '## Task 1. dot']) {
-    const plan = `# Plan\n\n${heading}\n\n- **Surface:** \`scripts\`\n- **Complexity:** \`integration\`\n- **Success criteria:** SC1\n`;
+    const plan = `# Plan\n\n${heading}\n\n- **Surface:** \`scripts\`\n- **Complexity:** \`integration\`\n- **Dependencies:** none\n- **Success criteria:** SC1\n`;
     assert.deepEqual(
       planPhaseContext(plan).tasks.map(({ task }) => task), ['1'],
       `${heading} must bind to task id 1, not to its punctuation`,
@@ -878,7 +883,7 @@ test('a plan task id stops at the id, whatever separator the heading uses next',
 });
 
 test('nested Task prose does not create or split canonical plan tasks', () => {
-  const plan = '# Plan\n\n## Task 1 — outer\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Success criteria:** SC1\n\n### Task 99 — nested prose\n\n- **Complexity:** design\n- **Success criteria:** SC99\n\n## Task 2 — next\n\n- **Surface:** `adapters`\n- **Complexity:** `mechanical`\n- **Success criteria:** SC2\n';
+  const plan = '# Plan\n\n## Task 1 — outer\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n### Task 99 — nested prose\n\n- **Complexity:** design\n- **Success criteria:** SC99\n\n## Task 2 — next\n\n- **Surface:** `adapters`\n- **Complexity:** `mechanical`\n- **Dependencies:** none\n- **Success criteria:** SC2\n';
   assert.deepEqual(planPhaseContext(plan).tasks.map(({ task, complexity }) => [task, complexity]), [
     ['1', 'integration'], ['2', 'mechanical'],
   ]);
@@ -961,17 +966,17 @@ test('the plan verifier runs planPhaseContext and rejects options outside its ro
   assert.equal(rejected.status, 1);
   assert.match(rejected.stderr, /plan rejected:.*no Task headings/i);
 
-  writeFileSync(join(repoRoot, planPath), '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n');
+  writeFileSync(join(repoRoot, planPath), '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n');
   const accepted = run();
   assert.equal(accepted.status, 0, accepted.stderr);
   assert.match(accepted.stdout, /plan OK — 1 task\(s\): 1/);
 
   for (const [invalidPlan, reason] of [
-    ['# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n\n## Task 1\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Success criteria:** SC2\n', /duplicate plan task id '1'/i],
-    ['# Plan\n\n## Task 2\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n\n## Task 1\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Success criteria:** SC2\n', /strictly increasing/i],
-    ['# Plan\n\n## Task 9007199254740992\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n', /safe integer/i],
+    ['# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 1\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Dependencies:** none\n- **Success criteria:** SC2\n', /duplicate plan task id '1'/i],
+    ['# Plan\n\n## Task 2\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n## Task 1\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Dependencies:** none\n- **Success criteria:** SC2\n', /strictly increasing/i],
+    ['# Plan\n\n## Task 9007199254740992\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n', /safe integer/i],
     ...['## Task 0', '## Task 02', '## Task -1', '## Task x', '## Task 1a'].map((heading) => [
-      `# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC1\n\n${heading}\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Success criteria:** SC2\n`,
+      `# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC1\n\n${heading}\n\n- **Surface:** adapters\n- **Complexity:** mechanical\n- **Dependencies:** none\n- **Success criteria:** SC2\n`,
       /invalid H2 Task heading|positive safe integer/i,
     ]),
   ]) {
@@ -993,7 +998,7 @@ test('the plan verifier surfaces non-canonical success-criteria bytes as a fixab
   const planPath = '.formula/work/plans/sc-grammar.md';
   writeFileSync(
     join(repoRoot, planPath),
-    '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Success criteria:** SC01\n',
+    '# Plan\n\n## Task 1\n\n- **Surface:** scripts\n- **Complexity:** integration\n- **Dependencies:** none\n- **Success criteria:** SC01\n',
   );
   const rejected = spawnSync(process.execPath, [scriptPath,
     '--verify-plan', '--repo-root', repoRoot, '--plan', planPath,
@@ -1023,7 +1028,7 @@ test('the handoff verifier runs the review-phase parse where implement can still
   const indexPath = '.formula/work/tasks/context-efficient/task-result-index.md';
   writeFileSync(
     join(repoRoot, planPath),
-    '# Plan\n\n## Task 1: colon heading\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Success criteria:** SC3\n',
+    '# Plan\n\n## Task 1: colon heading\n\n- **Surface:** `scripts`\n- **Complexity:** `integration`\n- **Dependencies:** none\n- **Success criteria:** SC3\n',
   );
   const verify = (index) => {
     writeFileSync(join(repoRoot, indexPath), index);
@@ -1122,6 +1127,127 @@ test('task-role CLI uses strict role-specific named paths and writes a valid man
   ], { encoding: 'utf8' });
   assert.equal(missingFinalStandard.status, 1);
   assert.match(missingFinalStandard.stderr, /final-review requires at least one relevant standard/);
+});
+
+const RUN_DIR = '.formula/work/tasks/context-efficient';
+const EVIDENCE_A = `${RUN_DIR}/correction/task-1-cycle-1-iteration-1-check-1-evidence.md`;
+const EVIDENCE_B = `${RUN_DIR}/correction/task-1-cycle-1-iteration-2-check-1-evidence.md`;
+const DIAGNOSIS_OUT = `${RUN_DIR}/correction/task-1-cycle-1-iteration-2-diagnosis.json`;
+const FINAL_DIAGNOSIS_OUT = `${RUN_DIR}/correction/final-cycle-1-iteration-2-diagnosis.json`;
+
+function seedEvidence(repoRoot) {
+  for (const path of [EVIDENCE_A, EVIDENCE_B]) {
+    mkdirSync(dirname(join(repoRoot, path)), { recursive: true });
+    writeFileSync(join(repoRoot, path), 'failing check output\n');
+  }
+}
+
+test('diagnosis manifests expose the failing evidence and reject malformed inputs', (t) => {
+  const repoRoot = materialize(t);
+  seedEvidence(repoRoot);
+  const diagnosisInput = {
+    ...base, repoRoot, task: 1, outputs: [DIAGNOSIS_OUT],
+    briefPath: `${RUN_DIR}/task-1-brief.md`,
+    evidencePaths: [EVIDENCE_A, EVIDENCE_B],
+    taskDiffPath: `${RUN_DIR}/task-1.diff`,
+    standardPaths: [scriptsContext],
+    hubIndexPath: contextPath,
+  };
+  const diagnosis = buildDiagnosisManifest(diagnosisInput);
+  assert.equal(diagnosis.scope.role, 'diagnosis');
+  assert.equal(diagnosis.scope.phase, 'implement');
+  assert.equal(diagnosis.scope.task, 1);
+  assert.equal(diagnosis.objective, 'Diagnose the failed correction cycle for Task 1 without changing source');
+  assert.deepEqual(diagnosis.required.map((item) => item.path), [
+    `${RUN_DIR}/task-1-brief.md`, EVIDENCE_A, EVIDENCE_B, `${RUN_DIR}/task-1.diff`, scriptsContext,
+  ]);
+  assert.deepEqual(diagnosis.required.slice(1, 3).map((item) => item.purpose), ['failing correction evidence', 'failing correction evidence']);
+  assert.deepEqual(diagnosis.onDemand.map((item) => item.path), [contextPath]);
+  assert.deepEqual(diagnosis.outputs, [DIAGNOSIS_OUT]);
+  assert.deepEqual(buildTaskManifest('diagnosis', diagnosisInput), diagnosis);
+
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, evidencePaths: [] }), /at least one evidence path/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, evidencePaths: undefined }), /at least one evidence path/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, evidencePaths: [EVIDENCE_A, EVIDENCE_A] }), /duplicate evidence path/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, outputs: [`${RUN_DIR}/task-1-report.md`] }), /work path/u);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, outputs: [] }), /exactly one/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, outputs: [DIAGNOSIS_OUT, DIAGNOSIS_OUT] }), /exactly one/i);
+  assert.throws(() => buildDiagnosisManifest({ ...diagnosisInput, evidencePaths: [`${RUN_DIR}/correction/missing-evidence.md`] }), /does not exist/i);
+
+  const finalInput = {
+    ...base, repoRoot, outputs: [FINAL_DIAGNOSIS_OUT],
+    criteriaPath: `${RUN_DIR}/success-criteria.md`,
+    taskResultIndexPath: `${RUN_DIR}/task-result-index.md`,
+    branchDiffPath: `${RUN_DIR}/branch-diff.txt`,
+    evidencePaths: [EVIDENCE_A],
+    standardPaths: [scriptsContext, adaptersContext],
+  };
+  const finalDiagnosis = buildFinalDiagnosisManifest(finalInput);
+  assert.equal(finalDiagnosis.scope.role, 'final-diagnosis');
+  assert.equal(finalDiagnosis.scope.task, undefined);
+  assert.equal(finalDiagnosis.objective, 'Diagnose the failed final-review cycle without changing source');
+  assert.deepEqual(finalDiagnosis.required.map((item) => item.path), [
+    `${RUN_DIR}/success-criteria.md`, `${RUN_DIR}/task-result-index.md`, `${RUN_DIR}/branch-diff.txt`,
+    EVIDENCE_A, scriptsContext, adaptersContext,
+  ]);
+  assert.equal(finalDiagnosis.required[3].purpose, 'failing correction evidence');
+  assert.deepEqual(finalDiagnosis.onDemand, []);
+  assert.deepEqual(buildTaskManifest('final-diagnosis', finalInput), finalDiagnosis);
+  assert.throws(() => buildFinalDiagnosisManifest({ ...finalInput, criteriaPath: '.formula/work/specs/context-efficient.md' }), /criteria-only artifact/i);
+  assert.throws(() => buildFinalDiagnosisManifest({ ...finalInput, evidencePaths: [] }), /at least one evidence path/i);
+  assert.throws(() => buildFinalDiagnosisManifest({ ...finalInput, evidencePaths: [EVIDENCE_A, EVIDENCE_A] }), /duplicate evidence path/i);
+  const noCriteria = {
+    ...finalDiagnosis,
+    required: finalDiagnosis.required.filter((entry) => entry.purpose !== 'success-criteria source'),
+  };
+  assert.throws(() => validateContextManifest(noCriteria, { repoRoot }), /requires a criteria-only artifact/i);
+  assert.throws(() => validateContextManifest({ ...finalDiagnosis, scope: { ...finalDiagnosis.scope, task: 1 } }, { repoRoot }), /must not declare a task/i);
+});
+
+test('the CLI writes diagnosis manifests and rejects role-invalid options for both diagnosis roles', (t) => {
+  const repoRoot = materialize(t);
+  seedEvidence(repoRoot);
+  const run = (args) => spawnSync(process.execPath, [scriptPath, '--repo-root', repoRoot, '--run-id', base.runId, '--model-tier', 'standard', ...args], { encoding: 'utf8' });
+  const taskOutput = `${RUN_DIR}/context/task-1-diagnosis-1.json`;
+  const taskArgs = [
+    '--role', 'diagnosis', '--task', '1', '--brief', `${RUN_DIR}/task-1-brief.md`,
+    '--evidence', EVIDENCE_A, '--evidence', EVIDENCE_B, '--task-diff', `${RUN_DIR}/task-1.diff`,
+    '--standard', scriptsContext, '--hub-index', contextPath, '--artifact-output', DIAGNOSIS_OUT,
+  ];
+  const written = run([...taskArgs, '--output', taskOutput]);
+  assert.equal(written.status, 0, written.stderr);
+  const taskManifest = JSON.parse(readFileSync(join(repoRoot, taskOutput), 'utf8'));
+  assert.equal(taskManifest.scope.role, 'diagnosis');
+  assert.deepEqual(taskManifest.required.map(({ path }) => path), [
+    `${RUN_DIR}/task-1-brief.md`, EVIDENCE_A, EVIDENCE_B, `${RUN_DIR}/task-1.diff`, scriptsContext,
+  ]);
+  assert.deepEqual(taskManifest.outputs, [DIAGNOSIS_OUT]);
+
+  const finalOutput = `${RUN_DIR}/context/final-diagnosis-1.json`;
+  const finalArgs = [
+    '--role', 'final-diagnosis', '--criteria', `${RUN_DIR}/success-criteria.md`,
+    '--task-result-index', `${RUN_DIR}/task-result-index.md`, '--branch-diff', `${RUN_DIR}/branch-diff.txt`,
+    '--evidence', EVIDENCE_A, '--standard', scriptsContext, '--artifact-output', FINAL_DIAGNOSIS_OUT,
+  ];
+  const finalWritten = run([...finalArgs, '--output', finalOutput]);
+  assert.equal(finalWritten.status, 0, finalWritten.stderr);
+  assert.equal(JSON.parse(readFileSync(join(repoRoot, finalOutput), 'utf8')).scope.role, 'final-diagnosis');
+
+  const rejectedTask = run([...taskArgs, '--criteria', `${RUN_DIR}/success-criteria.md`, '--output', `${RUN_DIR}/context/task-1-diagnosis-2.json`]);
+  assert.equal(rejectedTask.status, 1);
+  assert.match(rejectedTask.stderr, /--criteria is not valid for role diagnosis/);
+  const rejectedFinal = run([...finalArgs, '--hub-index', contextPath, '--output', `${RUN_DIR}/context/final-diagnosis-2.json`]);
+  assert.equal(rejectedFinal.status, 1);
+  assert.match(rejectedFinal.stderr, /--hub-index is not valid for role final-diagnosis/);
+  const evidenceOnImplementer = run([
+    '--role', 'implementer', '--task', '1', '--brief', `${RUN_DIR}/task-1-brief.md`, '--standard', scriptsContext,
+    '--evidence', EVIDENCE_A, '--output', `${RUN_DIR}/context/task-1-implement-3.json`,
+  ]);
+  assert.equal(evidenceOnImplementer.status, 1);
+  assert.match(evidenceOnImplementer.stderr, /--evidence is not valid for role implementer/);
+  const badOutput = run([...taskArgs.slice(0, -1), `${RUN_DIR}/task-1-report.md`, '--output', `${RUN_DIR}/context/task-1-diagnosis-3.json`]);
+  assert.equal(badOutput.status, 1);
+  assert.equal(existsSync(join(repoRoot, `${RUN_DIR}/context/task-1-diagnosis-3.json`)), false);
 });
 
 test('task-role CLI accepts only protocol 2', (t) => {
@@ -1468,5 +1594,167 @@ test('explicit resume inputs distinguish native case aliases from physically dis
       const manifest = buildImplementManifest(resumeManifestInput(repoRoot, paths));
       assert.deepEqual(manifest.onDemand.slice(-paths.length).map(({ path }) => path), paths);
     }
+  }
+});
+
+const dependencyTask = (id, depLine) => `## Task ${id}\n\n- **Surface:** scripts\n- **Complexity:** integration\n${depLine === undefined ? '' : `${depLine}\n`}- **Success criteria:** SC1\n`;
+const dependencyPlan = (...lines) => `# Plan\n\n${lines.map((line, index) => dependencyTask(index + 1, line)).join('\n')}`;
+
+test('plan parsing returns canonical dependencies in listed order', () => {
+  const none = planPhaseContext(dependencyPlan('- **Dependencies:** none'));
+  assert.deepEqual(none.tasks[0].dependencies, []);
+
+  const four = planPhaseContext(dependencyPlan(
+    '- **Dependencies:** none', '- **Dependencies:** 1', '- **Dependencies:** 1, 2', '- **Dependencies:** 1, 3',
+  ));
+  assert.deepEqual(four.tasks.map(({ dependencies }) => dependencies), [[], ['1'], ['1', '2'], ['1', '3']]);
+
+  const styles = planPhaseContext(dependencyPlan(
+    '- **Dependencies:** none', '- **Dependencies**: `1`', 'Dependencies: 1, 2', '  * dependencies: `1, 3`',
+  ));
+  assert.deepEqual(styles.tasks.map(({ dependencies }) => dependencies), [[], ['1'], ['1', '2'], ['1', '3']]);
+});
+
+test('plan parsing rejects missing, duplicate and malformed Dependencies', () => {
+  assert.throws(() => planPhaseContext(dependencyPlan(undefined)), /^Error: Task 1 is missing Dependencies evidence$/);
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none\n- **Dependencies**: none')),
+    /^Error: Task 1 has duplicate Dependencies fields$/,
+  );
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none\nDependencies: none')),
+    /duplicate Dependencies fields/,
+  );
+  for (const value of ['Task 3', '1,3', '3, 1', '1, 1', 'None', '0', '01', '']) {
+    const rendered = value.replace(/[`*_]/g, '').trim();
+    assert.throws(
+      () => planPhaseContext(dependencyPlan(`- **Dependencies:** ${value}`)),
+      (error) => error.message === `Task 1 has malformed Dependencies '${rendered}': expected none or increasing earlier task numbers like 1, 3`,
+      `value '${value}' must be malformed`,
+    );
+  }
+});
+
+test('plan parsing rejects self, forward and unknown dependency references in that order', () => {
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 2')),
+    /^Error: Task 2 cannot depend on itself$/,
+  );
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** 2', '- **Dependencies:** none')),
+    /^Error: Task 1 has a forward dependency on Task 2$/,
+  );
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 7')),
+    /^Error: Task 2 depends on unknown Task 7$/,
+  );
+  assert.throws(
+    () => planPhaseContext(dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 2, 5')),
+    /^Error: Task 2 cannot depend on itself$/,
+  );
+});
+
+test('reviewPhaseContext tasks carry dependencies', () => {
+  const plan = dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 1');
+  const index = '# Results\n\n- Task 1: DONE; artifact: .formula/work/tasks/topic/task-1-report.md; changed-paths: none; signals: none\n- Task 2: DONE; artifact: .formula/work/tasks/topic/task-2-report.md; changed-paths: none; signals: none\n';
+  assert.deepEqual(reviewPhaseContext(plan, index).tasks.map(({ dependencies }) => dependencies), [[], ['1']]);
+});
+
+test('--verify-plan rejects a plan without Dependencies and keeps its success line', (t) => {
+  const repoRoot = materialize(t);
+  const planPath = '.formula/work/plans/verify-dependencies.md';
+  const run = () => spawnSync(process.execPath, [scriptPath,
+    '--verify-plan', '--repo-root', repoRoot, '--plan', planPath,
+  ], { encoding: 'utf8' });
+  writeFileSync(join(repoRoot, planPath), dependencyPlan(undefined));
+  const rejected = run();
+  assert.equal(rejected.status, 1);
+  assert.equal(rejected.stdout, '');
+  assert.equal(rejected.stderr, 'autopilot-context: plan rejected: Task 1 is missing Dependencies evidence\n');
+  writeFileSync(join(repoRoot, planPath), dependencyPlan('- **Dependencies:** none', '- **Dependencies:** 1'));
+  const accepted = run();
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(accepted.stdout, 'plan OK — 2 task(s): 1, 2\n');
+});
+
+// --- partial handoff: the correction summary block --------------------------------------------------
+
+const PARTIAL_PLAN = [
+  '# Plan', '',
+  '## Task 1', '', '- **Surface:** scripts', '- **Complexity:** integration', '- **Dependencies:** none', '- **Test command:** `npm test`', '- **Success criteria:** SC1', '',
+  '## Task 2', '', '- **Surface:** scripts', '- **Complexity:** design', '- **Dependencies:** none', '- **Test command:** `npm test`', '- **Success criteria:** SC2, SC4', '',
+  '## Task 3', '', '- **Surface:** scripts', '- **Complexity:** mechanical', '- **Dependencies:** 2', '- **Test command:** `npm test`', '- **Success criteria:** SC3', '',
+].join('\n');
+const PARTIAL_RUN = '.formula/work/tasks/topic';
+const RETAINED = `${PARTIAL_RUN}/task-2-execution-1`;
+// A valid correction summary: Task 1 completed, Task 2 stopped retaining RETAINED, Task 3 blocked by it.
+function correctionSummary(overrides = {}) {
+  const outcome = overrides.outcome ?? 'PARTIAL';
+  return {
+    version: 1, outcome, approval: outcome === 'COMPLETE' ? 'APPROVED' : 'UNAPPROVED', planDigest: 'a'.repeat(64),
+    completed: ['1'],
+    stopped: [{
+      task: '2', cycle: 1, reason: 'HUMAN_INTERRUPTED', iterations: { reserved: 1, diagnosis: 0 }, unresolvedDefects: [],
+      comparison: [], bestCandidate: { iteration: 1, observation: 'b'.repeat(64), snapshot: null }, execution: RETAINED, nextRemedy: null,
+    }],
+    blocked: [{ task: '3', causes: ['2'] }],
+    criteria: outcome === 'PENDING' ? { SC2: 'failed', SC3: 'blocked', SC4: 'failed' } : { SC1: 'satisfied', SC2: 'failed', SC3: 'blocked', SC4: 'failed' },
+    final: { cycle: 1, status: 'APPROVED', reason: 'APPROVED', iterations: { reserved: 1, diagnosis: 0 }, approvedObservation: 'b'.repeat(64),
+      unresolvedDefects: [], comparison: [], bestCandidate: null, nextRemedy: null },
+    cycles: [], halt: null, ...overrides,
+  };
+}
+const taskOneEntry = { task: '1', status: 'DONE', artifact: `${PARTIAL_RUN}/task-1-report.md`, changedPaths: ['source.txt'], signals: [],
+  receipt: `${PARTIAL_RUN}/task-1-execution-1` };
+const receiptsBlock = (entries) => `<!-- steepy-task-results: v2 -->\n\`\`\`json\n${JSON.stringify(entries, null, 2)}\n\`\`\`\n<!-- /steepy-task-results -->\n`;
+const partialIndex = (summary = correctionSummary(), entries = [taskOneEntry]) => `# Results\n\n${receiptsBlock(entries)}\n${formatCorrectionSummaryBlock(summary)}\n`
+  + `Reviewer gate final: ${PARTIAL_RUN}/final-review-guard-attempt-1-iteration-1\n`;
+
+test('review routing of a partial handoff: delivered tasks, the declared omissions and every plan criterion', () => {
+  const route = reviewPhaseContext(PARTIAL_PLAN, partialIndex());
+  assert.deepEqual(route.tasks.map(({ task }) => task), ['1']);
+  assert.deepEqual(route.omitted, [
+    { task: '2', reason: 'stopped', execution: RETAINED },
+    { task: '3', reason: 'dependency-blocked', execution: null },
+  ]);
+  assert.equal(route.correctionOutcome, 'PARTIAL');
+  assert.deepEqual(route.criterionIds, ['SC1', 'SC2', 'SC4', 'SC3'], 'the stopped and blocked tasks keep their criteria in plan order');
+  assert.equal(route.evidence, 'result-index:reviewed-tasks=1;phase-controller-tier=standard;distribution=mechanical:0,integration:1,design:0');
+  assert.deepEqual(Object.keys(route), ['tasks', 'modelTier', 'testCommand', 'criterionIds', 'evidence', 'omitted', 'correctionOutcome']);
+  // A block projected when the final cycle became due, and a CRLF index, route the same way.
+  const pending = reviewPhaseContext(PARTIAL_PLAN, partialIndex(correctionSummary({ outcome: 'PENDING', final: null })));
+  assert.deepEqual([pending.correctionOutcome, pending.omitted], ['PENDING', route.omitted]);
+  assert.deepEqual(reviewPhaseContext(PARTIAL_PLAN, partialIndex().replaceAll('\n', '\r\n')).omitted, route.omitted);
+  // A manual bullet index carries the same block.
+  const bullets = `# Results\n\n- Task 1: DONE; artifact: ${PARTIAL_RUN}/task-1-report.md; changed-paths: source.txt; signals: none\n\n`
+    + `${formatCorrectionSummaryBlock(correctionSummary({ stopped: [{ ...correctionSummary().stopped[0], execution: null }] }))}\n`;
+  assert.deepEqual(reviewPhaseContext(PARTIAL_PLAN, bullets).omitted.map(({ execution }) => execution), [null, null]);
+});
+
+test('review routing without a summary block keeps its complete-run shape and omission refusal', () => {
+  const index = `# Results\n\n${receiptsBlock([taskOneEntry])}`;
+  assert.throws(() => reviewPhaseContext(PARTIAL_PLAN, index), /^Error: task result index omits plan task ids: 2, 3$/);
+  const entries = ['1', '2', '3'].map((task) => ({ ...taskOneEntry, task, artifact: `${PARTIAL_RUN}/task-${task}-report.md`,
+    receipt: `${PARTIAL_RUN}/task-${task}-execution-1` }));
+  const route = reviewPhaseContext(PARTIAL_PLAN, `# Results\n\n${receiptsBlock(entries)}`);
+  assert.deepEqual(Object.keys(route), ['tasks', 'modelTier', 'testCommand', 'criterionIds', 'evidence']);
+  assert.deepEqual(route.criterionIds, ['SC1', 'SC2', 'SC4', 'SC3']);
+});
+
+test('review routing refuses omissions the summary does not declare and results it does not allow', () => {
+  const stoppedTwo = correctionSummary().stopped[0];
+  const entry = (task) => ({ ...taskOneEntry, task, artifact: `${PARTIAL_RUN}/task-${task}-report.md`, receipt: `${PARTIAL_RUN}/task-${task}-execution-1` });
+  for (const [label, index, pattern] of [
+    ['an undeclared omission', partialIndex(correctionSummary({ blocked: [] })), /^Error: task result index omits plan task ids: 3$/],
+    ['a result for a blocked task', partialIndex(correctionSummary(), [taskOneEntry, entry('3')]), /^Error: task result index has a result for dependency-blocked task 3$/],
+    ['a result for a stopped task', partialIndex(correctionSummary(), [taskOneEntry, entry('2')]), /^Error: task result index has a result for stopped task 2$/],
+    ['a completed task without a result', partialIndex(correctionSummary({ completed: ['1', '3'] })), /^Error: correction summary completed task 3 has no task result$/],
+    ['a declared task outside the plan', partialIndex(correctionSummary({ stopped: [stoppedTwo, { ...stoppedTwo, task: '9', execution: null }] })),
+      /^Error: correction summary names unknown plan task ids: 9$/],
+    ['a task both stopped and blocked', partialIndex(correctionSummary({ blocked: [{ task: '2', causes: ['2'] }, { task: '3', causes: ['2'] }] })),
+      /^Error: correction summary names task 2 more than once$/],
+    ['a malformed block', partialIndex().replace('"version": 1', '"version": 2'), /parseCorrectionSummaryBlock: version must be 1/],
+  ]) {
+    assert.throws(() => reviewPhaseContext(PARTIAL_PLAN, index), pattern, label);
   }
 });

@@ -649,6 +649,46 @@ test('the built-in gate on a red graph blocks reviewed-clean and records the vio
   }
 });
 
+test('a gate-only capture runs the built-in coherence gate alone into the evidence', async () => {
+  const repo = fixture();
+  try {
+    const clean = await collectReviewEvidence({
+      repoRoot: repo, evidencePath: EVIDENCE, gateOnly: true, graphGateArgs: CLEAN_GATE_ARGS,
+    });
+    assert.deepEqual(clean.commands.map(({ label }) => label), ['coherence-gate']);
+    assert.equal(clean.allPassed, true);
+    assert.equal(clean.commands[0].exitCode, 0);
+    const report = readFileSync(join(repo, EVIDENCE), 'utf8');
+    assert.match(report, /^Capture: built-in coherence gate only; no surface test command\.$/mu);
+    assert.doesNotMatch(report, /## surface-test/u);
+    assert.match(report, /Command JSON: "steepy-formula graph validate"/u);
+    assert.match(report, /violations:\s+0/u);
+    const red = await collectReviewEvidence({
+      repoRoot: repo, evidencePath: EVIDENCE, gateOnly: true, graphGateArgs: RED_GATE_ARGS,
+    });
+    assert.deepEqual(red.commands.map(({ label }) => label), ['coherence-gate']);
+    assert.equal(red.allPassed, false);
+    assert.equal(red.commands[0].exitCode, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('a gate-only capture takes no test, verifier or gate command and creates no evidence otherwise', async () => {
+  const repo = fixture();
+  try {
+    const ok = nodeCommand("process.stdout.write('ok')");
+    for (const extra of [{ testCommand: ok }, { verifierCommand: ok }, { gateCommand: ok }, { gateOnly: 'yes' }]) {
+      await assert.rejects(() => collectReviewEvidence({
+        repoRoot: repo, evidencePath: EVIDENCE, gateOnly: true, graphGateArgs: CLEAN_GATE_ARGS, ...extra,
+      }), TypeError, JSON.stringify(extra));
+    }
+    assert.equal(existsSync(join(repo, EVIDENCE)), false);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('graphGateArgs must be an array of strings', async () => {
   const repo = fixture();
   try {

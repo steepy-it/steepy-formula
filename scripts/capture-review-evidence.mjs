@@ -378,6 +378,7 @@ export async function collectReviewEvidence({
   verifierCommand,
   gateCommand,
   graphGateArgs = [],
+  gateOnly = false,
   writeToFd = writeSync,
   closeFd = closeSync,
   killGraceMs = 500,
@@ -397,7 +398,13 @@ export async function collectReviewEvidence({
   const refusal = migrateRefusal(root);
   if (refusal) throw Object.assign(new Error(refusal.message), { exitCode: refusal.code });
   const evidence = parseWorkPath(evidencePath, 'work-output', 'evidence').path;
-  const test = safeCommand(testCommand, 'test command');
+  // `gateOnly` is a library-only mode for a verification with no surface test: the built-in coherence
+  // gate runs alone, and a test, verifier or gate command is refused rather than ignored.
+  if (typeof gateOnly !== 'boolean') throw new TypeError('gateOnly must be a boolean');
+  if (gateOnly && [testCommand, verifierCommand, gateCommand].some((command) => command !== undefined)) {
+    throw new TypeError('a gate-only capture takes no test, verifier or gate command');
+  }
+  const test = gateOnly ? null : safeCommand(testCommand, 'test command');
   const verifier = verifierCommand === undefined
     ? null
     : safeCommand(verifierCommand, 'verifier command');
@@ -417,6 +424,7 @@ export async function collectReviewEvidence({
     '',
     `Run started: ${startedAt}`,
     'Capture: combined stdout/stderr bytes are persisted in arrival order.',
+    ...(gateOnly ? ['Capture: built-in coherence gate only; no surface test command.'] : []),
     '',
   ].join('\n'), { expect: 'work-output', family: 'evidence' });
 
@@ -427,20 +435,22 @@ export async function collectReviewEvidence({
   });
   const commands = [];
   try {
-    commands.push(await captureCommand({
-      label: 'surface-test',
-      displayCommand: test,
-      file: test,
-      shell: true,
-      cwd: root,
-      fd,
-      writeToFd,
-      killGraceMs,
-      processGroupConvergenceMs,
-      streamSettlementMs,
-      processGroupProbe,
-      processGroupSignal,
-    }));
+    if (test !== null) {
+      commands.push(await captureCommand({
+        label: 'surface-test',
+        displayCommand: test,
+        file: test,
+        shell: true,
+        cwd: root,
+        fd,
+        writeToFd,
+        killGraceMs,
+        processGroupConvergenceMs,
+        streamSettlementMs,
+        processGroupProbe,
+        processGroupSignal,
+      }));
+    }
     if (verifier !== null) {
       commands.push(await captureCommand({
         label: 'goal-verifier',

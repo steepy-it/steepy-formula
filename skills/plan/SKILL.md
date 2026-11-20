@@ -289,7 +289,7 @@ canonical criterion form is `- **Success criteria:** SC1, SC2`; the parser rejec
 - **Specialist agent:** the `<surface>-agent` that owns implementation — bound as `.claude/agents/<surface>-agent.md` by naming convention.
 - **Exact paths:** every created or modified repository-relative path; paths must be safe and exact.
 - **Test command:** the surface's exact command — the resolved context Check's `ext_v1_command` (falling back to the verification Rule's statement prose).
-- **Dependencies:** prior task numbers, or `none`, in executable order.
+- **Dependencies:** exactly one per task, `none` or the earlier task numbers in increasing order separated by `, ` (for example `1, 3`). Implement rejects a missing, duplicate, malformed, unknown, self or forward value before any dispatch, and no plan without the field is accepted.
 - **Complexity:** `mechanical | integration | design` — mechanical = 1-2 files with a complete
   spec; integration = multi-file or judgment; design = architecture, high-risk, or subtle.
 - **Success criteria:** every mapped success-criterion ID from the source spec.
@@ -333,7 +333,7 @@ Create `.formula/work/plans/` if it does not exist. Do not create a plans sub-in
 Read the plan you just wrote with fresh eyes and fix any of these inline — no re-review needed, just fix and move on:
 1. **Every mandatory field** — each task contains exact requirements/deliverables, relevant global constraints, surface, specialist agent, exact paths, test command, dependencies, complexity, and success-criterion IDs; no placeholder (`TBD`, `TODO`) remains.
 2. **Binding consistency** — every surface is a known surface among the resolved context's Surfaces, every specialist is `.claude/agents/<surface>-agent.md` by naming convention, and every exact test command matches the Check's `ext_v1_command` (or its verification Rule's statement fallback).
-3. **Dependency ordering** — dependencies name existing earlier tasks, ordering is executable, and each task ends in an independently testable deliverable.
+3. **Dependency ordering** — exactly one `**Dependencies:**` per task, `none` or the earlier task numbers in increasing order separated by `, ` (for example `1, 3`); dependencies name existing earlier tasks (no self, forward, unknown, duplicate or malformed value), ordering is executable, and each task ends in an independently testable deliverable.
 4. **Complexity present** — validate allowed complexity: each `Complexity` value is exactly `mechanical | integration | design` and matches the task text (a multi-file task marked `mechanical` is a bug).
 5. **Criteria coverage** — every requirement and success criterion in the spec maps to at least one task; list and close any gap.
 6. **Safe repository-relative paths** — every path is exact, stays inside the repository, and is owned by the task's declared surface.
@@ -352,16 +352,16 @@ steepy-formula graph validate
 
 It MUST exit 0 with `violations: 0` and a clean revision-chain replay. This skill never edits the graph, so any violation is pre-existing drift: report it and point the user to the `check` skill — do not fix it mid-plan.
 
-**Autopilot:** Before appending `DONE`, run the same canonical plan parse that the implement
-phase will use:
+**Both drives:** run the canonical plan parse that the implement phase will use:
 
 ```bash
-node <engine-root>/scripts/autopilot-context.mjs --verify-plan --repo-root . --plan <authoritative-manifest-output-path>
+node <engine-root>/scripts/autopilot-context.mjs --verify-plan --repo-root . --plan <plan-path>
 ```
 
-It MUST print `plan OK`. A rejection is a fixable plan error: repair the plan, repeat the Step 4.5
-self-review, and rerun both deterministic gates. Never append `DONE` for a plan this command has
-not accepted.
+In autopilot `<plan-path>` is the authoritative manifest output path. It MUST print `plan OK`: in
+manual drive run it before the human gate (Step 6), in autopilot before appending `DONE`. A rejection is a
+fixable plan error: repair the plan, repeat the Step 4.5 self-review, and rerun both deterministic
+gates. Never ask for approval, and never append `DONE`, for a plan this command has not accepted.
 
 ### Step 6 — Human review gate and plan lifecycle
 
