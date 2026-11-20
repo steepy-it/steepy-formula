@@ -279,4 +279,4 @@ A repository that still carries a steepy-apex `.apex/` area is a one-time migrat
 
 </details>
 
-Made by [Steepy](https://www.steepy.it).
+Made by [Steepy](https://steepy.it/steepy-formula).
